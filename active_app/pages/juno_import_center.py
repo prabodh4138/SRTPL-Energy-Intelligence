@@ -115,22 +115,34 @@ def render():
 
     rtype = inspection["report_type"]
 
+    reimport_override = st.checkbox("Force re-import / overwrite if previously ingested", value=False, help="Bypasses duplicate file rejection and re-runs ingestion directly into Supabase.")
+
     if st.button(f"🚀 Ingest {rtype} → Supabase → Validate Rules → Calculate Master KPIs", type="primary", width="stretch"):
         with st.spinner(f"Processing unified master pipeline for {rtype}: Deduplication → Validation → Supabase Injection..."):
             res = execute_live_juno_ingestion(
                 temp_path,
                 expected_type=rtype,
                 uploaded_by=st.session_state.get("user", "admin@srtpl.com"),
+                allow_reimport=reimport_override,
             )
 
         if res.get("status") == "DUPLICATE_FILE":
             st.error(res["message"])
-            col_clear, col_wipe = st.columns(2)
-            if col_clear.button("🔄 Clear Ingestion Session Cache & Retry", key="clear_dup_center", width="stretch"):
+            col_clear, col_force, col_wipe = st.columns(3)
+            if col_clear.button("🔄 Clear Cache & Retry", key="clear_dup_center", width="stretch"):
                 from core.live_pipeline import clear_local_ingestion_hashes
                 clear_local_ingestion_hashes()
                 st.rerun()
-            if col_wipe.button("🗑️ Wipe All Database Data (Clean Start)", key="wipe_dup_center", width="stretch"):
+            if col_force.button("⚡ Force Ingest & Overwrite", key="force_dup_center", width="stretch"):
+                with st.spinner(f"Force ingesting {rtype} into Supabase..."):
+                    execute_live_juno_ingestion(
+                        temp_path,
+                        expected_type=rtype,
+                        uploaded_by=st.session_state.get("user", "admin@srtpl.com"),
+                        allow_reimport=True,
+                    )
+                st.rerun()
+            if col_wipe.button("🗑️ Wipe All Database Data", key="wipe_dup_center", width="stretch"):
                 from core.supabase_manager import remove_all_database_data
                 wipe_res = remove_all_database_data()
                 st.success(wipe_res["message"])

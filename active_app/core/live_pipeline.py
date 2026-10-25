@@ -386,10 +386,11 @@ def execute_live_juno_ingestion(
     file_path: str | Path,
     expected_type: str | None = None,
     uploaded_by: str = "admin@srtpl.com",
+    allow_reimport: bool = False,
 ) -> dict[str, Any]:
     """
     Complete end-to-end live ingestion pipeline:
-    1. Computes SHA-256 and verifies Level 1 Deduplication (rejects duplicate files).
+    1. Computes SHA-256 and verifies Level 1 Deduplication (rejects duplicate files, unless allow_reimport=True).
     2. Parses raw CSV and verifies structure.
     3. Runs NormalizationEngine to detect monotonicity breaks, PF bounds, and anomalies.
     4. Enforces Level 2 Deduplication on (asset_id, reading_datetime).
@@ -405,74 +406,74 @@ def execute_live_juno_ingestion(
     client = get_supabase_client()
 
     # Level 1 Duplicate File Check
-    # When connected to Supabase, the cloud database is the single authoritative source of truth.
-    if client:
-        is_db_duplicate = False
-        db_match_info = None
+    if not allow_reimport:
+        if client:
+            is_db_duplicate = False
+            db_match_info = None
 
-        for table_query in [
-            lambda: client.schema("energy_import").table("import_file"),
-            lambda: client.table("import_file"),
-        ]:
-            try:
-                res = (
-                    table_query()
-                    .select("import_file_id, original_filename, created_at, valid_row_count")
-                    .eq("sha256_hash", file_hash)
-                    .limit(1)
-                    .execute()
-                )
-                if res.data and len(res.data) > 0:
-                    match = res.data[0]
-                    # Only block if readings were actually injected previously!
-                    # If an earlier upload failed with 0 readings, allow re-ingestion to fix it.
-                    if int(match.get("valid_row_count") or 0) > 0:
-                        is_db_duplicate = True
-                        db_match_info = match
-                        break
-            except Exception:
-                pass
+            for table_query in [
+                lambda: client.schema("energy_import").table("import_file"),
+                lambda: client.table("import_file"),
+            ]:
+                try:
+                    res = (
+                        table_query()
+                        .select("import_file_id, original_filename, created_at, valid_row_count")
+                        .eq("sha256_hash", file_hash)
+                        .limit(1)
+                        .execute()
+                    )
+                    if res.data and len(res.data) > 0:
+                        match = res.data[0]
+                        # Only block if readings were actually injected previously!
+                        # If an earlier upload failed with 0 readings, allow re-ingestion to fix it.
+                        if int(match.get("valid_row_count") or 0) > 0:
+                            is_db_duplicate = True
+                            db_match_info = match
+                            break
+                except Exception:
+                    pass
 
-        if is_db_duplicate and db_match_info:
-            return {
-                "status": "DUPLICATE_FILE",
-                "success": False,
-                "sha256": file_hash,
-                "message": (
-                    f"⛔ DUPLICATE FILE REJECTED: This exact CSV file was already imported into Supabase on "
-                    f"{db_match_info.get('created_at', 'earlier')} as '{db_match_info.get('original_filename')}'. "
-                    "Duplicate file imports are strictly forbidden."
-                ),
-                "filename": path.name,
-            }
-    else:
-        # Offline / local mock mode duplicate check
-        if file_hash in _LOCAL_INGESTED_HASHES:
-            return {
-                "status": "DUPLICATE_FILE",
-                "success": False,
-                "sha256": file_hash,
-                "message": (
-                    f"⛔ DUPLICATE FILE REJECTED: This exact CSV file (SHA-256: {file_hash[:16]}...) "
-                    "has already been ingested in this local session. Duplicate file imports are strictly forbidden."
-                ),
-                "filename": path.name,
-            }
-        try:
-            import streamlit as st
-            if "imported_file_hashes" in st.session_state and file_hash in st.session_state["imported_file_hashes"]:
+            if is_db_duplicate and db_match_info:
+                return {
+                    "status": "DUPLICATE_FILE",
+                    "success": False,
+                    "sha256": file_hash,
+                    "message": (
+                        f"⛔ DUPLICATE FILE REJECTED: This exact CSV file was already imported into Supabase on "
+                        f"{db_match_info.get('created_at', 'earlier')} as '{db_match_info.get('original_filename')}'. "
+                        "Duplicate file imports are strictly forbidden."
+                    ),
+                    "filename": path.name,
+                }
+        else:
+            # Offline / local mock mode duplicate check
+            if file_hash in _LOCAL_INGESTED_HASHES:
                 return {
                     "status": "DUPLICATE_FILE",
                     "success": False,
                     "sha256": file_hash,
                     "message": (
                         f"⛔ DUPLICATE FILE REJECTED: This exact CSV file (SHA-256: {file_hash[:16]}...) "
-                        "has already been ingested. Duplicate file imports are strictly forbidden."
+                        "has already been ingested in this local session. Duplicate file imports are strictly forbidden."
                     ),
                     "filename": path.name,
                 }
-        except Exception:
-            pass
+            try:
+                import streamlit as st
+                if "imported_file_hashes" in st.session_state and file_hash in st.session_state["imported_file_hashes"]:
+                    return {
+                        "status": "DUPLICATE_FILE",
+                        "success": False,
+                        "sha256": file_hash,
+                        "message": (
+                            f"⛔ DUPLICATE FILE REJECTED: This exact CSV file (SHA-256: {file_hash[:16]}...) "
+                            "has already been ingested. Duplicate file imports are strictly forbidden."
+                        ),
+                        "filename": path.name,
+                    }
+            except Exception:
+                pass
 
     # Step 2: Parse and inspect
     service = ImportService()
