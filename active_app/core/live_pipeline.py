@@ -729,3 +729,57 @@ def execute_live_juno_ingestion(
         "exception_details": exception_details,
         "preview_df": pd.DataFrame(db_rows[:100]) if db_rows else pd.DataFrame(norm_records[:100]),
     }
+
+
+def execute_batch_live_juno_ingestion(
+    file_paths: list[str | Path],
+    expected_type: str | None = None,
+    uploaded_by: str = "admin@srtpl.com",
+    allow_reimport: bool = False,
+) -> dict[str, Any]:
+    """
+    Executes live ingestion across multiple JUNO CSV files.
+    Processes each file sequentially through the deduplication, validation,
+    Supabase injection, and Master KPI calculation pipelines.
+    Returns aggregate summary and individual file results.
+    """
+    results = []
+    total_injected = 0
+    total_exceptions = 0
+    total_records = 0
+    success_count = 0
+    dup_count = 0
+    fail_count = 0
+
+    for fp in file_paths:
+        res = execute_live_juno_ingestion(
+            fp,
+            expected_type=expected_type,
+            uploaded_by=uploaded_by,
+            allow_reimport=allow_reimport,
+        )
+        results.append(res)
+        if res.get("status") == "SUCCESS":
+            success_count += 1
+            total_injected += res.get("injected_readings", 0)
+            total_exceptions += res.get("exception_rows", 0)
+            total_records += res.get("total_records", 0)
+        elif res.get("status") == "DUPLICATE_FILE":
+            dup_count += 1
+        else:
+            fail_count += 1
+
+    overall_status = "SUCCESS" if (fail_count == 0 and dup_count == 0) else ("PARTIAL" if success_count > 0 else "FAILED")
+
+    return {
+        "status": overall_status,
+        "total_files": len(file_paths),
+        "success_count": success_count,
+        "duplicate_count": dup_count,
+        "fail_count": fail_count,
+        "total_records": total_records,
+        "total_injected": total_injected,
+        "total_exceptions": total_exceptions,
+        "file_results": results,
+    }
+

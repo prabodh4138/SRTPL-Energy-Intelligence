@@ -14,8 +14,14 @@ from bill_extractor.extractor_main_full import extract_energy_bill_full
 from bill_extractor.extractor_md_full import extract_md_bill_data
 from bill_extractor.extractor_receipt_full import extract_energy_receipt_data
 from bill_extractor.merge_clean_core import merge_and_clean_dataframes
-from bill_extractor.verifier import verify_bill_calculations
+from bill_extractor.verifier import verify_bill_calculations, _parse_num
 from bill_extractor.zip_handler import extract_pdfs_from_inputs
+from core.db_sync import (
+    save_energy_bill,
+    batch_save_energy_bills,
+    update_energy_bill,
+    get_all_energy_bills,
+)
 
 SAMPLE_DIR = "source_data/user_uploaded_bills/extractor"
 
@@ -328,18 +334,79 @@ def render():
                             record_items = [{"Field": k, "Extracted / Calculated Value": str(v)} for k, v in bill_export.items() if k not in ["raw_text", "slabs_detail"]]
                             st.dataframe(pd.DataFrame(record_items), width="stretch", hide_index=True)
 
-                            # Download Excel
-                            out_single = io.BytesIO()
-                            single_df = pd.DataFrame([bill_export]).drop(columns=["raw_text", "slabs_detail"], errors="ignore")
-                            with pd.ExcelWriter(out_single, engine="openpyxl") as writer:
-                                single_df.to_excel(writer, index=False, sheet_name="Bill_Verified_Data")
-                            st.download_button(
-                                label="📥 Download Single Bill Excel with Verification (.xlsx)",
-                                data=out_single.getvalue(),
-                                file_name=f"Bill_Verified_{target_name}.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                width="stretch",
-                            )
+                            col_sb_save, col_sb_dl = st.columns([1.2, 1])
+                            with col_sb_save:
+                                if st.button("💾 Save Bill to Supabase (public.energy_bills)", type="primary", width="stretch", key="btn_save_single_bill"):
+                                    save_res = save_energy_bill(bill_export, v_res)
+                                    if save_res["status"] == "SUCCESS":
+                                        st.success(f"✅ Bill **{save_res['bill_number']}** saved successfully to Supabase (`public.energy_bills`)!")
+                                    else:
+                                        st.error(f"Failed to save bill to Supabase: {save_res.get('cloud_error')}")
+
+                            with col_sb_dl:
+                                out_single = io.BytesIO()
+                                single_df = pd.DataFrame([bill_export]).drop(columns=["raw_text", "slabs_detail"], errors="ignore")
+                                with pd.ExcelWriter(out_single, engine="openpyxl") as writer:
+                                    single_df.to_excel(writer, index=False, sheet_name="Bill_Verified_Data")
+                                st.download_button(
+                                    label="📥 Download Bill Excel (.xlsx)",
+                                    data=out_single.getvalue(),
+                                    file_name=f"Bill_Verified_{target_name}.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    width="stretch",
+                                )
+
+                            # Discrepancy Edit & Manual Correction Form
+                            has_mismatch = (v_res["audit_status"] != "VERIFIED_MATCH")
+                            with st.expander("✏️ Discrepancy Edit & Manual Reconciliation Form", expanded=has_mismatch):
+                                st.markdown("##### Correct Mismatched Extracted Data & Re-verify Formulas")
+                                st.caption("If DISCOM bill figures show variance or OCR text extracted incorrect slabs/tariffs, edit values below. The system recalculates all formula checks dynamically and persists the corrected record to Supabase.")
+
+                                bill_id_key = str(bill_full.get("Bill Number") or target_name)
+                                with st.form(key=f"edit_bill_form_{bill_id_key}"):
+                                    fe_c1, fe_c2, fe_c3 = st.columns(3)
+                                    curr_cat = str(bill_full.get("Tariff Category") or "")
+                                    cat_idx = 0 if "GPS" in curr_cat.upper() else (1 if "LIGHT" in curr_cat.upper() else 2)
+                                    edit_tariff = fe_c1.selectbox(
+                                        "Tariff Category",
+                                        ["GPS (< 110 kVA)", "Public Lighting", "HT (>= 110 kVA)"],
+                                        index=cat_idx,
+                                    )
+                                    edit_ec = fe_c2.number_input("Energy Charges (₹)", value=float(_parse_num(bill_full.get("a. Energy Charges") or bill_full.get("Energy Charges"))), step=10.0)
+                                    edit_tot = fe_c3.number_input("Current Total (₹)", value=float(_parse_num(bill_full.get("Current Total (o)") or bill_full.get("Current Total"))), step=10.0)
+
+                                    fe_c4, fe_c5, fe_c6 = st.columns(3)
+                                    edit_norm = fe_c4.number_input("Slab Normal - KWH", value=float(_parse_num(bill_full.get("Slab Normal - KWH"))), step=1.0)
+                                    edit_peak = fe_c5.number_input("Slab Peak - KWH", value=float(_parse_num(bill_full.get("Slab Peak - KWH"))), step=1.0)
+                                    edit_solar = fe_c6.number_input("Slab Solar - KWH", value=float(_parse_num(bill_full.get("Slab Solar - KWH"))), step=1.0)
+
+                                    fe_c7, fe_c8 = st.columns(2)
+                                    edit_demand = fe_c7.number_input("Demand Charge / MMFC (₹)", value=float(_parse_num(bill_full.get("Demand Charge / MMFC"))), step=10.0)
+                                    edit_notes = fe_c8.text_input("Audit Notes / Reason for Adjustment", value=f"Adjusted by auditor on {pd.Timestamp.now().strftime('%Y-%m-%d')}")
+
+                                    submit_correction = st.form_submit_button("💾 Save Corrected Bill to Supabase (Mark Resolved)", type="primary", width="stretch")
+
+                                    if submit_correction:
+                                        updated_fields = dict(bill_full)
+                                        updated_fields["Tariff Category"] = edit_tariff
+                                        updated_fields["a. Energy Charges"] = edit_ec
+                                        updated_fields["Current Total (o)"] = edit_tot
+                                        updated_fields["Slab Normal - KWH"] = edit_norm
+                                        updated_fields["Slab Peak - KWH"] = edit_peak
+                                        updated_fields["Slab Solar - KWH"] = edit_solar
+                                        updated_fields["Demand Charge / MMFC"] = edit_demand
+
+                                        u_res = update_energy_bill(
+                                            bill_number=str(bill_full.get("Bill Number")),
+                                            updates=updated_fields,
+                                            edited_by=st.session_state.get("user", "admin@srtpl.com"),
+                                            edit_notes=edit_notes,
+                                        )
+                                        if u_res["status"] == "SUCCESS":
+                                            st.success(f"✅ Bill **{bill_full.get('Bill Number')}** updated in Supabase! Status: `{u_res['updated_record']['verification_status']}`")
+                                            st.rerun()
+                                        else:
+                                            st.error(f"Failed to update bill in Supabase: {u_res.get('cloud_error')}")
                     else:
                         st.info("Select a pre-loaded sample document on the left or upload a local PDF / ZIP to view real-time extracted data.")
 
@@ -442,17 +509,86 @@ def render():
                     st.markdown("##### 📊 Extracted & Mathematically Verified Batch Results")
                     st.dataframe(res_df, width="stretch", hide_index=True)
 
-                    out_batch = io.BytesIO()
-                    with pd.ExcelWriter(out_batch, engine="openpyxl") as writer:
-                        res_df.to_excel(writer, index=False, sheet_name=sheet_n)
+                    col_b_act1, col_b_act2 = st.columns([1.2, 1])
+                    with col_b_act1:
+                        if not is_batch_receipt:
+                            if st.button("💾 Save All Extracted Bills to Supabase (public.energy_bills)", type="primary", width="stretch", key="btn_save_all_batch_bills"):
+                                batch_records = res_df.to_dict(orient="records")
+                                b_res = batch_save_energy_bills(batch_records)
+                                if b_res["status"] == "SUCCESS":
+                                    st.success(f"✅ Successfully saved **{b_res['saved_count']}** verified bills into Supabase (`public.energy_bills`)!")
+                                else:
+                                    st.error(f"Error saving batch to Supabase: {b_res.get('cloud_error')}")
 
-                    st.download_button(
-                        label=f"📥 Download Verified Batch Excel (.xlsx) [{len(res_df)} rows with Audit Columns]",
-                        data=out_batch.getvalue(),
-                        file_name=f"{sheet_n}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        width="stretch",
-                    )
+                    with col_b_act2:
+                        out_batch = io.BytesIO()
+                        with pd.ExcelWriter(out_batch, engine="openpyxl") as writer:
+                            res_df.to_excel(writer, index=False, sheet_name=sheet_n)
+
+                        st.download_button(
+                            label=f"📥 Download Verified Excel (.xlsx) [{len(res_df)} rows]",
+                            data=out_batch.getvalue(),
+                            file_name=f"{sheet_n}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            width="stretch",
+                        )
+
+                    # Batch Discrepancy Review & Interactive Editor
+                    if not is_batch_receipt and not res_df.empty:
+                        with st.expander("✏️ Discrepancy Review & Batch Record Editor", expanded=True):
+                            st.markdown("##### Review, Correct & Resolve Discrepancies in Extracted Bills")
+                            st.caption("Select any bill from the batch below to adjust its values and persist corrections directly into Supabase.")
+
+                            bill_num_col = "Bill Number" if "Bill Number" in res_df.columns else res_df.columns[0]
+                            bill_list = [str(r.get(bill_num_col, f"Row {i}")) for i, r in res_df.iterrows()]
+                            sel_bill_idx = st.selectbox(
+                                "Select Bill Number to Inspect & Edit:",
+                                range(len(bill_list)),
+                                format_func=lambda i: f"Bill #{bill_list[i]} — {res_df.iloc[i].get('Audit Verdict', 'REVIEW')} (File: {res_df.iloc[i].get('Source PDF', '')})",
+                                key="batch_bill_select_edit",
+                            )
+
+                            chosen_row = res_df.iloc[sel_bill_idx].to_dict()
+
+                            with st.form(key=f"batch_row_edit_form_{sel_bill_idx}"):
+                                be_c1, be_c2, be_c3 = st.columns(3)
+                                b_cat = str(chosen_row.get("Tariff Category", ""))
+                                b_cat_idx = 0 if "GPS" in b_cat.upper() else (1 if "LIGHT" in b_cat.upper() else 2)
+                                b_tariff = be_c1.selectbox("Tariff Category", ["GPS (< 110 kVA)", "Public Lighting", "HT (>= 110 kVA)"], index=b_cat_idx)
+                                b_ec = be_c2.number_input("Energy Charges (₹)", value=float(_parse_num(chosen_row.get("a. Energy Charges") or chosen_row.get("energy_charges"))), step=10.0)
+                                b_tot = be_c3.number_input("Current Total (₹)", value=float(_parse_num(chosen_row.get("Current Total (o)") or chosen_row.get("current_total"))), step=10.0)
+
+                                be_c4, be_c5, be_c6 = st.columns(3)
+                                b_norm = be_c4.number_input("Slab Normal - KWH", value=float(_parse_num(chosen_row.get("Slab Normal - KWH") or chosen_row.get("slab_normal_kwh"))), step=1.0)
+                                b_peak = be_c5.number_input("Slab Peak - KWH", value=float(_parse_num(chosen_row.get("Slab Peak - KWH") or chosen_row.get("slab_peak_kwh"))), step=1.0)
+                                b_solar = be_c6.number_input("Slab Solar - KWH", value=float(_parse_num(chosen_row.get("Slab Solar - KWH") or chosen_row.get("slab_solar_kwh"))), step=1.0)
+
+                                be_c7, be_c8 = st.columns(2)
+                                b_demand = be_c7.number_input("Demand Charge / MMFC (₹)", value=float(_parse_num(chosen_row.get("Demand Charge / MMFC") or chosen_row.get("demand_charge"))), step=10.0)
+                                b_notes = be_c8.text_input("Audit Correction Notes", value=f"Corrected via batch editor on {pd.Timestamp.now().strftime('%Y-%m-%d')}")
+
+                                if st.form_submit_button("💾 Save Corrected Bill to Supabase", type="primary", width="stretch"):
+                                    updated_rec = dict(chosen_row)
+                                    updated_rec["Tariff Category"] = b_tariff
+                                    updated_rec["a. Energy Charges"] = b_ec
+                                    updated_rec["Current Total (o)"] = b_tot
+                                    updated_rec["Slab Normal - KWH"] = b_norm
+                                    updated_rec["Slab Peak - KWH"] = b_peak
+                                    updated_rec["Slab Solar - KWH"] = b_solar
+                                    updated_rec["Demand Charge / MMFC"] = b_demand
+
+                                    b_num = str(chosen_row.get(bill_num_col))
+                                    u_res = update_energy_bill(
+                                        bill_number=b_num,
+                                        updates=updated_rec,
+                                        edited_by=st.session_state.get("user", "admin@srtpl.com"),
+                                        edit_notes=b_notes,
+                                    )
+                                    if u_res["status"] == "SUCCESS":
+                                        st.success(f"✅ Bill **{b_num}** successfully updated in Supabase (`public.energy_bills`)! Status: `{u_res['updated_record']['verification_status']}`")
+                                        st.rerun()
+                                    else:
+                                        st.error(f"Update failed: {u_res.get('cloud_error')}")
 
     # -------------------------------------------------------------------------
     # TAB 3: Meter vs. Bill Reconciliation
@@ -482,31 +618,88 @@ def render():
     # TAB 4: Bill & Receipt Register
     # -------------------------------------------------------------------------
     with tab_register:
-        st.subheader("Financial Document Register (Bills & Receipts with 14 Target Columns)")
-        st.caption("Track payment status, meter details, tariffs, slabs, and bank receipt references.")
-        st.dataframe(bills_df, width="stretch", hide_index=True)
+        st.subheader("Financial Document Register (Supabase public.energy_bills & Receipts)")
+        st.caption("Live financial register displaying all extracted, verified, and audited DISCOM electricity bills with human-in-the-loop discrepancy resolution.")
 
-        out_reg = io.BytesIO()
-        with pd.ExcelWriter(out_reg, engine="openpyxl") as writer:
-            bills_df.to_excel(writer, index=False, sheet_name="Bills_Register")
+        live_bills_df = get_all_energy_bills()
+        if not live_bills_df.empty and "deleted_bills" in st.session_state:
+            bill_col = "bill_number" if "bill_number" in live_bills_df.columns else ("Document ID" if "Document ID" in live_bills_df.columns else live_bills_df.columns[0])
+            live_bills_df = live_bills_df[~live_bills_df[bill_col].astype(str).isin(st.session_state["deleted_bills"])]
 
-        st.download_button(
-            label="📥 Download Complete Financial Register (.xlsx)",
-            data=out_reg.getvalue(),
-            file_name="SRTPL_Financial_Register.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            width="stretch",
-        )
+        display_df = live_bills_df if not live_bills_df.empty else bills_df
+        st.dataframe(display_df, width="stretch", hide_index=True)
+
+        col_reg_dl, col_reg_del = st.columns([1, 1])
+        with col_reg_dl:
+            out_reg = io.BytesIO()
+            with pd.ExcelWriter(out_reg, engine="openpyxl") as writer:
+                display_df.to_excel(writer, index=False, sheet_name="Bills_Register")
+
+            st.download_button(
+                label=f"📥 Download Complete Register (.xlsx) [{len(display_df)} records]",
+                data=out_reg.getvalue(),
+                file_name="SRTPL_Financial_Register.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                width="stretch",
+            )
+
+        # Tab 4: Quick Edit for any Bill in the Register
+        with st.expander("✏️ Quick Edit / Resolve Discrepancy for any Registered Bill"):
+            if display_df.empty:
+                st.info("No bills available to edit.")
+            else:
+                id_col = "bill_number" if "bill_number" in display_df.columns else ("Document ID" if "Document ID" in display_df.columns else display_df.columns[0])
+                reg_bill_ids = [str(x) for x in display_df[id_col].dropna().unique()]
+                sel_edit_id = st.selectbox("Select Bill to Edit / Resolve:", reg_bill_ids, key="sel_edit_reg_bill")
+                curr_row_s = display_df[display_df[id_col].astype(str) == sel_edit_id]
+
+                if not curr_row_s.empty:
+                    c_row = curr_row_s.iloc[0].to_dict()
+                    with st.form(key=f"reg_edit_form_{sel_edit_id}"):
+                        re_c1, re_c2, re_c3 = st.columns(3)
+                        r_cat = str(c_row.get("tariff_category") or c_row.get("Tariff Category") or "")
+                        r_cat_idx = 0 if "GPS" in r_cat.upper() else (1 if "LIGHT" in r_cat.upper() else 2)
+                        r_tariff = re_c1.selectbox("Tariff Category", ["GPS (< 110 kVA)", "Public Lighting", "HT (>= 110 kVA)"], index=r_cat_idx)
+                        r_ec = re_c2.number_input("Energy Charges (₹)", value=float(_parse_num(c_row.get("energy_charges") or c_row.get("a. Energy Charges"))), step=10.0)
+                        r_tot = re_c3.number_input("Current Total (₹)", value=float(_parse_num(c_row.get("current_total") or c_row.get("Current Total (o)"))), step=10.0)
+
+                        re_c4, re_c5, re_c6 = st.columns(3)
+                        r_norm = re_c4.number_input("Slab Normal - KWH", value=float(_parse_num(c_row.get("slab_normal_kwh") or c_row.get("Slab Normal - KWH"))), step=1.0)
+                        r_peak = re_c5.number_input("Slab Peak - KWH", value=float(_parse_num(c_row.get("slab_peak_kwh") or c_row.get("Slab Peak - KWH"))), step=1.0)
+                        r_solar = re_c6.number_input("Slab Solar - KWH", value=float(_parse_num(c_row.get("slab_solar_kwh") or c_row.get("Slab Solar - KWH"))), step=1.0)
+
+                        r_notes = st.text_input("Reason for Adjustment / Audit Notes", value=f"Reconciled from Register on {pd.Timestamp.now().strftime('%Y-%m-%d')}")
+
+                        if st.form_submit_button("💾 Save Changes to Supabase", type="primary", width="stretch"):
+                            up_data = dict(c_row)
+                            up_data["Tariff Category"] = r_tariff
+                            up_data["a. Energy Charges"] = r_ec
+                            up_data["Current Total (o)"] = r_tot
+                            up_data["Slab Normal - KWH"] = r_norm
+                            up_data["Slab Peak - KWH"] = r_peak
+                            up_data["Slab Solar - KWH"] = r_solar
+
+                            u_res = update_energy_bill(
+                                bill_number=sel_edit_id,
+                                updates=up_data,
+                                edited_by=st.session_state.get("user", "admin@srtpl.com"),
+                                edit_notes=r_notes,
+                            )
+                            if u_res["status"] == "SUCCESS":
+                                st.success(f"✅ Bill **{sel_edit_id}** updated in Supabase! Status: `{u_res['updated_record']['verification_status']}`")
+                                st.rerun()
+                            else:
+                                st.error(f"Failed to update bill: {u_res.get('cloud_error')}")
 
         with st.expander("🗑️ Delete Bill Record (Simultaneous App & Supabase Database Removal)"):
-            if bills_df.empty:
+            if display_df.empty:
                 st.info("No bills available to delete.")
             else:
-                bill_ids = bills_df["Document ID"].tolist()
-                sel_del_bill = st.selectbox("Select Bill Document ID to Delete", bill_ids, key="sel_del_bill_reg")
+                id_col_del = "bill_number" if "bill_number" in display_df.columns else ("Document ID" if "Document ID" in display_df.columns else display_df.columns[0])
+                bill_ids = [str(x) for x in display_df[id_col_del].dropna().unique()]
+                sel_del_bill = st.selectbox("Select Bill Number to Delete", bill_ids, key="sel_del_bill_reg")
                 confirm_del_bill = st.checkbox(f"Confirm permanent deletion of bill {sel_del_bill}", key="chk_del_bill")
                 if st.button("🗑️ Delete Bill from Database", type="primary", disabled=not confirm_del_bill, key="btn_exec_del_bill"):
-                    from core.db_sync import delete_energy_bill
                     res = delete_energy_bill(sel_del_bill)
                     sync_msg = "and removed from Supabase" if res["cloud_synced"] else "from local store"
                     st.success(f"🧹 Bill **{sel_del_bill}** deleted successfully {sync_msg}!")
