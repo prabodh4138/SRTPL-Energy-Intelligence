@@ -365,9 +365,54 @@ def save_energy_bill(raw_bill: dict[str, Any], verifier_result: dict[str, Any] |
     }
 
 
-def batch_save_energy_bills(bills: list[dict[str, Any]]) -> dict[str, Any]:
-    """Batch saves extracted energy bills into Supabase."""
+def get_existing_bill_numbers() -> set[str]:
+    """Returns a set of bill numbers already present in Supabase (energy_bills) or session cache."""
+    existing = set()
+    client = get_supabase_client()
+    if client:
+        try:
+            res = client.table("energy_bills").select("bill_number").execute()
+            if res and res.data:
+                for row in res.data:
+                    bn = row.get("bill_number")
+                    if bn:
+                        existing.add(str(bn).strip())
+        except Exception:
+            pass
+
+    if "saved_energy_bills" in st.session_state and st.session_state["saved_energy_bills"]:
+        for bn in st.session_state["saved_energy_bills"].keys():
+            if bn:
+                existing.add(str(bn).strip())
+
+    return existing
+
+
+def batch_save_energy_bills(
+    bills: list[dict[str, Any]],
+    prevent_duplicates: bool = False,
+) -> dict[str, Any]:
+    """
+    Batch saves extracted energy bills into Supabase.
+    If prevent_duplicates is True, any bill whose bill_number already exists in Supabase
+    or within the batch itself is strictly skipped and returned in skipped_duplicates.
+    """
     formatted_list = [format_bill_for_db(b) for b in bills if b]
+    skipped_duplicates = []
+
+    if prevent_duplicates:
+        existing = get_existing_bill_numbers()
+        deduped = []
+        for b in formatted_list:
+            bn = str(b.get("bill_number") or "").strip()
+            if bn and bn in existing:
+                skipped_duplicates.append(bn)
+            else:
+                deduped.append(b)
+                if bn:
+                    existing.add(bn)  # Prevent intra-batch duplicates as well
+        formatted_list = deduped
+
     client = get_supabase_client()
     saved_count = 0
     cloud_saved = False
@@ -402,6 +447,8 @@ def batch_save_energy_bills(bills: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "status": "SUCCESS" if (cloud_saved or not client) else "ERROR",
         "saved_count": saved_count,
+        "skipped_count": len(skipped_duplicates),
+        "skipped_duplicates": skipped_duplicates,
         "cloud_saved": cloud_saved,
         "cloud_error": cloud_error,
     }

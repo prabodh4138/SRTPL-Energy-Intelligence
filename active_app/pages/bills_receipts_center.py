@@ -3,7 +3,8 @@ import pandas as pd
 import io
 import os
 import glob
-from concurrent.futures import ThreadPoolExecutor
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from core.demo_store import (
     get_demo_bills,
@@ -21,6 +22,8 @@ from core.db_sync import (
     batch_save_energy_bills,
     update_energy_bill,
     get_all_energy_bills,
+    delete_energy_bill,
+    get_existing_bill_numbers,
 )
 
 SAMPLE_DIR = "source_data/user_uploaded_bills/extractor"
@@ -453,142 +456,509 @@ def render():
                     batch_kind = st.selectbox("Document Type of Uploaded Files:", ["Energy Bill", "Energy Receipt"], key="batch_uploaded_kind")
                     is_batch_receipt = batch_kind == "Energy Receipt"
 
-                if st.button("🚀 Run Batch Extraction & Verification Pipeline", type="primary"):
+                if st.button("🚀 Run Batch Extraction & Verification Pipeline", type="primary", key="btn_run_batch_pipeline"):
                     if not batch_files_to_process:
                         st.warning("No files selected for batch processing.")
                     else:
-                        with st.spinner(f"Processing & verifying {len(batch_files_to_process)} documents in parallel..."):
-                            if not is_batch_receipt:
-                                def _worker_bill(item):
-                                    fname = getattr(item, "name", None) or os.path.basename(item)
-                                    m = extract_energy_bill_full(item, fname)
-                                    if hasattr(item, "seek"):
-                                        item.seek(0)
-                                    md = extract_md_bill_data(item, fname)
+                        total_files = len(batch_files_to_process)
+                        prog_box = st.container(border=True)
+                        with prog_box:
+                            st.markdown(f"#### ⚡ Parallel Processing: **{total_files} Documents**")
+                            pbar = st.progress(0.0)
+                            c_p1, c_p2, c_p3, c_p4 = st.columns(4)
+                            m_count = c_p1.empty()
+                            m_timer = c_p2.empty()
+                            m_eta = c_p3.empty()
+                            m_speed = c_p4.empty()
+                            p_status = st.empty()
 
-                                    # Run mathematical verification
-                                    v = verify_bill_calculations(m)
-                                    m["Tariff Category"] = v["tariff_category"]
-                                    m["Tariff Type"] = v["tariff_type"]
-                                    m["Cal Energy Charges"] = v["cal_energy_charges"]
-                                    m["Energy Charges Check"] = "MATCH ✓" if v["match_energy_charges"] else "MISMATCH ⚠️"
-                                    m["Cal Electricity Charges"] = v["cal_electricity_charges"]
-                                    m["Electricity Charges Check"] = "MATCH ✓" if v["match_electricity_charges"] else "MISMATCH ⚠️"
-                                    m["Cal Current Total"] = v["cal_current_total"]
-                                    m["Current Total Check"] = "MATCH ✓" if v["match_current_total"] else "MISMATCH ⚠️"
-                                    m["Audit Verdict"] = v["audit_status"]
-                                    return m, md
+                            m_count.metric("Processed Count", f"0 / {total_files}")
+                            m_timer.metric("Elapsed Timer", "00:00")
+                            m_eta.metric("Remaining ETA", "--:--")
+                            m_speed.metric("Processing Speed", "0.0 docs/s")
+                            p_status.caption(f"🚀 Initializing extraction pool for {total_files} documents...")
 
-                                with ThreadPoolExecutor(max_workers=6) as ex:
-                                    results = list(ex.map(_worker_bill, batch_files_to_process))
+                        start_time = time.time()
+                        results = []
+                        completed = 0
 
-                                df1 = pd.DataFrame([r[0] for r in results]).drop(columns=["raw_text", "slabs_detail"], errors="ignore")
-                                df2 = pd.DataFrame([r[1] for r in results])
-                                batch_df = merge_and_clean_dataframes(df1, df2)
-                                sheet_name = "Energy_Bill_Verified_Data"
-                            else:
-                                def _worker_receipt(item):
-                                    fname = getattr(item, "name", None) or os.path.basename(item)
-                                    return extract_energy_receipt_data(item, fname)
+                        if not is_batch_receipt:
+                            def _worker_bill(item):
+                                fname = getattr(item, "name", None) or os.path.basename(item)
+                                m = extract_energy_bill_full(item, fname)
+                                if hasattr(item, "seek"):
+                                    item.seek(0)
+                                md = extract_md_bill_data(item, fname)
 
-                                with ThreadPoolExecutor(max_workers=6) as ex:
-                                    res_receipts = list(ex.map(_worker_receipt, batch_files_to_process))
+                                # Run mathematical verification
+                                v = verify_bill_calculations(m)
+                                m["Tariff Category"] = v["tariff_category"]
+                                m["Tariff Type"] = v["tariff_type"]
+                                m["Cal Energy Charges"] = v["cal_energy_charges"]
+                                m["Energy Charges Check"] = "MATCH ✓" if v["match_energy_charges"] else "MISMATCH ⚠️"
+                                m["Cal Electricity Charges"] = v["cal_electricity_charges"]
+                                m["Electricity Charges Check"] = "MATCH ✓" if v["match_electricity_charges"] else "MISMATCH ⚠️"
+                                m["Cal Current Total"] = v["cal_current_total"]
+                                m["Current Total Check"] = "MATCH ✓" if v["match_current_total"] else "MISMATCH ⚠️"
 
-                                batch_df = pd.DataFrame(res_receipts)
-                                batch_df.dropna(how="all", inplace=True)
-                                sheet_name = "Energy_Receipt_Data"
+                                all_matched = v["match_energy_charges"] and v["match_electricity_charges"] and v["match_current_total"]
+                                m["Audit Verdict"] = "VERIFIED_MATCH" if all_matched else "MISMATCH ⚠️"
+
+                                faults = []
+                                if not v["match_energy_charges"]:
+                                    faults.append(f"Energy Charges Diff: ₹{v['diff_energy_charges']:+,.2f} (Billed ₹{v['ext_energy_charges']:,.2f} vs Calc ₹{v['cal_energy_charges']:,.2f})")
+                                if not v["match_electricity_charges"]:
+                                    faults.append(f"Elec Charges Diff: ₹{v['diff_electricity_charges']:+,.2f} (Billed ₹{v['ext_electricity_charges']:,.2f} vs Calc ₹{v['cal_electricity_charges']:,.2f})")
+                                if not v["match_current_total"]:
+                                    faults.append(f"Current Total Diff: ₹{v['diff_current_total']:+,.2f} (Billed ₹{v['ext_current_total']:,.2f} vs Calc ₹{v['cal_current_total']:,.2f})")
+
+                                m["Discrepancy Details"] = " | ".join(faults) if faults else "None (Exact Match)"
+                                m["diff_energy_charges"] = v["diff_energy_charges"]
+                                m["diff_electricity_charges"] = v["diff_electricity_charges"]
+                                m["diff_current_total"] = v["diff_current_total"]
+                                m["formula_energy_charges"] = v["formula_energy_charges"]
+                                m["formula_electricity_charges"] = v["formula_electricity_charges"]
+                                m["formula_current_total"] = v["formula_current_total"]
+                                m["Source File"] = fname
+                                return m, md
+
+                            with ThreadPoolExecutor(max_workers=6) as ex:
+                                futures = {ex.submit(_worker_bill, item): item for item in batch_files_to_process}
+                                for fut in as_completed(futures):
+                                    try:
+                                        res = fut.result()
+                                        results.append(res)
+                                    except Exception as err:
+                                        st.error(f"Error processing bill document: {err}")
+                                    completed += 1
+                                    elapsed = max(time.time() - start_time, 0.001)
+                                    speed = completed / elapsed
+                                    rem_sec = (total_files - completed) / speed if speed > 0 else 0
+                                    pct = completed / total_files
+                                    pbar.progress(pct)
+                                    m_count.metric("Processed Count", f"{completed} / {total_files}")
+                                    m_timer.metric("Elapsed Timer", f"{int(elapsed // 60):02d}:{int(elapsed % 60):02d}")
+                                    m_eta.metric("Remaining ETA", f"{int(rem_sec // 60):02d}:{int(rem_sec % 60):02d}")
+                                    m_speed.metric("Processing Speed", f"{speed:.1f} bills/s")
+                                    p_status.caption(f"⚡ Processing: **{completed} of {total_files} bills processed** ({pct * 100:.1f}%)")
+
+                            df1 = pd.DataFrame([r[0] for r in results if r]).drop(columns=["raw_text", "slabs_detail"], errors="ignore")
+                            df2 = pd.DataFrame([r[1] for r in results if r])
+                            batch_df = merge_and_clean_dataframes(df1, df2)
+                            sheet_name = "Energy_Bill_Verified_Data"
+
+                        else:
+                            def _worker_receipt(item):
+                                fname = getattr(item, "name", None) or os.path.basename(item)
+                                return extract_energy_receipt_data(item, fname)
+
+                            with ThreadPoolExecutor(max_workers=6) as ex:
+                                futures = {ex.submit(_worker_receipt, item): item for item in batch_files_to_process}
+                                for fut in as_completed(futures):
+                                    try:
+                                        res = fut.result()
+                                        results.append(res)
+                                    except Exception as err:
+                                        st.error(f"Error processing receipt: {err}")
+                                    completed += 1
+                                    elapsed = max(time.time() - start_time, 0.001)
+                                    speed = completed / elapsed
+                                    rem_sec = (total_files - completed) / speed if speed > 0 else 0
+                                    pct = completed / total_files
+                                    pbar.progress(pct)
+                                    m_count.metric("Processed Count", f"{completed} / {total_files}")
+                                    m_timer.metric("Elapsed Timer", f"{int(elapsed // 60):02d}:{int(elapsed % 60):02d}")
+                                    m_eta.metric("Remaining ETA", f"{int(rem_sec // 60):02d}:{int(rem_sec % 60):02d}")
+                                    m_speed.metric("Processing Speed", f"{speed:.1f} rec/s")
+                                    p_status.caption(f"⚡ Processing: **{completed} of {total_files} receipts processed** ({pct * 100:.1f}%)")
+
+                            batch_df = pd.DataFrame(results)
+                            batch_df.dropna(how="all", inplace=True)
+                            sheet_name = "Energy_Receipt_Data"
+
+                        total_elapsed = max(time.time() - start_time, 0.001)
+                        pbar.progress(1.0)
+                        p_status.success(f"✓ All {completed} documents successfully parsed in {int(total_elapsed // 60):02d}:{int(total_elapsed % 60):02d} (avg: {completed / total_elapsed:.1f}/sec)!")
+
+                        # Segregation into 3 Dedicated Buckets
+                        if not is_batch_receipt and not batch_df.empty:
+                            existing_db_bills = get_existing_bill_numbers()
+                            bill_col = "Bill Number" if "Bill Number" in batch_df.columns else batch_df.columns[0]
+
+                            match_rows = []
+                            mismatch_rows = []
+                            dup_rows = []
+                            seen_in_batch = set()
+
+                            for idx, r in batch_df.iterrows():
+                                row_dict = r.to_dict()
+                                bn = str(row_dict.get(bill_col) or "").strip()
+
+                                is_dup = False
+                                dup_reason = ""
+                                if bn and bn in existing_db_bills:
+                                    is_dup = True
+                                    dup_reason = "Already exists in Supabase public.energy_bills"
+                                elif bn and bn in seen_in_batch:
+                                    is_dup = True
+                                    dup_reason = "Duplicate record within uploaded batch"
+
+                                if bn:
+                                    seen_in_batch.add(bn)
+
+                                verdict = str(row_dict.get("Audit Verdict", "")).upper()
+                                is_mis = ("MISMATCH" in verdict) or (row_dict.get("Discrepancy Details", "None") not in ["None", "None (Exact Match)"])
+
+                                if is_dup:
+                                    row_dict["Bucket"] = "DUPLICATE"
+                                    row_dict["Duplicate Reason"] = dup_reason
+                                    dup_rows.append(row_dict)
+                                elif is_mis:
+                                    row_dict["Bucket"] = "MISMATCH"
+                                    mismatch_rows.append(row_dict)
+                                else:
+                                    row_dict["Bucket"] = "VERIFIED_MATCH"
+                                    match_rows.append(row_dict)
+
+                            st.session_state["match_df"] = pd.DataFrame(match_rows)
+                            st.session_state["mismatch_df"] = pd.DataFrame(mismatch_rows)
+                            st.session_state["duplicate_df"] = pd.DataFrame(dup_rows)
+                        else:
+                            st.session_state["match_df"] = pd.DataFrame()
+                            st.session_state["mismatch_df"] = pd.DataFrame()
+                            st.session_state["duplicate_df"] = pd.DataFrame()
 
                         st.session_state["last_batch_df"] = batch_df
                         st.session_state["last_batch_sheet"] = sheet_name
-                        st.success(f"✓ Processed {len(batch_files_to_process)} documents successfully! Extracted {len(batch_df)} rows and {len(batch_df.columns)} verified columns.")
+                        st.session_state["is_batch_receipt"] = is_batch_receipt
 
                 if "last_batch_df" in st.session_state:
                     res_df = st.session_state["last_batch_df"]
                     sheet_n = st.session_state.get("last_batch_sheet", "Extracted_Data")
+                    is_batch_rec = st.session_state.get("is_batch_receipt", False)
 
-                    st.markdown("##### 📊 Extracted & Mathematically Verified Batch Results")
-                    st.dataframe(res_df, width="stretch", hide_index=True)
+                    if not is_batch_rec and not res_df.empty:
+                        match_df = st.session_state.get("match_df", pd.DataFrame())
+                        mismatch_df = st.session_state.get("mismatch_df", pd.DataFrame())
+                        duplicate_df = st.session_state.get("duplicate_df", pd.DataFrame())
 
-                    col_b_act1, col_b_act2 = st.columns([1.2, 1])
-                    with col_b_act1:
-                        if not is_batch_receipt:
-                            if st.button("💾 Save All Extracted Bills to Supabase (public.energy_bills)", type="primary", width="stretch", key="btn_save_all_batch_bills"):
-                                batch_records = res_df.to_dict(orient="records")
-                                b_res = batch_save_energy_bills(batch_records)
-                                if b_res["status"] == "SUCCESS":
-                                    st.success(f"✅ Successfully saved **{b_res['saved_count']}** verified bills into Supabase (`public.energy_bills`)!")
-                                else:
-                                    st.error(f"Error saving batch to Supabase: {b_res.get('cloud_error')}")
+                        # Top KPI Summary Cards
+                        st.markdown("#### 📑 Batch Extraction & Audit Segregation")
+                        bk1, bk2, bk3, bk4 = st.columns(4)
+                        bk1.metric("📦 Total Processed", f"{len(res_df)} Bills")
+                        bk2.metric("✅ Verified Matches", f"{len(match_df)} Bills", help="Zero arithmetic variance, ready for Supabase injection")
+                        bk3.metric("⚠️ Calculation Mismatches", f"{len(mismatch_df)} Bills", help="Arithmetic discrepancy, review & audit required")
+                        bk4.metric("🔁 Duplicate Records", f"{len(duplicate_df)} Bills", help="Already present in database, review / overwrite / delete")
 
-                    with col_b_act2:
-                        out_batch = io.BytesIO()
-                        with pd.ExcelWriter(out_batch, engine="openpyxl") as writer:
+                        st.divider()
+
+                        subtab_match, subtab_mismatch, subtab_dup, subtab_all = st.tabs([
+                            f"✅ Verified Matches ({len(match_df)})",
+                            f"⚠️ Calculation Mismatches ({len(mismatch_df)})",
+                            f"🔁 Duplicate Records ({len(duplicate_df)})",
+                            f"📋 All Extracted Bills ({len(res_df)})",
+                        ])
+
+                        # -----------------------------------------------------
+                        # SUBTAB 1: VERIFIED MATCHES
+                        # -----------------------------------------------------
+                        with subtab_match:
+                            st.markdown("##### 🟢 Bucket 1: Verified Clean Bills Ready for Database Injection")
+                            st.caption("These bills have zero arithmetic variance across all energy charges, electricity charges, and current total equations, and DO NOT exist in the database.")
+
+                            if match_df.empty:
+                                st.info("No verified non-duplicate bills in this bucket.")
+                            else:
+                                st.dataframe(match_df, width="stretch", hide_index=True)
+
+                                col_m_act1, col_m_act2 = st.columns([1.3, 1])
+                                with col_m_act1:
+                                    if st.button(
+                                        f"🚀 Ingest {len(match_df)} Verified Bills → Supabase (public.energy_bills)",
+                                        type="primary",
+                                        width="stretch",
+                                        key="btn_ingest_verified_matches",
+                                    ):
+                                        with st.spinner("Injecting verified bills into Supabase with strict duplicate prevention..."):
+                                            m_records = match_df.to_dict(orient="records")
+                                            save_res = batch_save_energy_bills(m_records, prevent_duplicates=True)
+                                            if save_res["status"] == "SUCCESS":
+                                                st.success(f"✅ Successfully injected **{save_res['saved_count']}** clean bills into Supabase `public.energy_bills`!")
+                                                if save_res.get("skipped_count", 0) > 0:
+                                                    st.warning(f"⚠️ **{save_res['skipped_count']}** duplicate bills were prevented from entering: `{', '.join(save_res['skipped_duplicates'])}`")
+                                            else:
+                                                st.error(f"Error injecting into Supabase: {save_res.get('cloud_error')}")
+
+                                with col_m_act2:
+                                    out_m = io.BytesIO()
+                                    with pd.ExcelWriter(out_m, engine="openpyxl") as writer:
+                                        match_df.to_excel(writer, index=False, sheet_name="Verified_Matches")
+                                    st.download_button(
+                                        label=f"📥 Download Clean Excel ({len(match_df)} rows)",
+                                        data=out_m.getvalue(),
+                                        file_name=f"Verified_Clean_Bills_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                        width="stretch",
+                                    )
+
+                        # -----------------------------------------------------
+                        # SUBTAB 2: CALCULATION MISMATCHES
+                        # -----------------------------------------------------
+                        with subtab_mismatch:
+                            st.markdown("##### 🟡 Bucket 2: Calculation Mismatches (Auditor Review & Fault Highlighting)")
+                            st.caption("Bills with mathematical discrepancies between billed DISCOM figures and official statutory tariff equations.")
+
+                            if mismatch_df.empty:
+                                st.success("🎉 Zero calculation mismatches detected! All bills passed mathematical formula checks.")
+                            else:
+                                st.dataframe(mismatch_df, width="stretch", hide_index=True)
+
+                                st.markdown("---")
+                                st.markdown("#### 🔍 Discrepancy Fault Inspector & Reconciliation")
+                                b_col_m = "Bill Number" if "Bill Number" in mismatch_df.columns else mismatch_df.columns[0]
+                                m_bill_list = [str(r.get(b_col_m, f"Row {i}")) for i, r in mismatch_df.iterrows()]
+                                sel_m_idx = st.selectbox(
+                                    "Select Mismatched Bill to Inspect Fault & Reconcile:",
+                                    range(len(m_bill_list)),
+                                    format_func=lambda i: f"Bill #{m_bill_list[i]} — Fault: {mismatch_df.iloc[i].get('Discrepancy Details', 'Variance')}",
+                                    key="sel_mismatch_bill_inspect",
+                                )
+
+                                chosen_mis = mismatch_df.iloc[sel_m_idx].to_dict()
+
+                                diff_ec = float(_parse_num(chosen_mis.get("diff_energy_charges", 0.0)))
+                                diff_el = float(_parse_num(chosen_mis.get("diff_electricity_charges", 0.0)))
+                                diff_tot = float(_parse_num(chosen_mis.get("diff_current_total", 0.0)))
+
+                                ext_ec = float(_parse_num(chosen_mis.get("a. Energy Charges") or chosen_mis.get("energy_charges", 0.0)))
+                                cal_ec = float(_parse_num(chosen_mis.get("Cal Energy Charges") or chosen_mis.get("cal_energy_charges", 0.0)))
+
+                                ext_el = float(_parse_num(chosen_mis.get("Electricity Charge (i)") or chosen_mis.get("electricity_charges", 0.0)))
+                                cal_el = float(_parse_num(chosen_mis.get("Cal Electricity Charges") or chosen_mis.get("cal_electricity_charges", 0.0)))
+
+                                ext_tot = float(_parse_num(chosen_mis.get("Current Total (o)") or chosen_mis.get("current_total", 0.0)))
+                                cal_tot = float(_parse_num(chosen_mis.get("Cal Current Total") or chosen_mis.get("cal_current_total", 0.0)))
+
+                                st.markdown(f"### 🔴 Identified Discrepancies for Bill **#{chosen_mis.get(b_col_m)}**")
+
+                                fault_detected = False
+                                if abs(diff_ec) > 0.05:
+                                    fault_detected = True
+                                    st.markdown(
+                                        f"""
+                                        <div style="background: rgba(239, 68, 68, 0.12); border-left: 5px solid #ef4444; border-radius: 6px; padding: 14px; margin-bottom: 12px;">
+                                            <div style="font-weight: 700; color: #ef4444; font-size: 15px;">❌ FAULT: Energy Charges Discrepancy (Variance: ₹{diff_ec:+,.2f})</div>
+                                            <div style="font-size: 13px; color: #cbd5e1; margin-top: 6px;">
+                                                • <b>Billed in Bill PDF:</b> ₹{ext_ec:,.2f}<br/>
+                                                • <b>Calculated from Tariff Slabs:</b> ₹{cal_ec:,.2f}<br/>
+                                                • <b>Formula Breakdown:</b> <code>{chosen_mis.get('formula_energy_charges', '-')}</code>
+                                            </div>
+                                        </div>
+                                        """,
+                                        unsafe_allow_html=True,
+                                    )
+
+                                if abs(diff_el) > 0.05:
+                                    fault_detected = True
+                                    st.markdown(
+                                        f"""
+                                        <div style="background: rgba(239, 68, 68, 0.12); border-left: 5px solid #ef4444; border-radius: 6px; padding: 14px; margin-bottom: 12px;">
+                                            <div style="font-weight: 700; color: #ef4444; font-size: 15px;">❌ FAULT: Electricity Charges Discrepancy (Variance: ₹{diff_el:+,.2f})</div>
+                                            <div style="font-size: 13px; color: #cbd5e1; margin-top: 6px;">
+                                                • <b>Billed in Bill PDF:</b> ₹{ext_el:,.2f}<br/>
+                                                • <b>Calculated (Energy + Demand + TOD):</b> ₹{cal_el:,.2f}<br/>
+                                                • <b>Formula Breakdown:</b> <code>{chosen_mis.get('formula_electricity_charges', '-')}</code>
+                                            </div>
+                                        </div>
+                                        """,
+                                        unsafe_allow_html=True,
+                                    )
+
+                                if abs(diff_tot) > 0.05:
+                                    fault_detected = True
+                                    st.markdown(
+                                        f"""
+                                        <div style="background: rgba(239, 68, 68, 0.12); border-left: 5px solid #ef4444; border-radius: 6px; padding: 14px; margin-bottom: 12px;">
+                                            <div style="font-weight: 700; color: #ef4444; font-size: 15px;">❌ FAULT: Current Total Bill Discrepancy (Variance: ₹{diff_tot:+,.2f})</div>
+                                            <div style="font-size: 13px; color: #cbd5e1; margin-top: 6px;">
+                                                • <b>Billed in Bill PDF:</b> ₹{ext_tot:,.2f}<br/>
+                                                • <b>Calculated Total:</b> ₹{cal_tot:,.2f}<br/>
+                                                • <b>Formula Breakdown:</b> <code>{chosen_mis.get('formula_current_total', '-')}</code>
+                                            </div>
+                                        </div>
+                                        """,
+                                        unsafe_allow_html=True,
+                                    )
+
+                                if not fault_detected:
+                                    st.warning(f"⚠️ Flagged discrepancy details: {chosen_mis.get('Discrepancy Details', 'Review required')}")
+
+                                # Correction Form
+                                with st.form(key=f"mismatch_correction_form_{sel_m_idx}"):
+                                    st.markdown("##### ✏️ Correct Values & Save to Supabase")
+                                    me_c1, me_c2, me_c3 = st.columns(3)
+                                    b_cat = str(chosen_mis.get("Tariff Category", ""))
+                                    b_cat_idx = 0 if "GPS" in b_cat.upper() else (1 if "LIGHT" in b_cat.upper() else 2)
+                                    m_tariff = me_c1.selectbox("Tariff Category", ["GPS (< 110 kVA)", "Public Lighting", "HT (>= 110 kVA)"], index=b_cat_idx)
+                                    m_ec = me_c2.number_input("Energy Charges (₹)", value=ext_ec, step=10.0)
+                                    m_tot = me_c3.number_input("Current Total (₹)", value=ext_tot, step=10.0)
+
+                                    me_c4, me_c5, me_c6 = st.columns(3)
+                                    m_norm = me_c4.number_input("Slab Normal - KWH", value=float(_parse_num(chosen_mis.get("Slab Normal - KWH"))), step=1.0)
+                                    m_peak = me_c5.number_input("Slab Peak - KWH", value=float(_parse_num(chosen_mis.get("Slab Peak - KWH"))), step=1.0)
+                                    m_solar = me_c6.number_input("Slab Solar - KWH", value=float(_parse_num(chosen_mis.get("Slab Solar - KWH"))), step=1.0)
+
+                                    me_c7, me_c8 = st.columns(2)
+                                    m_demand = me_c7.number_input("Demand Charge / MMFC (₹)", value=float(_parse_num(chosen_mis.get("Demand Charge / MMFC"))), step=10.0)
+                                    m_notes = me_c8.text_input("Auditor Note / Reconciliation Reason", value=f"Corrected discrepancy via batch auditor on {pd.Timestamp.now().strftime('%Y-%m-%d')}")
+
+                                    if st.form_submit_button("💾 Save Corrected Bill to Supabase (Mark Resolved)", type="primary", width="stretch"):
+                                        updated_rec = dict(chosen_mis)
+                                        updated_rec["Tariff Category"] = m_tariff
+                                        updated_rec["a. Energy Charges"] = m_ec
+                                        updated_rec["Current Total (o)"] = m_tot
+                                        updated_rec["Slab Normal - KWH"] = m_norm
+                                        updated_rec["Slab Peak - KWH"] = m_peak
+                                        updated_rec["Slab Solar - KWH"] = m_solar
+                                        updated_rec["Demand Charge / MMFC"] = m_demand
+
+                                        b_num_to_up = str(chosen_mis.get(b_col_m))
+                                        u_res = update_energy_bill(
+                                            bill_number=b_num_to_up,
+                                            updates=updated_rec,
+                                            edited_by=st.session_state.get("user", "admin@srtpl.com"),
+                                            edit_notes=m_notes,
+                                        )
+                                        if u_res["status"] == "SUCCESS":
+                                            st.success(f"✅ Bill **{b_num_to_up}** updated in Supabase (`public.energy_bills`)! Status: `{u_res['updated_record']['verification_status']}`")
+                                            st.rerun()
+                                        else:
+                                            st.error(f"Update failed: {u_res.get('cloud_error')}")
+
+                        # -----------------------------------------------------
+                        # SUBTAB 3: DUPLICATE RECORDS
+                        # -----------------------------------------------------
+                        with subtab_dup:
+                            st.markdown("##### 🔁 Bucket 3: Duplicate Records (Audit, Force Overwrite & Deletion)")
+                            st.caption("These bills have bill numbers that already exist in Supabase `public.energy_bills` or appear multiple times in the upload batch. Prevented from entering automatically to protect data integrity.")
+
+                            if duplicate_df.empty:
+                                st.success("🎉 Zero duplicates detected! All bills in this batch are new and unique.")
+                            else:
+                                st.warning(f"⚠️ **{len(duplicate_df)} Duplicate Records Found.** Review records below:")
+                                st.dataframe(duplicate_df, width="stretch", hide_index=True)
+
+                                st.markdown("---")
+                                st.markdown("#### ⚙️ Duplicate Actions & Resolution")
+                                b_col_d = "Bill Number" if "Bill Number" in duplicate_df.columns else duplicate_df.columns[0]
+                                d_bill_list = [str(r.get(b_col_d, f"Row {i}")) for i, r in duplicate_df.iterrows()]
+                                sel_d_idx = st.selectbox(
+                                    "Select Duplicate Bill to Manage:",
+                                    range(len(d_bill_list)),
+                                    format_func=lambda i: f"Bill #{d_bill_list[i]} — {duplicate_df.iloc[i].get('Duplicate Reason', 'Duplicate')} (Amount: ₹{float(_parse_num(duplicate_df.iloc[i].get('Current Total (o)') or duplicate_df.iloc[i].get('current_total', 0))):,.2f})",
+                                    key="sel_dup_bill_inspect",
+                                )
+
+                                chosen_dup = duplicate_df.iloc[sel_d_idx].to_dict()
+                                chosen_dup_bn = str(chosen_dup.get(b_col_d))
+
+                                dc1, dc2, dc3 = st.columns(3)
+                                with dc1:
+                                    if st.button("⚡ Force Overwrite in Supabase", type="primary", width="stretch", key=f"btn_force_overwrite_{chosen_dup_bn}"):
+                                        with st.spinner(f"Overwriting Bill #{chosen_dup_bn} in Supabase..."):
+                                            res_ov = batch_save_energy_bills([chosen_dup], prevent_duplicates=False)
+                                            if res_ov["status"] == "SUCCESS":
+                                                st.success(f"✅ Bill **{chosen_dup_bn}** was force-overwritten in Supabase `public.energy_bills`!")
+                                                st.rerun()
+                                            else:
+                                                st.error(f"Overwrite failed: {res_ov.get('cloud_error')}")
+
+                                with dc2:
+                                    if st.button("🗑️ Discard from Batch Bucket", width="stretch", key=f"btn_discard_dup_{chosen_dup_bn}"):
+                                        duplicate_df = duplicate_df[duplicate_df[b_col_d].astype(str) != chosen_dup_bn]
+                                        st.session_state["duplicate_df"] = duplicate_df
+                                        st.success(f"🧹 Bill **{chosen_dup_bn}** removed from duplicate bucket.")
+                                        st.rerun()
+
+                                with dc3:
+                                    if st.button("🚨 Delete from Supabase Database", type="secondary", width="stretch", key=f"btn_delete_db_{chosen_dup_bn}"):
+                                        with st.spinner(f"Deleting Bill #{chosen_dup_bn} from Supabase..."):
+                                            del_res = delete_energy_bill(chosen_dup_bn)
+                                            st.success(f"🧹 Bill **{chosen_dup_bn}** permanently deleted from Supabase!")
+                                            duplicate_df = duplicate_df[duplicate_df[b_col_d].astype(str) != chosen_dup_bn]
+                                            st.session_state["duplicate_df"] = duplicate_df
+                                            st.rerun()
+
+                                st.markdown("---")
+                                with st.expander("⚡ Bulk Actions for All Duplicate Records"):
+                                    conf_bulk_ov = st.checkbox(f"Confirm force overwriting all {len(duplicate_df)} duplicate bills into Supabase `public.energy_bills`", key="chk_bulk_ov_dup")
+                                    if st.button(f"⚡ Force Overwrite All {len(duplicate_df)} Duplicates", type="primary", disabled=not conf_bulk_ov, key="btn_exec_bulk_ov"):
+                                        res_all_ov = batch_save_energy_bills(duplicate_df.to_dict(orient="records"), prevent_duplicates=False)
+                                        if res_all_ov["status"] == "SUCCESS":
+                                            st.success(f"✅ Successfully force-overwritten **{res_all_ov['saved_count']}** duplicate bills in Supabase!")
+                                            st.session_state["duplicate_df"] = pd.DataFrame()
+                                            st.rerun()
+                                        else:
+                                            st.error(f"Bulk overwrite error: {res_all_ov.get('cloud_error')}")
+
+                                # Download duplicates Excel
+                                out_dup = io.BytesIO()
+                                with pd.ExcelWriter(out_dup, engine="openpyxl") as writer:
+                                    duplicate_df.to_excel(writer, index=False, sheet_name="Duplicate_Bills")
+                                st.download_button(
+                                    label=f"📥 Download Duplicates Audit Report ({len(duplicate_df)} rows)",
+                                    data=out_dup.getvalue(),
+                                    file_name=f"Duplicate_Bills_Report_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    width="stretch",
+                                )
+
+                        # -----------------------------------------------------
+                        # SUBTAB 4: ALL EXTRACTED BILLS
+                        # -----------------------------------------------------
+                        with subtab_all:
+                            st.markdown("##### 📋 Complete Extracted & Mathematically Verified Batch Results")
+                            st.dataframe(res_df, width="stretch", hide_index=True)
+
+                            col_b_act1, col_b_act2 = st.columns([1.2, 1])
+                            with col_b_act1:
+                                if st.button("💾 Force Save All Extracted Bills to Supabase (Overwrite All)", type="secondary", width="stretch", key="btn_save_all_batch_bills_force"):
+                                    batch_records = res_df.to_dict(orient="records")
+                                    b_res = batch_save_energy_bills(batch_records, prevent_duplicates=False)
+                                    if b_res["status"] == "SUCCESS":
+                                        st.success(f"✅ Successfully saved **{b_res['saved_count']}** bills into Supabase (`public.energy_bills`)!")
+                                    else:
+                                        st.error(f"Error saving batch to Supabase: {b_res.get('cloud_error')}")
+
+                            with col_b_act2:
+                                out_batch = io.BytesIO()
+                                with pd.ExcelWriter(out_batch, engine="openpyxl") as writer:
+                                    res_df.to_excel(writer, index=False, sheet_name=sheet_n)
+
+                                st.download_button(
+                                    label=f"📥 Download Verified Excel (.xlsx) [{len(res_df)} rows]",
+                                    data=out_batch.getvalue(),
+                                    file_name=f"{sheet_n}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    width="stretch",
+                                )
+
+                    else:
+                        # Receipt Batch Results
+                        st.markdown("##### 📊 Extracted Energy Payment Receipts")
+                        st.dataframe(res_df, width="stretch", hide_index=True)
+
+                        out_rec_batch = io.BytesIO()
+                        with pd.ExcelWriter(out_rec_batch, engine="openpyxl") as writer:
                             res_df.to_excel(writer, index=False, sheet_name=sheet_n)
 
                         st.download_button(
-                            label=f"📥 Download Verified Excel (.xlsx) [{len(res_df)} rows]",
-                            data=out_batch.getvalue(),
+                            label=f"📥 Download Receipts Excel (.xlsx) [{len(res_df)} rows]",
+                            data=out_rec_batch.getvalue(),
                             file_name=f"{sheet_n}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             width="stretch",
                         )
-
-                    # Batch Discrepancy Review & Interactive Editor
-                    if not is_batch_receipt and not res_df.empty:
-                        with st.expander("✏️ Discrepancy Review & Batch Record Editor", expanded=True):
-                            st.markdown("##### Review, Correct & Resolve Discrepancies in Extracted Bills")
-                            st.caption("Select any bill from the batch below to adjust its values and persist corrections directly into Supabase.")
-
-                            bill_num_col = "Bill Number" if "Bill Number" in res_df.columns else res_df.columns[0]
-                            bill_list = [str(r.get(bill_num_col, f"Row {i}")) for i, r in res_df.iterrows()]
-                            sel_bill_idx = st.selectbox(
-                                "Select Bill Number to Inspect & Edit:",
-                                range(len(bill_list)),
-                                format_func=lambda i: f"Bill #{bill_list[i]} — {res_df.iloc[i].get('Audit Verdict', 'REVIEW')} (File: {res_df.iloc[i].get('Source PDF', '')})",
-                                key="batch_bill_select_edit",
-                            )
-
-                            chosen_row = res_df.iloc[sel_bill_idx].to_dict()
-
-                            with st.form(key=f"batch_row_edit_form_{sel_bill_idx}"):
-                                be_c1, be_c2, be_c3 = st.columns(3)
-                                b_cat = str(chosen_row.get("Tariff Category", ""))
-                                b_cat_idx = 0 if "GPS" in b_cat.upper() else (1 if "LIGHT" in b_cat.upper() else 2)
-                                b_tariff = be_c1.selectbox("Tariff Category", ["GPS (< 110 kVA)", "Public Lighting", "HT (>= 110 kVA)"], index=b_cat_idx)
-                                b_ec = be_c2.number_input("Energy Charges (₹)", value=float(_parse_num(chosen_row.get("a. Energy Charges") or chosen_row.get("energy_charges"))), step=10.0)
-                                b_tot = be_c3.number_input("Current Total (₹)", value=float(_parse_num(chosen_row.get("Current Total (o)") or chosen_row.get("current_total"))), step=10.0)
-
-                                be_c4, be_c5, be_c6 = st.columns(3)
-                                b_norm = be_c4.number_input("Slab Normal - KWH", value=float(_parse_num(chosen_row.get("Slab Normal - KWH") or chosen_row.get("slab_normal_kwh"))), step=1.0)
-                                b_peak = be_c5.number_input("Slab Peak - KWH", value=float(_parse_num(chosen_row.get("Slab Peak - KWH") or chosen_row.get("slab_peak_kwh"))), step=1.0)
-                                b_solar = be_c6.number_input("Slab Solar - KWH", value=float(_parse_num(chosen_row.get("Slab Solar - KWH") or chosen_row.get("slab_solar_kwh"))), step=1.0)
-
-                                be_c7, be_c8 = st.columns(2)
-                                b_demand = be_c7.number_input("Demand Charge / MMFC (₹)", value=float(_parse_num(chosen_row.get("Demand Charge / MMFC") or chosen_row.get("demand_charge"))), step=10.0)
-                                b_notes = be_c8.text_input("Audit Correction Notes", value=f"Corrected via batch editor on {pd.Timestamp.now().strftime('%Y-%m-%d')}")
-
-                                if st.form_submit_button("💾 Save Corrected Bill to Supabase", type="primary", width="stretch"):
-                                    updated_rec = dict(chosen_row)
-                                    updated_rec["Tariff Category"] = b_tariff
-                                    updated_rec["a. Energy Charges"] = b_ec
-                                    updated_rec["Current Total (o)"] = b_tot
-                                    updated_rec["Slab Normal - KWH"] = b_norm
-                                    updated_rec["Slab Peak - KWH"] = b_peak
-                                    updated_rec["Slab Solar - KWH"] = b_solar
-                                    updated_rec["Demand Charge / MMFC"] = b_demand
-
-                                    b_num = str(chosen_row.get(bill_num_col))
-                                    u_res = update_energy_bill(
-                                        bill_number=b_num,
-                                        updates=updated_rec,
-                                        edited_by=st.session_state.get("user", "admin@srtpl.com"),
-                                        edit_notes=b_notes,
-                                    )
-                                    if u_res["status"] == "SUCCESS":
-                                        st.success(f"✅ Bill **{b_num}** successfully updated in Supabase (`public.energy_bills`)! Status: `{u_res['updated_record']['verification_status']}`")
-                                        st.rerun()
-                                    else:
-                                        st.error(f"Update failed: {u_res.get('cloud_error')}")
 
     # -------------------------------------------------------------------------
     # TAB 3: Meter vs. Bill Reconciliation
