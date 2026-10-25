@@ -46,22 +46,23 @@ def render():
     st.title("Bills & Receipts — Monthly EB Consumption & Extraction")
     st.caption("Month-wise DISCOM billing intelligence, automated bill field extraction with dynamic tariff categories (GPS, Public Lighting, HT), and formula verification.")
 
-    bills_df = get_demo_bills()
-    if not bills_df.empty and "deleted_bills" in st.session_state:
-        bills_df = bills_df[~bills_df["Document ID"].isin(st.session_state["deleted_bills"])]
+    raw_kpi_df = get_unified_billing_kpi_dataset()
+    if not raw_kpi_df.empty and "deleted_bills" in st.session_state:
+        raw_kpi_df = raw_kpi_df[~raw_kpi_df["bill_number"].isin(st.session_state["deleted_bills"])]
     monthly_df = get_demo_monthly_eb_consumption()
 
-    # Top KPI summary cards
-    elec_bills = bills_df[bills_df["Type"] == "Electricity Bill"]
-    total_billed = float(elec_bills["Amount"].sum()) if not elec_bills.empty else 0.0
-    total_paid = float(elec_bills["Paid"].sum()) if not elec_bills.empty else 0.0
-    total_outstanding = total_billed - total_paid
+    # Top KPI summary cards calculated from real-time database views / unified dataset
+    total_billed = float(raw_kpi_df["total_amount_payable"].sum()) if not raw_kpi_df.empty and "total_amount_payable" in raw_kpi_df.columns else 0.0
+    total_paid = float(raw_kpi_df["amount_paid"].sum()) if not raw_kpi_df.empty and "amount_paid" in raw_kpi_df.columns else 0.0
+    total_outstanding = float(raw_kpi_df["outstanding_balance"].sum()) if not raw_kpi_df.empty and "outstanding_balance" in raw_kpi_df.columns else 0.0
+    tot_kwh_overall = float(raw_kpi_df["total_billed_kwh"].sum()) if not raw_kpi_df.empty and "total_billed_kwh" in raw_kpi_df.columns else 0.0
+    realized_pct = (total_paid / max(1.0, total_billed) * 100) if total_billed > 0 else 100.0
 
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("📋 Total Billed", f"₹{total_billed:,.0f}", help="Combined DISCOM electricity bills across TP01, TP02, TP03")
-    k2.metric("🟢 Paid Amount", f"₹{total_paid:,.0f}", help="Cleared payments with bank UTR match")
+    k1.metric("📋 Total Invoiced", f"₹{total_billed:,.0f}", f"{tot_kwh_overall:,.0f} kWh Billed Units")
+    k2.metric("🟢 Payments Cleared", f"₹{total_paid:,.0f}", f"{realized_pct:.1f}% Realized")
     k3.metric("🟡 Outstanding Balance", f"₹{total_outstanding:,.0f}", help="Awaiting payment or invoice reconciliation")
-    k4.metric("✓ Tariff Reconciliation", "100%", help="All 13 sample bills verified across GPS, Public Lighting, and HT categories")
+    k4.metric("🛡️ Active Corridor Coverage", "60 Accounts", "3 HT Substation + 57 LT Lighting")
 
     st.divider()
 
@@ -1513,7 +1514,7 @@ def render():
                 bill_col = "bill_number" if "bill_number" in live_bills_df.columns else ("Document ID" if "Document ID" in live_bills_df.columns else live_bills_df.columns[0])
                 live_bills_df = live_bills_df[~live_bills_df[bill_col].astype(str).isin(st.session_state["deleted_bills"])]
 
-            display_df = live_bills_df if not live_bills_df.empty else bills_df
+            display_df = live_bills_df if not live_bills_df.empty else raw_kpi_df
             st.dataframe(display_df, width="stretch", hide_index=True)
 
             col_reg_dl, _ = st.columns([1, 1])
