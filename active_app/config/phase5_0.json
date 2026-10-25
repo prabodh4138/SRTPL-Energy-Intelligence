@@ -1,0 +1,12 @@
+{
+  "environment": "production",
+  "supported_sources": ["SOLAR", "DG", "EB", "TRANSFORMER", "UPS"],
+  "future_sources": ["POWER_PANEL", "TPWODL_BILL"],
+  "original_file_immutable": true,
+  "null_policy": "PRESERVE_NULL",
+  "exact_file_duplicate": "BLOCK",
+  "record_duplicate": "BLOCK_OR_EXCEPTION",
+  "browser_only_client": true,
+  "service_role_browser_access": false,
+  "show_demo_data": false
+}

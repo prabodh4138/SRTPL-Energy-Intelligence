@@ -1,0 +1,9 @@
+{
+  "supported_sources": ["SOLAR", "DG", "EB", "TRANSFORMER", "UPS"],
+  "show_demo_data": false,
+  "null_display": "No data",
+  "read_model_schema": "energy_dashboard",
+  "auto_refresh_default": false,
+  "expected_schedule_source": "database",
+  "threshold_source": "database"
+}

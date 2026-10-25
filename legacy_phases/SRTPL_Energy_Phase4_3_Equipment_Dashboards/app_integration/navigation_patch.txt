@@ -1,0 +1,7 @@
+Add to Phase 3.4 navigation:
+"Equipment Dashboard"
+
+Add to app.py:
+elif page == "Equipment Dashboard":
+    from pages.equipment_dashboard import render
+    render()

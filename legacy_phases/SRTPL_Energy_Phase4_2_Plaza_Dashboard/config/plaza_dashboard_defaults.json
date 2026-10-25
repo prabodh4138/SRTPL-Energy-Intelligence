@@ -1,0 +1,6 @@
+{
+  "known_plazas": ["TP01", "TP02", "TP03"],
+  "default_date_range_days": 30,
+  "null_display": "—",
+  "show_demo_data": false
+}

@@ -1,0 +1,23 @@
+Add to application navigation:
+
+"Administration Center"
+"User & Role Administration"
+"Change Request Center"
+"Audit Log"
+
+Recommended routing:
+elif page == "Administration Center":
+    from pages.admin_center import render
+    render()
+
+elif page == "User & Role Administration":
+    from pages.user_role_admin import render
+    render()
+
+elif page == "Change Request Center":
+    from pages.change_request_center import render
+    render()
+
+elif page == "Audit Log":
+    from pages.audit_log import render
+    render()

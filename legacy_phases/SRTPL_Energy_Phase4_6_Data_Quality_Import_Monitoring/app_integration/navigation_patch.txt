@@ -1,0 +1,8 @@
+Add to application navigation:
+
+"Data Quality & Import Monitoring"
+
+Recommended routing:
+elif page == "Data Quality & Import Monitoring":
+    from pages.data_quality_dashboard import render
+    render()

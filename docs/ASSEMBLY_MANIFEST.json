@@ -1,0 +1,145 @@
+{
+  "phase": "5.1",
+  "created_utc": "2026-10-05T15:55:04Z",
+  "sources": [
+    "SRTPL_Energy_Phase2_Core_Schema.sql",
+    "SRTPL_Energy_Phase2_Supabase.sql",
+    "SRTPL_Energy_Phase3_JUNO_Importer.zip",
+    "SRTPL_Energy_Phase3_1_Supabase_Import.zip",
+    "SRTPL_Energy_Phase3_2_Validation_Normalization.zip",
+    "SRTPL_Energy_Phase3_3_KPI_Analytics.zip",
+    "SRTPL_Energy_Phase3_4_Production_Web_App.zip",
+    "SRTPL_Energy_Phase4_1_Executive_Dashboard.zip",
+    "SRTPL_Energy_Phase4_2_Plaza_Dashboard.zip",
+    "SRTPL_Energy_Phase4_3_Equipment_Dashboards.zip",
+    "SRTPL_Energy_Phase4_4_JUNO_Import_Center.zip",
+    "SRTPL_Energy_Phase4_5_Validation_Exception_Center.zip",
+    "SRTPL_Energy_Phase4_6_Data_Quality_Import_Monitoring.zip",
+    "SRTPL_Energy_Phase4_7_Reports_Export_Center.zip",
+    "SRTPL_Energy_Phase4_8_Audit_Administration_Center.zip",
+    "SRTPL_Energy_Phase4_9_Master_Data_Configuration_Center.zip",
+    "SRTPL_Energy_Phase5_0_Master_Integration_Production_Hardening.zip"
+  ],
+  "collision_policy": "later_phase_wins",
+  "collision_count": 19,
+  "collisions": [
+    {
+      "path": "tests/test_hash.py",
+      "replaced_by": "3_1",
+      "previous_owner": "3",
+      "reason": "later phase wins"
+    },
+    {
+      "path": "pages/plaza_dashboard.py",
+      "replaced_by": "4_2",
+      "previous_owner": "3_4",
+      "reason": "later phase wins"
+    },
+    {
+      "path": "docs/INTEGRATION.md",
+      "replaced_by": "4_2",
+      "previous_owner": "4_1",
+      "reason": "later phase wins"
+    },
+    {
+      "path": "docs/INTEGRATION.md",
+      "replaced_by": "4_3",
+      "previous_owner": "4_2",
+      "reason": "later phase wins"
+    },
+    {
+      "path": "pages/import_history.py",
+      "replaced_by": "4_4",
+      "previous_owner": "3_4",
+      "reason": "later phase wins"
+    },
+    {
+      "path": "app_integration/navigation_patch.txt",
+      "replaced_by": "4_4",
+      "previous_owner": "4_3",
+      "reason": "later phase wins"
+    },
+    {
+      "path": "docs/INTEGRATION.md",
+      "replaced_by": "4_4",
+      "previous_owner": "4_3",
+      "reason": "later phase wins"
+    },
+    {
+      "path": "app_integration/navigation_patch.txt",
+      "replaced_by": "4_5",
+      "previous_owner": "4_4",
+      "reason": "later phase wins"
+    },
+    {
+      "path": "docs/INTEGRATION.md",
+      "replaced_by": "4_5",
+      "previous_owner": "4_4",
+      "reason": "later phase wins"
+    },
+    {
+      "path": "app_integration/navigation_patch.txt",
+      "replaced_by": "4_6",
+      "previous_owner": "4_5",
+      "reason": "later phase wins"
+    },
+    {
+      "path": "docs/INTEGRATION.md",
+      "replaced_by": "4_6",
+      "previous_owner": "4_5",
+      "reason": "later phase wins"
+    },
+    {
+      "path": "app_integration/navigation_patch.txt",
+      "replaced_by": "4_7",
+      "previous_owner": "4_6",
+      "reason": "later phase wins"
+    },
+    {
+      "path": "docs/INTEGRATION.md",
+      "replaced_by": "4_7",
+      "previous_owner": "4_6",
+      "reason": "later phase wins"
+    },
+    {
+      "path": "app_integration/navigation_patch.txt",
+      "replaced_by": "4_8",
+      "previous_owner": "4_7",
+      "reason": "later phase wins"
+    },
+    {
+      "path": "docs/INTEGRATION.md",
+      "replaced_by": "4_8",
+      "previous_owner": "4_7",
+      "reason": "later phase wins"
+    },
+    {
+      "path": "app_integration/navigation_patch.txt",
+      "replaced_by": "4_9",
+      "previous_owner": "4_8",
+      "reason": "later phase wins"
+    },
+    {
+      "path": "docs/INTEGRATION.md",
+      "replaced_by": "4_9",
+      "previous_owner": "4_8",
+      "reason": "later phase wins"
+    },
+    {
+      "path": "app_integration/navigation_patch.txt",
+      "replaced_by": "5_0",
+      "previous_owner": "4_9",
+      "reason": "later phase wins"
+    },
+    {
+      "path": "deployment/render.yaml",
+      "replaced_by": "5_0",
+      "previous_owner": "3_4",
+      "reason": "later phase wins"
+    }
+  ],
+  "preserved_sources": "legacy_phases/",
+  "active_root": "active_app/",
+  "master_entrypoint": "streamlit_app.py",
+  "status": "integration_assembly_baseline"
+}

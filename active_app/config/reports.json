@@ -1,0 +1,9 @@
+{
+  "formats": ["csv", "xlsx", "pdf"],
+  "show_demo_data": false,
+  "report_history_enabled": true,
+  "read_model_schema": "energy_dashboard",
+  "audit_schema": "energy_audit",
+  "max_browser_rows": 50000,
+  "tpwodl_bill": "future_extension"
+}

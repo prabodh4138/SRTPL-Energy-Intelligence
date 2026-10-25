@@ -1,0 +1,128 @@
+[
+  {
+    "module": "DG",
+    "filename": "DGDailyLogReport_25thSep2026_1242_DG Log.csv",
+    "size_bytes": 46712,
+    "sha256": "f52f781a94c2fa0965c00d0a1442e0a8d343ac81896257e5c9950754378ba77a"
+  },
+  {
+    "module": "DG",
+    "filename": "DGDailyLogReport_25thSep2026_3596_DG Log.csv",
+    "size_bytes": 34161,
+    "sha256": "eaa5eb7d535a60fd6f8f86b7ad7b3ed142a3354ebd6873713a25e7a8fb3c045a"
+  },
+  {
+    "module": "DG",
+    "filename": "DGDailyLogReport_25thSep2026_443_DG Log.csv",
+    "size_bytes": 37379,
+    "sha256": "d94e96d0069cc2005cd0bce35f955bb2cebaa9815c2dd23b55f2515c624a54c7"
+  },
+  {
+    "module": "DG",
+    "filename": "DGDailyLogReport_25thSep2026_4498_DG Log.csv",
+    "size_bytes": 20783,
+    "sha256": "5bac7a8b1c6d6d167f3378e1d827d327eaca3506c22fe1cfd84608827dd679ca"
+  },
+  {
+    "module": "DG",
+    "filename": "DGDailyLogReport_25thSep2026_688_DG Log.csv",
+    "size_bytes": 44059,
+    "sha256": "56799c883b3a475b660096b8872a53ab129a16d80d1267e56c41d2ed562256f9"
+  },
+  {
+    "module": "DG",
+    "filename": "DGDailyLogReport_25thSep2026_9833_DG Log.csv",
+    "size_bytes": 41820,
+    "sha256": "6be56c1396e68392198091e0474aec4835d448951a8fad4c189cdae52c456455"
+  },
+  {
+    "module": "EB",
+    "filename": "EBDailyLogReport_25thSep2026_2143_EB Log - Copy.csv",
+    "size_bytes": 2356,
+    "sha256": "5ced4b47983bb03b7ad33157327f63771041fad9c6f67592844fecf5d050b087"
+  },
+  {
+    "module": "EB",
+    "filename": "EB_Daily_Consumption_25thSep2026_6841_EB Daily.csv",
+    "size_bytes": 257964,
+    "sha256": "5dbe833b61422b471ee2e21255d78ead56df24cb3b38ad8aba84de46d542baba"
+  },
+  {
+    "module": "EB",
+    "filename": "SRTPL_Test_JUNO_EB.csv",
+    "size_bytes": 473,
+    "sha256": "4be61806fa9e0e0decb1000e5a092d6dcd3d96e31015d7b316303ce369fb80c5"
+  },
+  {
+    "module": "Solar",
+    "filename": "Solar_Plant_Log_25thSep2026_2719_Solar Log.csv",
+    "size_bytes": 13189,
+    "sha256": "b955a41b0e9acc993260bc0361f88f090888cef325cf36f4f0eb132c01edf470"
+  },
+  {
+    "module": "Solar",
+    "filename": "Solar_Plant_Log_25thSep2026_2764_Solar Log.csv",
+    "size_bytes": 13449,
+    "sha256": "2b643cb4fc2b4ee60b5e34357173148f9f3e755e3db15a6743353fe92f5748dc"
+  },
+  {
+    "module": "Solar",
+    "filename": "Solar_Plant_Log_25thSep2026_4168_Solar Log.csv",
+    "size_bytes": 11848,
+    "sha256": "b0e33f90857a89ba5d1ae90fe54ce9a0f31ca0242c1d1e4a4ee427589681973b"
+  },
+  {
+    "module": "Transformer",
+    "filename": "TransformerDailyReport_25thSep2026_109_Transformer Daily Log Report - Copy.csv",
+    "size_bytes": 180455,
+    "sha256": "4f5d174845b5af11bedb435c571abdec82350d4cf7f30ed9271a14b8253edfdd"
+  },
+  {
+    "module": "Transformer",
+    "filename": "TransformerDailyReport_25thSep2026_109_Transformer Daily Log Report.csv",
+    "size_bytes": 180455,
+    "sha256": "4f5d174845b5af11bedb435c571abdec82350d4cf7f30ed9271a14b8253edfdd"
+  },
+  {
+    "module": "Transformer",
+    "filename": "TransformerDailyReport_25thSep2026_2116_Transformer Daily Log Report.csv",
+    "size_bytes": 40677,
+    "sha256": "cc5e8af03d5e56f53b395c1fd4df8cbd7c2462ad153454739c485b52d81a8c71"
+  },
+  {
+    "module": "UPS",
+    "filename": "UPSDailyLogReport_25thSep2026_2140_UPS Daily Log Report.csv",
+    "size_bytes": 133450,
+    "sha256": "8527221e500724bcc81e7d1b9c74bba6b3a4f822b5147391e991b6b3213d762d"
+  },
+  {
+    "module": "UPS",
+    "filename": "UPSDailyLogReport_25thSep2026_4944_UPS Daily Log Report.csv",
+    "size_bytes": 81119,
+    "sha256": "28d888ed038ea7dbe3fa64196cbac9529acce4b327b258118472d4c943b49ce2"
+  },
+  {
+    "module": "UPS",
+    "filename": "UPSDailyLogReport_25thSep2026_5957_UPS Daily Log Report.csv",
+    "size_bytes": 124060,
+    "sha256": "f58ae59d65936ebe8f244dd52fc2f1e8a302057e37af13cdced5fca9e0e36543"
+  },
+  {
+    "module": "UPS",
+    "filename": "UPSDailyLogReport_25thSep2026_6206_UPS Daily Log Report.csv",
+    "size_bytes": 138913,
+    "sha256": "0daeb2f50a30e9400408076bae2f1c0f1b52c37ca39c5e866b4c2e979eebc58d"
+  },
+  {
+    "module": "UPS",
+    "filename": "UPSDailyLogReport_25thSep2026_6634_UPS Daily Log Report.csv",
+    "size_bytes": 80785,
+    "sha256": "d4e5959bb48b7310fd8140b741526eb459986d6f147a8b4b0d85ac16c3327962"
+  },
+  {
+    "module": "UPS",
+    "filename": "UPSDailyLogReport_25thSep2026_802_UPS Daily Log Report.csv",
+    "size_bytes": 71916,
+    "sha256": "bf6684110da811758eb07ad1ceb2c1fcaf1256112ac547e2add6ece8e9db4b46"
+  }
+]

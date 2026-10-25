@@ -1,0 +1,16 @@
+Recommended Phase 5 navigation:
+
+"Integration Status"
+"System Health"
+
+The master application should import and connect the existing Phase 3/4 modules rather than duplicating them.
+
+Recommended application startup:
+1. load environment
+2. configure logging
+3. validate configuration
+4. initialize Supabase clients
+5. register services
+6. initialize navigation
+7. expose System Health
+8. expose Integration Status

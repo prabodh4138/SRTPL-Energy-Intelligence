@@ -1,0 +1,4 @@
+pandas>=2.2
+supabase>=2.0
+streamlit>=1.40
+python-dateutil>=2.9

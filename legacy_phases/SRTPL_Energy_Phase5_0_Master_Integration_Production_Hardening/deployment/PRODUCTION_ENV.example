@@ -1,0 +1,4 @@
+APP_ENV=production
+SUPABASE_URL=
+SUPABASE_SERVICE_ROLE_KEY=
+ENERGY_STORAGE_BUCKET=energy-original-files

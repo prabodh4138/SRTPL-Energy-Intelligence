@@ -1,0 +1,23 @@
+Add to application navigation:
+
+"Master Data & Configuration Center"
+"Plaza Master"
+"Asset / Equipment Master"
+"Configuration Masters"
+
+Recommended routing:
+elif page == "Master Data & Configuration Center":
+    from pages.master_data_center import render
+    render()
+
+elif page == "Plaza Master":
+    from pages.plaza_master import render
+    render()
+
+elif page == "Asset / Equipment Master":
+    from pages.asset_master import render
+    render()
+
+elif page == "Configuration Masters":
+    from pages.configuration_master import render
+    render()

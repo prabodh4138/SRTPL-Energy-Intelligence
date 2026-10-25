@@ -1,0 +1,8 @@
+{
+  "supported_equipment": ["SOLAR", "DG", "EB", "TRANSFORMER", "UPS"],
+  "default_date_range_days": 30,
+  "null_display": "—",
+  "show_demo_data": false,
+  "transformer_loss_enabled": false,
+  "eb_md_interpretation": "SOURCE_VALUE_UNCONFIRMED"
+}

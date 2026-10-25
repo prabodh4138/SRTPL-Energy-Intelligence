@@ -1,0 +1,8 @@
+{
+  "calculation_version": "3.3.0",
+  "null_policy": "PRESERVE_NULL",
+  "cumulative_decrease_policy": "INVALIDATE",
+  "transformer_efficiency_enabled": false,
+  "transformer_loss_enabled": false,
+  "eb_md_interpretation": "SOURCE_VALUE_UNCONFIRMED"
+}

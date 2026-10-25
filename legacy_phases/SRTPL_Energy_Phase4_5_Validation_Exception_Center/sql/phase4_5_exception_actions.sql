@@ -1,0 +1,12 @@
+-- Recommended production pattern.
+-- Implement status changes through SECURITY DEFINER RPCs with RLS-safe authorization.
+--
+-- Required atomic operation:
+-- 1. lock exception row
+-- 2. validate allowed status transition
+-- 3. require resolution/acceptance note
+-- 4. update exception
+-- 5. insert energy_audit.audit_log
+-- 6. commit
+--
+-- Never allow the browser to directly update exception_master.

@@ -1,0 +1,11 @@
+{
+  "accepted_extensions": [".csv"],
+  "supported_report_types": ["SOLAR", "DG", "EB", "TRANSFORMER", "UPS"],
+  "storage_bucket": "energy-original-files",
+  "preserve_original_file": true,
+  "preserve_original_headings": true,
+  "null_policy": "PRESERVE_NULL",
+  "exact_duplicate_policy": "BLOCK",
+  "unknown_report_policy": "REVIEW",
+  "show_demo_data": false
+}

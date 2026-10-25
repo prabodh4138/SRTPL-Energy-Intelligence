@@ -1,0 +1,9 @@
+Add to Phase 3.4 navigation:
+"JUNO Import Center"
+
+Recommended app.py branch:
+elif page == "JUNO Import Center":
+    from pages.juno_import_center import render
+    render()
+
+Keep Import History as a separate page.

@@ -1,0 +1,92 @@
+REPORT_CATALOG = {
+    "EXECUTIVE_MIS": {
+        "name": "Executive Energy MIS",
+        "sources": ["SOLAR", "DG", "EB"],
+        "formats": ["xlsx", "pdf", "csv"],
+        "scope": "management",
+    },
+    "DAILY_ENERGY": {
+        "name": "Daily Energy Report",
+        "sources": ["SOLAR", "DG", "EB"],
+        "formats": ["xlsx", "pdf", "csv"],
+        "scope": "operations",
+    },
+    "MONTHLY_ENERGY": {
+        "name": "Monthly Energy Report",
+        "sources": ["SOLAR", "DG", "EB"],
+        "formats": ["xlsx", "pdf", "csv"],
+        "scope": "management",
+    },
+    "PLAZA_ENERGY": {
+        "name": "Plaza Energy Report",
+        "sources": ["SOLAR", "DG", "EB"],
+        "formats": ["xlsx", "pdf", "csv"],
+        "scope": "plaza",
+    },
+    "SOLAR_PERFORMANCE": {
+        "name": "Solar Performance Report",
+        "sources": ["SOLAR"],
+        "formats": ["xlsx", "pdf", "csv"],
+        "scope": "equipment",
+    },
+    "DG_PERFORMANCE": {
+        "name": "DG Performance Report",
+        "sources": ["DG"],
+        "formats": ["xlsx", "pdf", "csv"],
+        "scope": "equipment",
+    },
+    "EB_CONSUMPTION": {
+        "name": "EB Consumption Report",
+        "sources": ["EB"],
+        "formats": ["xlsx", "pdf", "csv"],
+        "scope": "equipment",
+    },
+    "TRANSFORMER_PERFORMANCE": {
+        "name": "Transformer Performance Report",
+        "sources": ["TRANSFORMER"],
+        "formats": ["xlsx", "pdf", "csv"],
+        "scope": "equipment",
+    },
+    "UPS_PERFORMANCE": {
+        "name": "UPS Performance Report",
+        "sources": ["UPS"],
+        "formats": ["xlsx", "pdf", "csv"],
+        "scope": "equipment",
+    },
+    "ENERGY_COST": {
+        "name": "Energy Cost Report",
+        "sources": ["EB", "DG", "SOLAR"],
+        "formats": ["xlsx", "pdf", "csv"],
+        "scope": "finance",
+    },
+    "SOLAR_SAVINGS": {
+        "name": "Solar Savings Report",
+        "sources": ["SOLAR", "EB"],
+        "formats": ["xlsx", "pdf", "csv"],
+        "scope": "management",
+    },
+    "EXCEPTION": {
+        "name": "Exception Report",
+        "sources": ["SOLAR", "DG", "EB", "TRANSFORMER", "UPS"],
+        "formats": ["xlsx", "pdf", "csv"],
+        "scope": "audit",
+    },
+    "VALIDATION": {
+        "name": "Validation Report",
+        "sources": ["SOLAR", "DG", "EB", "TRANSFORMER", "UPS"],
+        "formats": ["xlsx", "pdf", "csv"],
+        "scope": "audit",
+    },
+    "DATA_QUALITY": {
+        "name": "Data Quality Report",
+        "sources": ["ALL"],
+        "formats": ["xlsx", "pdf", "csv"],
+        "scope": "management",
+    },
+    "AUDIT": {
+        "name": "Audit Report",
+        "sources": ["ALL"],
+        "formats": ["xlsx", "pdf", "csv"],
+        "scope": "audit",
+    },
+}

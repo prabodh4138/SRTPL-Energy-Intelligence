@@ -1,0 +1,16 @@
+{
+  "roles": [
+    "SUPER_ADMIN",
+    "ADMIN",
+    "ENERGY_MANAGER",
+    "PLAZA_MANAGER",
+    "OPERATOR",
+    "AUDITOR",
+    "VIEWER"
+  ],
+  "audit_append_only": true,
+  "change_approval_required": true,
+  "reprocess_approval_required": true,
+  "browser_direct_db_admin_writes": false,
+  "show_demo_users": false
+}

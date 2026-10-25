@@ -1,0 +1,9 @@
+Phase 3.4 app.py integration:
+
+Replace the Executive Dashboard branch with:
+
+if page == "Executive Dashboard":
+    from pages.executive_dashboard import render
+    render()
+
+The existing Phase 3.4 pages/dashboard.py can remain temporarily as a compatibility page.

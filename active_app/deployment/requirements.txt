@@ -1,0 +1,7 @@
+streamlit
+supabase
+pandas
+polars
+openpyxl
+reportlab
+pytest

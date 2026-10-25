@@ -1,0 +1,19 @@
+{
+  "domains": [
+    "PLAZA",
+    "ASSET",
+    "PARAMETER",
+    "ASSET_PARAMETER",
+    "THRESHOLD",
+    "TARIFF",
+    "KPI",
+    "SOURCE_MAPPING",
+    "REPORT_SCHEDULE"
+  ],
+  "current_source_types": ["SOLAR", "DG", "EB", "TRANSFORMER", "UPS"],
+  "future_source_types": ["POWER_PANEL", "TPWODL_BILL"],
+  "versioning_enabled": true,
+  "effective_dating_enabled": true,
+  "change_control_required": true,
+  "show_demo_data": false
+}

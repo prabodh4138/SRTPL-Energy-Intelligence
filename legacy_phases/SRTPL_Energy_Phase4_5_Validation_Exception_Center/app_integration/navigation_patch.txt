@@ -1,0 +1,13 @@
+Add to Phase 3.4 / Phase 4 navigation:
+
+"Validation & Exception Center"
+"Validation Rule Master"
+
+Recommended routing:
+elif page == "Validation & Exception Center":
+    from pages.validation_exception_center import render
+    render()
+
+elif page == "Validation Rule Master":
+    from pages.validation_rule_master import render
+    render()

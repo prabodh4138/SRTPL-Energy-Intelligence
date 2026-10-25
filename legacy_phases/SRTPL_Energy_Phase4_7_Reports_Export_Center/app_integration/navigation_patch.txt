@@ -1,0 +1,13 @@
+Add to application navigation:
+
+"Reports & Export Center"
+"Report History"
+
+Recommended routing:
+elif page == "Reports & Export Center":
+    from pages.reports_export_center import render
+    render()
+
+elif page == "Report History":
+    from pages.report_history import render
+    render()

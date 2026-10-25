@@ -1,0 +1,10 @@
+{
+  "severity_order": ["CRITICAL", "ERROR", "WARNING", "INFO"],
+  "default_status": "OPEN",
+  "terminal_statuses": ["RESOLVED", "ACCEPTED_EXCEPTION"],
+  "resolution_note_required": true,
+  "acceptance_note_required": true,
+  "preserve_source_data": true,
+  "allow_browser_direct_db_update": false,
+  "show_demo_data": false
+}

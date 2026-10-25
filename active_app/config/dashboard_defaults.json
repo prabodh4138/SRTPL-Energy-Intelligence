@@ -1,0 +1,7 @@
+{
+  "default_date_range_days": 30,
+  "default_plazas": ["TP01", "TP02", "TP03"],
+  "show_demo_data": false,
+  "null_display": "—",
+  "currency": "INR"
+}

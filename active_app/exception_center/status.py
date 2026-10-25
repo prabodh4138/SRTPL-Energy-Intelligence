@@ -1,0 +1,10 @@
+ALLOWED_TRANSITIONS = {
+    "OPEN": {"ACKNOWLEDGED", "UNDER_REVIEW", "RESOLVED", "ACCEPTED_EXCEPTION"},
+    "ACKNOWLEDGED": {"UNDER_REVIEW", "RESOLVED", "ACCEPTED_EXCEPTION"},
+    "UNDER_REVIEW": {"RESOLVED", "ACCEPTED_EXCEPTION", "OPEN"},
+    "RESOLVED": set(),
+    "ACCEPTED_EXCEPTION": set(),
+}
+
+def can_transition(current, target):
+    return target in ALLOWED_TRANSITIONS.get(current, set())
