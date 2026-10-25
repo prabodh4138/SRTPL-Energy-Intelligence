@@ -45,7 +45,22 @@ def extract_energy_bill_full(pdf_file, source_name):
     entry["Old Consumer No."] = extract_clean_number(r"Old Consumer No\.\s*:\s*([\w\-]*)", text)
     entry["Bill Number"] = extract_clean_number(r"Bill Number\s*:\s*(\d+)", text)
     entry["Bill Issue Date"] = extract_clean_number(r"Bill Issue Date\s*:\s*(\d{2}/\d{2}/\d{4})", text)
-    entry["Bill Basis"] = extract_clean_number(r"Bill Basis\s*:\s*([A-Z]+)", text)
+    
+    raw_basis = extract_clean_number(r"Bill Basis\s*:\s*([A-Za-z]+)", text)
+    meter_reading_raw = extract_clean_number(r"Meter Reading\s*:\s*([A-Za-z\s]+?)(?=\s+(?:Main Meter|Meter Rent|Consumption|\n|$))", text)
+    clean_basis = "ACTUAL"
+    combined_basis_text = f"{raw_basis} {meter_reading_raw}".upper()
+    if "PROV" in combined_basis_text:
+        clean_basis = "PROVISIONAL"
+    elif "AVG" in combined_basis_text or "DEFECT" in combined_basis_text:
+        clean_basis = "AVERAGE"
+    elif "ACT" in combined_basis_text:
+        clean_basis = "ACTUAL"
+    elif raw_basis:
+        clean_basis = raw_basis.upper()
+
+    entry["Bill Basis"] = clean_basis
+    entry["Meter Reading Status"] = meter_reading_raw or clean_basis
     entry["Bill Month"] = extract_clean_number(r"Bill Month\s*:\s*(\d{4}/\d{2})", text)
     entry["Last Bill Issue Date"] = extract_clean_number(r"Last Bill Issue Date\s*:\s*(\d{2}/\d{2}/\d{4})", text)
 

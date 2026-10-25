@@ -4,6 +4,7 @@
 -- exist and reload the PostgREST schema cache immediately.
 -- ============================================================================
 
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS bill_basis VARCHAR(32) DEFAULT 'ACTUAL';
 ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS bill_issue_date VARCHAR(32);
 ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS due_date VARCHAR(32);
 ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS rebate_date VARCHAR(32);

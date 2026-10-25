@@ -287,6 +287,7 @@ def format_bill_for_db(raw_bill: dict[str, Any], verifier_result: dict[str, Any]
         "bill_month": str(raw_bill.get("Bill Month") or raw_bill.get("bill_month") or ""),
         "bill_period": str(raw_bill.get("Bill Period") or raw_bill.get("bill_period") or ""),
         "bill_days": str(raw_bill.get("Bill Days/Months") or raw_bill.get("bill_days") or ""),
+        "bill_basis": str(raw_bill.get("Bill Basis") or raw_bill.get("bill_basis") or "ACTUAL").strip().upper(),
         "bill_issue_date": str(raw_bill.get("Bill Issue Date") or raw_bill.get("bill_issue_date") or ""),
         "due_date": str(raw_bill.get("Due Date") or raw_bill.get("due_date") or ""),
         "rebate_date": str(raw_bill.get("Rebate Date") or raw_bill.get("rebate_date") or ""),

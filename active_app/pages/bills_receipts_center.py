@@ -580,12 +580,17 @@ def render():
                         pbar.progress(1.0)
                         p_status.success(f"✓ All {completed} documents successfully parsed in {int(total_elapsed // 60):02d}:{int(total_elapsed % 60):02d} (avg: {completed / total_elapsed:.1f}/sec)!")
 
-                        # Segregation into 3 Dedicated Buckets
+                        # Segregation into 4 Dedicated Buckets:
+                        # 1. Verified Actual Matches (Zero variance, NOT duplicate, ACTUAL basis)
+                        # 2. Provisional & Average Billing (Estimated / Defective meter reading — audit required)
+                        # 3. Calculation Mismatches (Arithmetic variance)
+                        # 4. Duplicate Records (Already in Supabase)
                         if not is_batch_receipt and not batch_df.empty:
                             existing_db_bills = get_existing_bill_numbers()
                             bill_col = "Bill Number" if "Bill Number" in batch_df.columns else batch_df.columns[0]
 
                             match_rows = []
+                            prov_avg_rows = []
                             mismatch_rows = []
                             dup_rows = []
                             seen_in_batch = set()
@@ -606,6 +611,9 @@ def render():
                                 if bn:
                                     seen_in_batch.add(bn)
 
+                                raw_basis = str(row_dict.get("Bill Basis") or row_dict.get("bill_basis") or row_dict.get("Meter Reading Status") or "").upper()
+                                is_prov_or_avg = any(k in raw_basis for k in ["PROV", "AVG", "AVERAGE", "DEFECT", "ESTIMAT"])
+
                                 verdict = str(row_dict.get("Audit Verdict", "")).upper()
                                 is_mis = ("MISMATCH" in verdict) or (row_dict.get("Discrepancy Details", "None") not in ["None", "None (Exact Match)"])
 
@@ -613,18 +621,24 @@ def render():
                                     row_dict["Bucket"] = "DUPLICATE"
                                     row_dict["Duplicate Reason"] = dup_reason
                                     dup_rows.append(row_dict)
+                                elif is_prov_or_avg:
+                                    row_dict["Bucket"] = "PROVISIONAL_AVERAGE"
+                                    row_dict["Audit Flag"] = f"DISCOM {raw_basis or 'PROVISIONAL'} Basis (Not Actual Reading) — Meter Audit Required"
+                                    prov_avg_rows.append(row_dict)
                                 elif is_mis:
                                     row_dict["Bucket"] = "MISMATCH"
                                     mismatch_rows.append(row_dict)
                                 else:
-                                    row_dict["Bucket"] = "VERIFIED_MATCH"
+                                    row_dict["Bucket"] = "VERIFIED_ACTUAL_MATCH"
                                     match_rows.append(row_dict)
 
                             st.session_state["match_df"] = pd.DataFrame(match_rows)
+                            st.session_state["prov_avg_df"] = pd.DataFrame(prov_avg_rows)
                             st.session_state["mismatch_df"] = pd.DataFrame(mismatch_rows)
                             st.session_state["duplicate_df"] = pd.DataFrame(dup_rows)
                         else:
                             st.session_state["match_df"] = pd.DataFrame()
+                            st.session_state["prov_avg_df"] = pd.DataFrame()
                             st.session_state["mismatch_df"] = pd.DataFrame()
                             st.session_state["duplicate_df"] = pd.DataFrame()
 
@@ -639,73 +653,167 @@ def render():
 
                     if not is_batch_rec and not res_df.empty:
                         match_df = st.session_state.get("match_df", pd.DataFrame())
+                        prov_avg_df = st.session_state.get("prov_avg_df", pd.DataFrame())
                         mismatch_df = st.session_state.get("mismatch_df", pd.DataFrame())
                         duplicate_df = st.session_state.get("duplicate_df", pd.DataFrame())
 
-                        # Top KPI Summary Cards
-                        st.markdown("#### 📑 Batch Extraction & Audit Segregation")
-                        bk1, bk2, bk3, bk4 = st.columns(4)
+                        # Top KPI Summary Cards (5 Metrics)
+                        st.markdown("#### 📑 Batch Extraction & Review Segregation")
+                        bk1, bk2, bk3, bk4, bk5 = st.columns(5)
                         bk1.metric("📦 Total Processed", f"{len(res_df)} Bills")
-                        bk2.metric("✅ Verified Matches", f"{len(match_df)} Bills", help="Zero arithmetic variance, ready for Supabase injection")
-                        bk3.metric("⚠️ Calculation Mismatches", f"{len(mismatch_df)} Bills", help="Arithmetic discrepancy, review & audit required")
-                        bk4.metric("🔁 Duplicate Records", f"{len(duplicate_df)} Bills", help="Already present in database, review / overwrite / delete")
+                        bk2.metric("✅ Actual Matches", f"{len(match_df)} Bills", help="Actual physical reading & zero arithmetic variance — ready for Supabase injection")
+                        bk3.metric("⚠️ Provisional / Avg", f"{len(prov_avg_df)} Bills", help="Estimated/Average bills — requires physical meter audit")
+                        bk4.metric("❌ Mismatches", f"{len(mismatch_df)} Bills", help="Arithmetic discrepancy — formula audit required")
+                        bk5.metric("🔁 Duplicates", f"{len(duplicate_df)} Bills", help="Already present in database — review / overwrite / delete")
 
                         st.divider()
 
-                        subtab_match, subtab_mismatch, subtab_dup, subtab_all = st.tabs([
-                            f"✅ Verified Matches ({len(match_df)})",
-                            f"⚠️ Calculation Mismatches ({len(mismatch_df)})",
+                        subtab_match, subtab_prov, subtab_mismatch, subtab_dup, subtab_all = st.tabs([
+                            f"✅ Verified Actual Matches ({len(match_df)})",
+                            f"⚠️ Provisional / Average ({len(prov_avg_df)})",
+                            f"❌ Calculation Mismatches ({len(mismatch_df)})",
                             f"🔁 Duplicate Records ({len(duplicate_df)})",
                             f"📋 All Extracted Bills ({len(res_df)})",
                         ])
 
                         # -----------------------------------------------------
-                        # SUBTAB 1: VERIFIED MATCHES
+                        # SUBTAB 1: VERIFIED ACTUAL MATCHES (STRICT INJECTION)
                         # -----------------------------------------------------
                         with subtab_match:
-                            st.markdown("##### 🟢 Bucket 1: Verified Clean Bills Ready for Database Injection")
-                            st.caption("These bills have zero arithmetic variance across all energy charges, electricity charges, and current total equations, and DO NOT exist in the database.")
+                            st.markdown("##### 🟢 Bucket 1: Verified Actual Bills Ready for Database Injection")
+                            st.caption("Strict Criteria: (1) Actual meter reading taken by DISCOM ('ACTUAL' basis), (2) Zero arithmetic variance across all tariff equations, and (3) Non-duplicate. Only physical Actual bills are approved for direct database injection.")
 
                             if match_df.empty:
-                                st.info("No verified non-duplicate bills in this bucket.")
+                                st.info("No verified non-duplicate Actual bills in this bucket.")
                             else:
                                 st.dataframe(match_df, width="stretch", hide_index=True)
 
                                 col_m_act1, col_m_act2 = st.columns([1.3, 1])
                                 with col_m_act1:
                                     if st.button(
-                                        f"🚀 Ingest {len(match_df)} Verified Bills → Supabase (public.energy_bills)",
+                                        f"🚀 Ingest {len(match_df)} Verified Actual Bills → Supabase (public.energy_bills)",
                                         type="primary",
                                         width="stretch",
                                         key="btn_ingest_verified_matches",
                                     ):
-                                        with st.spinner("Injecting verified bills into Supabase with strict duplicate prevention..."):
+                                        with st.spinner("Injecting verified actual bills into Supabase with strict validation..."):
                                             m_records = match_df.to_dict(orient="records")
-                                            save_res = batch_save_energy_bills(m_records, prevent_duplicates=True)
+                                            # Strict safeguard: reject any provisional or average bill
+                                            clean_actual_records = [
+                                                r for r in m_records
+                                                if not any(k in str(r.get("Bill Basis") or r.get("bill_basis", "")).upper() for k in ["PROV", "AVG", "DEFECT", "ESTIMAT"])
+                                            ]
+                                            blocked_prov = len(m_records) - len(clean_actual_records)
+                                            save_res = batch_save_energy_bills(clean_actual_records, prevent_duplicates=True)
                                             if save_res["status"] == "SUCCESS":
-                                                st.success(f"✅ Successfully injected **{save_res['saved_count']}** clean bills into Supabase `public.energy_bills`!")
+                                                st.success(f"✅ Successfully injected **{save_res['saved_count']}** clean Actual bills into Supabase `public.energy_bills`!")
                                                 if save_res.get("skipped_count", 0) > 0:
                                                     st.warning(f"⚠️ **{save_res['skipped_count']}** duplicate bills were prevented from entering: `{', '.join(save_res['skipped_duplicates'])}`")
+                                                if blocked_prov > 0:
+                                                    st.warning(f"⚠️ **{blocked_prov}** non-actual bills were prevented from injecting and kept in Provisional review.")
                                             else:
                                                 st.error(f"Error injecting into Supabase: {save_res.get('cloud_error')}")
 
                                 with col_m_act2:
                                     out_m = io.BytesIO()
                                     with pd.ExcelWriter(out_m, engine="openpyxl") as writer:
-                                        match_df.to_excel(writer, index=False, sheet_name="Verified_Matches")
+                                        match_df.to_excel(writer, index=False, sheet_name="Verified_Actual_Matches")
                                     st.download_button(
-                                        label=f"📥 Download Clean Excel ({len(match_df)} rows)",
+                                        label=f"📥 Download Clean Actual Excel ({len(match_df)} rows)",
                                         data=out_m.getvalue(),
-                                        file_name=f"Verified_Clean_Bills_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                                        file_name=f"Verified_Actual_Bills_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
                                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                         width="stretch",
                                     )
 
                         # -----------------------------------------------------
-                        # SUBTAB 2: CALCULATION MISMATCHES
+                        # SUBTAB 2: PROVISIONAL & AVERAGE BILLING (REVIEW BUCKET)
+                        # -----------------------------------------------------
+                        with subtab_prov:
+                            st.markdown("##### ⚠️ Bucket 2: Provisional & Average Bills (Meter Audit Required)")
+                            st.caption("These bills were issued by DISCOM on an estimated, provisional, or average basis because the meter was unapproachable, defective, or locked. They are strictly blocked from automatic database injection and require physical JUNO meter comparison.")
+
+                            if prov_avg_df.empty:
+                                st.success("🎉 All bills in this batch were billed on an ACTUAL physical meter reading basis! Zero provisional/average bills found.")
+                            else:
+                                st.warning(f"⚠️ **{len(prov_avg_df)} Provisional / Average Bills Found.** Requires manual audit against physical JUNO meter intervals:")
+                                st.dataframe(prov_avg_df, width="stretch", hide_index=True)
+
+                                st.markdown("---")
+                                st.markdown("#### 🔍 Provisional / Average Bill Audit (Dropdown: Consumer A/C No. wise)")
+
+                                ac_col_p = "Consumer A/c No." if "Consumer A/c No." in prov_avg_df.columns else ("consumer_account_no" if "consumer_account_no" in prov_avg_df.columns else ("Consumer ID" if "Consumer ID" in prov_avg_df.columns else prov_avg_df.columns[0]))
+                                b_col_p = "Bill Number" if "Bill Number" in prov_avg_df.columns else ("bill_number" if "bill_number" in prov_avg_df.columns else prov_avg_df.columns[0])
+
+                                sel_p_idx = st.selectbox(
+                                    "Select Consumer Account to Inspect Provisional / Average Bill:",
+                                    range(len(prov_avg_df)),
+                                    format_func=lambda i: f"🏢 Consumer A/C: {prov_avg_df.iloc[i].get(ac_col_p, '-')} | Month: {prov_avg_df.iloc[i].get('Bill Month', '-')} (Bill #{prov_avg_df.iloc[i].get(b_col_p, '-')}) — Basis: {prov_avg_df.iloc[i].get('Bill Basis', 'PROVISIONAL')}",
+                                    key="sel_prov_bill_inspect",
+                                )
+
+                                chosen_p = prov_avg_df.iloc[sel_p_idx].to_dict()
+                                p_ac = str(chosen_p.get(ac_col_p, "-"))
+                                p_bn = str(chosen_p.get(b_col_p, "-"))
+                                p_basis = str(chosen_p.get("Bill Basis", "PROVISIONAL"))
+                                p_tot = float(_parse_num(chosen_p.get("Current Total (o)") or chosen_p.get("current_total", 0)))
+
+                                st.markdown(
+                                    f"""
+                                    <div style="background: rgba(245, 158, 11, 0.12); border-left: 5px solid #f59e0b; border-radius: 6px; padding: 14px; margin-bottom: 12px;">
+                                        <div style="font-weight: 700; color: #f59e0b; font-size: 15px;">⚠️ ESTIMATED BILLING WARNING: Consumer A/C {p_ac} (Bill #{p_bn})</div>
+                                        <div style="font-size: 13px; color: #cbd5e1; margin-top: 6px;">
+                                            • <b>Billed Basis:</b> <span style="color: #fbbf24; font-weight: bold;">{p_basis}</span> (Estimated Units Billed)<br/>
+                                            • <b>Billed Current Total:</b> ₹{p_tot:,.2f}<br/>
+                                            • <b>Audit Recommendation:</b> Compare DISCOM billed units with physical JUNO interval sum before authorizing financial clearance.<br/>
+                                            • <b>Action Required:</b> If verified with DISCOM / physical meter, you can override and approve below.
+                                        </div>
+                                    </div>
+                                    """,
+                                    unsafe_allow_html=True,
+                                )
+
+                                with st.form(key=f"prov_audit_form_{p_bn}_{sel_p_idx}"):
+                                    st.markdown(f"##### ✍️ Auditor Override & Approval Form for Consumer A/C: `{p_ac}`")
+                                    pa_c1, pa_c2 = st.columns(2)
+                                    audit_note = pa_c1.text_input("Auditor Approval Notes", value=f"Audited provisional bill against physical JUNO meter intervals on {pd.Timestamp.now().strftime('%Y-%m-%d')}")
+                                    audit_status_sel = pa_c2.selectbox("Override Audit Verdict", ["MANUALLY_VERIFIED", "CORRECTED", "DISPUTED_WITH_DISCOM"], index=0)
+
+                                    if st.form_submit_button("✅ Approve & Ingest Audited Bill to Supabase", type="primary", width="stretch"):
+                                        approved_rec = dict(chosen_p)
+                                        approved_rec["verification_status"] = audit_status_sel
+                                        approved_rec["edit_notes"] = audit_note
+                                        approved_rec["is_edited"] = True
+                                        approved_rec["edited_by"] = st.session_state.get("user", "auditor@srtpl.com")
+                                        approved_rec["edited_at"] = pd.Timestamp.now(tz="UTC").isoformat()
+
+                                        save_p_res = batch_save_energy_bills([approved_rec], prevent_duplicates=False)
+                                        if save_p_res["status"] == "SUCCESS":
+                                            st.success(f"✅ Bill **{p_bn}** for Consumer A/C **{p_ac}** successfully approved and saved into Supabase!")
+                                            # Remove from prov_avg_df
+                                            prov_avg_df = prov_avg_df[prov_avg_df[b_col_p].astype(str) != p_bn]
+                                            st.session_state["prov_avg_df"] = prov_avg_df
+                                            st.rerun()
+                                        else:
+                                            st.error(f"Approval failed: {save_p_res.get('cloud_error')}")
+
+                                # Download provisional bills Excel
+                                out_prov = io.BytesIO()
+                                with pd.ExcelWriter(out_prov, engine="openpyxl") as writer:
+                                    prov_avg_df.to_excel(writer, index=False, sheet_name="Provisional_Bills")
+                                st.download_button(
+                                    label=f"📥 Download Provisional Bills Audit Report ({len(prov_avg_df)} rows)",
+                                    data=out_prov.getvalue(),
+                                    file_name=f"Provisional_Bills_Report_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    width="stretch",
+                                )
+
+                        # -----------------------------------------------------
+                        # SUBTAB 3: CALCULATION MISMATCHES (CONSUMER A/C NO. DROPDOWN)
                         # -----------------------------------------------------
                         with subtab_mismatch:
-                            st.markdown("##### 🟡 Bucket 2: Calculation Mismatches (Auditor Review & Fault Highlighting)")
+                            st.markdown("##### ❌ Bucket 3: Calculation Mismatches (Auditor Review & Discrepancy Resolution)")
                             st.caption("Bills with mathematical discrepancies between billed DISCOM figures and official statutory tariff equations.")
 
                             if mismatch_df.empty:
@@ -714,17 +822,21 @@ def render():
                                 st.dataframe(mismatch_df, width="stretch", hide_index=True)
 
                                 st.markdown("---")
-                                st.markdown("#### 🔍 Discrepancy Fault Inspector & Reconciliation")
-                                b_col_m = "Bill Number" if "Bill Number" in mismatch_df.columns else mismatch_df.columns[0]
-                                m_bill_list = [str(r.get(b_col_m, f"Row {i}")) for i, r in mismatch_df.iterrows()]
+                                st.markdown("#### 🔍 Discrepancy Fault Inspector & Reconciliation (Dropdown: Consumer A/C No. wise)")
+
+                                ac_col_m = "Consumer A/c No." if "Consumer A/c No." in mismatch_df.columns else ("consumer_account_no" if "consumer_account_no" in mismatch_df.columns else ("Consumer ID" if "Consumer ID" in mismatch_df.columns else mismatch_df.columns[0]))
+                                b_col_m = "Bill Number" if "Bill Number" in mismatch_df.columns else ("bill_number" if "bill_number" in mismatch_df.columns else mismatch_df.columns[0])
+
                                 sel_m_idx = st.selectbox(
-                                    "Select Mismatched Bill to Inspect Fault & Reconcile:",
-                                    range(len(m_bill_list)),
-                                    format_func=lambda i: f"Bill #{m_bill_list[i]} — Fault: {mismatch_df.iloc[i].get('Discrepancy Details', 'Variance')}",
+                                    "Select Consumer Account to Inspect Fault & Reconcile:",
+                                    range(len(mismatch_df)),
+                                    format_func=lambda i: f"🏢 Consumer A/C: {mismatch_df.iloc[i].get(ac_col_m, '-')} | Month: {mismatch_df.iloc[i].get('Bill Month', '-')} (Bill #{mismatch_df.iloc[i].get(b_col_m, '-')}) — Fault: {mismatch_df.iloc[i].get('Discrepancy Details', 'Variance')}",
                                     key="sel_mismatch_bill_inspect",
                                 )
 
                                 chosen_mis = mismatch_df.iloc[sel_m_idx].to_dict()
+                                chosen_ac = str(chosen_mis.get(ac_col_m, "-"))
+                                chosen_bn = str(chosen_mis.get(b_col_m, "-"))
 
                                 diff_ec = float(_parse_num(chosen_mis.get("diff_energy_charges", 0.0)))
                                 diff_el = float(_parse_num(chosen_mis.get("diff_electricity_charges", 0.0)))
@@ -739,7 +851,7 @@ def render():
                                 ext_tot = float(_parse_num(chosen_mis.get("Current Total (o)") or chosen_mis.get("current_total", 0.0)))
                                 cal_tot = float(_parse_num(chosen_mis.get("Cal Current Total") or chosen_mis.get("cal_current_total", 0.0)))
 
-                                st.markdown(f"### 🔴 Identified Discrepancies for Bill **#{chosen_mis.get(b_col_m)}**")
+                                st.markdown(f"### 🔴 Discrepancy Breakdown for Consumer A/C: **{chosen_ac}** (Bill #{chosen_bn})")
 
                                 fault_detected = False
                                 if abs(diff_ec) > 0.05:
@@ -749,6 +861,7 @@ def render():
                                         <div style="background: rgba(239, 68, 68, 0.12); border-left: 5px solid #ef4444; border-radius: 6px; padding: 14px; margin-bottom: 12px;">
                                             <div style="font-weight: 700; color: #ef4444; font-size: 15px;">❌ FAULT: Energy Charges Discrepancy (Variance: ₹{diff_ec:+,.2f})</div>
                                             <div style="font-size: 13px; color: #cbd5e1; margin-top: 6px;">
+                                                • <b>Consumer A/C No.:</b> {chosen_ac}<br/>
                                                 • <b>Billed in Bill PDF:</b> ₹{ext_ec:,.2f}<br/>
                                                 • <b>Calculated from Tariff Slabs:</b> ₹{cal_ec:,.2f}<br/>
                                                 • <b>Formula Breakdown:</b> <code>{chosen_mis.get('formula_energy_charges', '-')}</code>
@@ -765,6 +878,7 @@ def render():
                                         <div style="background: rgba(239, 68, 68, 0.12); border-left: 5px solid #ef4444; border-radius: 6px; padding: 14px; margin-bottom: 12px;">
                                             <div style="font-weight: 700; color: #ef4444; font-size: 15px;">❌ FAULT: Electricity Charges Discrepancy (Variance: ₹{diff_el:+,.2f})</div>
                                             <div style="font-size: 13px; color: #cbd5e1; margin-top: 6px;">
+                                                • <b>Consumer A/C No.:</b> {chosen_ac}<br/>
                                                 • <b>Billed in Bill PDF:</b> ₹{ext_el:,.2f}<br/>
                                                 • <b>Calculated (Energy + Demand + TOD):</b> ₹{cal_el:,.2f}<br/>
                                                 • <b>Formula Breakdown:</b> <code>{chosen_mis.get('formula_electricity_charges', '-')}</code>
@@ -781,6 +895,7 @@ def render():
                                         <div style="background: rgba(239, 68, 68, 0.12); border-left: 5px solid #ef4444; border-radius: 6px; padding: 14px; margin-bottom: 12px;">
                                             <div style="font-weight: 700; color: #ef4444; font-size: 15px;">❌ FAULT: Current Total Bill Discrepancy (Variance: ₹{diff_tot:+,.2f})</div>
                                             <div style="font-size: 13px; color: #cbd5e1; margin-top: 6px;">
+                                                • <b>Consumer A/C No.:</b> {chosen_ac}<br/>
                                                 • <b>Billed in Bill PDF:</b> ₹{ext_tot:,.2f}<br/>
                                                 • <b>Calculated Total:</b> ₹{cal_tot:,.2f}<br/>
                                                 • <b>Formula Breakdown:</b> <code>{chosen_mis.get('formula_current_total', '-')}</code>
@@ -795,7 +910,7 @@ def render():
 
                                 # Correction Form
                                 with st.form(key=f"mismatch_correction_form_{sel_m_idx}"):
-                                    st.markdown("##### ✏️ Correct Values & Save to Supabase")
+                                    st.markdown(f"##### ✏️ Correct Values & Save to Supabase (Consumer A/C: `{chosen_ac}`)")
                                     me_c1, me_c2, me_c3 = st.columns(3)
                                     b_cat = str(chosen_mis.get("Tariff Category", ""))
                                     b_cat_idx = 0 if "GPS" in b_cat.upper() else (1 if "LIGHT" in b_cat.upper() else 2)
@@ -810,7 +925,7 @@ def render():
 
                                     me_c7, me_c8 = st.columns(2)
                                     m_demand = me_c7.number_input("Demand Charge / MMFC (₹)", value=float(_parse_num(chosen_mis.get("Demand Charge / MMFC"))), step=10.0)
-                                    m_notes = me_c8.text_input("Auditor Note / Reconciliation Reason", value=f"Corrected discrepancy via batch auditor on {pd.Timestamp.now().strftime('%Y-%m-%d')}")
+                                    m_notes = me_c8.text_input("Auditor Note / Reconciliation Reason", value=f"Corrected discrepancy for A/C {chosen_ac} on {pd.Timestamp.now().strftime('%Y-%m-%d')}")
 
                                     if st.form_submit_button("💾 Save Corrected Bill to Supabase (Mark Resolved)", type="primary", width="stretch"):
                                         updated_rec = dict(chosen_mis)
@@ -830,16 +945,16 @@ def render():
                                             edit_notes=m_notes,
                                         )
                                         if u_res["status"] == "SUCCESS":
-                                            st.success(f"✅ Bill **{b_num_to_up}** updated in Supabase (`public.energy_bills`)! Status: `{u_res['updated_record']['verification_status']}`")
+                                            st.success(f"✅ Bill **{b_num_to_up}** (Consumer A/C **{chosen_ac}**) updated in Supabase (`public.energy_bills`)! Status: `{u_res['updated_record']['verification_status']}`")
                                             st.rerun()
                                         else:
                                             st.error(f"Update failed: {u_res.get('cloud_error')}")
 
                         # -----------------------------------------------------
-                        # SUBTAB 3: DUPLICATE RECORDS
+                        # SUBTAB 4: DUPLICATE RECORDS (CONSUMER A/C NO. DROPDOWN)
                         # -----------------------------------------------------
                         with subtab_dup:
-                            st.markdown("##### 🔁 Bucket 3: Duplicate Records (Audit, Force Overwrite & Deletion)")
+                            st.markdown("##### 🔁 Bucket 4: Duplicate Records (Audit, Force Overwrite & Deletion)")
                             st.caption("These bills have bill numbers that already exist in Supabase `public.energy_bills` or appear multiple times in the upload batch. Prevented from entering automatically to protect data integrity.")
 
                             if duplicate_df.empty:
@@ -849,26 +964,28 @@ def render():
                                 st.dataframe(duplicate_df, width="stretch", hide_index=True)
 
                                 st.markdown("---")
-                                st.markdown("#### ⚙️ Duplicate Actions & Resolution")
-                                b_col_d = "Bill Number" if "Bill Number" in duplicate_df.columns else duplicate_df.columns[0]
-                                d_bill_list = [str(r.get(b_col_d, f"Row {i}")) for i, r in duplicate_df.iterrows()]
+                                st.markdown("#### ⚙️ Duplicate Actions & Resolution (Dropdown: Consumer A/C No. wise)")
+                                ac_col_d = "Consumer A/c No." if "Consumer A/c No." in duplicate_df.columns else ("consumer_account_no" if "consumer_account_no" in duplicate_df.columns else ("Consumer ID" if "Consumer ID" in duplicate_df.columns else duplicate_df.columns[0]))
+                                b_col_d = "Bill Number" if "Bill Number" in duplicate_df.columns else ("bill_number" if "bill_number" in duplicate_df.columns else duplicate_df.columns[0])
+
                                 sel_d_idx = st.selectbox(
-                                    "Select Duplicate Bill to Manage:",
-                                    range(len(d_bill_list)),
-                                    format_func=lambda i: f"Bill #{d_bill_list[i]} — {duplicate_df.iloc[i].get('Duplicate Reason', 'Duplicate')} (Amount: ₹{float(_parse_num(duplicate_df.iloc[i].get('Current Total (o)') or duplicate_df.iloc[i].get('current_total', 0))):,.2f})",
+                                    "Select Consumer Account to Manage Duplicate:",
+                                    range(len(duplicate_df)),
+                                    format_func=lambda i: f"🏢 Consumer A/C: {duplicate_df.iloc[i].get(ac_col_d, '-')} | Month: {duplicate_df.iloc[i].get('Bill Month', '-')} (Bill #{duplicate_df.iloc[i].get(b_col_d, '-')}) — {duplicate_df.iloc[i].get('Duplicate Reason', 'Duplicate')} (₹{float(_parse_num(duplicate_df.iloc[i].get('Current Total (o)') or duplicate_df.iloc[i].get('current_total', 0))):,.2f})",
                                     key="sel_dup_bill_inspect",
                                 )
 
                                 chosen_dup = duplicate_df.iloc[sel_d_idx].to_dict()
-                                chosen_dup_bn = str(chosen_dup.get(b_col_d))
+                                chosen_dup_ac = str(chosen_dup.get(ac_col_d, "-"))
+                                chosen_dup_bn = str(chosen_dup.get(b_col_d, "-"))
 
                                 dc1, dc2, dc3 = st.columns(3)
                                 with dc1:
                                     if st.button("⚡ Force Overwrite in Supabase", type="primary", width="stretch", key=f"btn_force_overwrite_{chosen_dup_bn}"):
-                                        with st.spinner(f"Overwriting Bill #{chosen_dup_bn} in Supabase..."):
+                                        with st.spinner(f"Overwriting Bill #{chosen_dup_bn} (A/C {chosen_dup_ac}) in Supabase..."):
                                             res_ov = batch_save_energy_bills([chosen_dup], prevent_duplicates=False)
                                             if res_ov["status"] == "SUCCESS":
-                                                st.success(f"✅ Bill **{chosen_dup_bn}** was force-overwritten in Supabase `public.energy_bills`!")
+                                                st.success(f"✅ Bill **{chosen_dup_bn}** (Consumer A/C **{chosen_dup_ac}**) was force-overwritten in Supabase `public.energy_bills`!")
                                                 st.rerun()
                                             else:
                                                 st.error(f"Overwrite failed: {res_ov.get('cloud_error')}")

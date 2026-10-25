@@ -55,12 +55,15 @@ def test_batch_save_energy_bills_duplicate_prevention():
 def test_bucket_segregation_logic():
     existing_db = {"BILL-EXISTS-01"}
     batch_records = [
-        {"Bill Number": "BILL-EXISTS-01", "Audit Verdict": "VERIFIED_MATCH", "Discrepancy Details": "None (Exact Match)"},
-        {"Bill Number": "BILL-CLEAN-02", "Audit Verdict": "VERIFIED_MATCH", "Discrepancy Details": "None (Exact Match)"},
-        {"Bill Number": "BILL-FAULT-03", "Audit Verdict": "MISMATCH ⚠️", "Discrepancy Details": "Energy Charges Diff: +₹500.00"},
+        {"Bill Number": "BILL-EXISTS-01", "Consumer A/c No.": "81300101", "Bill Basis": "ACTUAL", "Audit Verdict": "VERIFIED_MATCH", "Discrepancy Details": "None (Exact Match)"},
+        {"Bill Number": "BILL-CLEAN-02", "Consumer A/c No.": "81300102", "Bill Basis": "ACTUAL", "Audit Verdict": "VERIFIED_MATCH", "Discrepancy Details": "None (Exact Match)"},
+        {"Bill Number": "BILL-PROV-03", "Consumer A/c No.": "81300103", "Bill Basis": "PROVISIONAL", "Audit Verdict": "VERIFIED_MATCH", "Discrepancy Details": "None (Exact Match)"},
+        {"Bill Number": "BILL-AVG-04", "Consumer A/c No.": "81300104", "Bill Basis": "AVERAGE", "Audit Verdict": "VERIFIED_MATCH", "Discrepancy Details": "None (Exact Match)"},
+        {"Bill Number": "BILL-FAULT-05", "Consumer A/c No.": "81300105", "Bill Basis": "ACTUAL", "Audit Verdict": "MISMATCH ⚠️", "Discrepancy Details": "Energy Charges Diff: +₹500.00"},
     ]
 
     match_rows = []
+    prov_avg_rows = []
     mismatch_rows = []
     dup_rows = []
     seen = set()
@@ -73,27 +76,48 @@ def test_bucket_segregation_logic():
         if bn:
             seen.add(bn)
 
+        raw_basis = str(r.get("Bill Basis", "")).upper()
+        is_prov_or_avg = any(k in raw_basis for k in ["PROV", "AVG", "AVERAGE", "DEFECT", "ESTIMAT"])
         verdict = r.get("Audit Verdict", "").upper()
         is_mis = ("MISMATCH" in verdict) or (r.get("Discrepancy Details") != "None (Exact Match)")
 
         if is_dup:
             r["Bucket"] = "DUPLICATE"
             dup_rows.append(r)
+        elif is_prov_or_avg:
+            r["Bucket"] = "PROVISIONAL_AVERAGE"
+            prov_avg_rows.append(r)
         elif is_mis:
             r["Bucket"] = "MISMATCH"
             mismatch_rows.append(r)
         else:
-            r["Bucket"] = "VERIFIED_MATCH"
+            r["Bucket"] = "VERIFIED_ACTUAL_MATCH"
             match_rows.append(r)
 
+    # Clean Actual Match: only BILL-CLEAN-02
     assert len(match_rows) == 1
     assert match_rows[0]["Bill Number"] == "BILL-CLEAN-02"
+    assert match_rows[0]["Bill Basis"] == "ACTUAL"
 
+    # Provisional / Average bills isolated in review bucket
+    assert len(prov_avg_rows) == 2
+    assert {r["Bill Number"] for r in prov_avg_rows} == {"BILL-PROV-03", "BILL-AVG-04"}
+
+    # Mismatch: BILL-FAULT-05
     assert len(mismatch_rows) == 1
-    assert mismatch_rows[0]["Bill Number"] == "BILL-FAULT-03"
+    assert mismatch_rows[0]["Bill Number"] == "BILL-FAULT-05"
 
+    # Duplicate: BILL-EXISTS-01
     assert len(dup_rows) == 1
     assert dup_rows[0]["Bill Number"] == "BILL-EXISTS-01"
+
+    # Check Consumer A/C formatting format func
+    ac_col = "Consumer A/c No."
+    b_col = "Bill Number"
+    m_row = mismatch_rows[0]
+    formatted_option = f"🏢 Consumer A/C: {m_row[ac_col]} | Month: 2026/09 (Bill #{m_row[b_col]}) — Fault: {m_row['Discrepancy Details']}"
+    assert "Consumer A/C: 81300105" in formatted_option
+    assert "Energy Charges Diff: +₹500.00" in formatted_option
 
 
 def test_auto_healing_missing_column():
