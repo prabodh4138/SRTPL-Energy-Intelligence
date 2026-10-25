@@ -19,69 +19,96 @@ def clean_session_state():
     st.session_state.clear()
 
 
-def test_default_consumer_accounts_contain_user_master_rows():
+def test_default_consumer_accounts_60_total_and_ht_lt_split():
     df = get_all_consumer_accounts()
     assert not df.empty
-    ac_list = df["consumer_account_no"].astype(str).tolist()
+    assert len(df) == 60, f"Expected exactly 60 consumers, found {len(df)}"
 
-    # User specified accounts
-    assert "411001070208" in ac_list
-    assert "413001070099" in ac_list
-    assert "813000000281" in ac_list
-    assert "812001070018" in ac_list
+    # Assert exactly 3 HT and 57 LT accounts
+    ht_df = df[df["bill_type"] == "HT"]
+    lt_df = df[df["bill_type"] == "LT"]
+    assert len(ht_df) == 3, f"Expected exactly 3 HT accounts, found {len(ht_df)}"
+    assert len(lt_df) == 57, f"Expected exactly 57 LT accounts, found {len(lt_df)}"
 
-    row_tp01 = df[df["consumer_account_no"] == "411001070208"].iloc[0]
-    assert row_tp01["toll_plaza_id"] == "TP01"
-    assert row_tp01["bill_type"] == "HT"
-    assert row_tp01["asset_code"] == "SR-E-EM-EB-5-200"
-    assert row_tp01["consumer_scope"] == "HIGHWAY"
-    assert row_tp01["division_name"] == "SED"
-    assert row_tp01["usage_type"] == "Street Light"
-    assert float(row_tp01["sanctioned_load_kw"]) == 10.0
-    assert row_tp01["location"] == "Ainthapalli"
+    # Assert plaza distribution: 20 each (1 HT, 19 LT)
+    for plz in ["TP01", "TP02", "TP03"]:
+        plz_df = df[df["toll_plaza_id"] == plz]
+        assert len(plz_df) == 20, f"Expected 20 accounts for {plz}, found {len(plz_df)}"
+        assert len(plz_df[plz_df["bill_type"] == "HT"]) == 1, f"Expected 1 HT account for {plz}"
+        assert len(plz_df[plz_df["bill_type"] == "LT"]) == 19, f"Expected 19 LT accounts for {plz}"
 
-    row_tp02 = df[df["consumer_account_no"] == "413001070099"].iloc[0]
-    assert row_tp02["toll_plaza_id"] == "TP02"
-    assert row_tp02["bill_type"] == "HT"
-    assert row_tp02["asset_code"] == "SR-E-EM-EB-62-600"
-    assert row_tp02["consumer_scope"] == "HIGHWAY"
-    assert row_tp02["division_name"] == "JED"
-    assert row_tp02["usage_type"] == "Street Light"
-    assert float(row_tp02["sanctioned_load_kw"]) == 18.0
-    assert row_tp02["location"] == "TANGARPALI"
+    # Verify the 3 specific HT Substation Incomers
+    ht_ac_list = ht_df["consumer_account_no"].astype(str).tolist()
+    assert "416000000110" in ht_ac_list, "TP01 HT incomer missing"
+    assert "413000000002" in ht_ac_list, "TP02 HT incomer missing"
+    assert "813000000281" in ht_ac_list, "TP03 HT incomer missing"
 
-    row_tp03_main = df[df["consumer_account_no"] == "813000000281"].iloc[0]
-    assert row_tp03_main["toll_plaza_id"] == "TP03"
-    assert row_tp03_main["bill_type"] == "HT"
-    assert row_tp03_main["division_name"] == "SED SUNDARAGADA"
-    assert float(row_tp03_main["sanctioned_load_kw"]) == 120.0
+    row_tp01_ht = df[df["consumer_account_no"] == "416000000110"].iloc[0]
+    assert row_tp01_ht["toll_plaza_id"] == "TP01"
+    assert row_tp01_ht["bill_type"] == "HT"
+    assert row_tp01_ht["consumer_scope"] == "TOLL_PLAZA"
+    assert float(row_tp01_ht["sanctioned_load_kw"]) == 120.0
 
-    row_tp03_corridor = df[df["consumer_account_no"] == "812001070018"].iloc[0]
-    assert row_tp03_corridor["toll_plaza_id"] == "TP03"
-    assert row_tp03_corridor["bill_type"] == "LT"
-    assert row_tp03_corridor["division_name"] == "SED SUNDARAGADA"
-    assert float(row_tp03_corridor["sanctioned_load_kw"]) == 28.0
+    row_tp02_ht = df[df["consumer_account_no"] == "413000000002"].iloc[0]
+    assert row_tp02_ht["toll_plaza_id"] == "TP02"
+    assert row_tp02_ht["bill_type"] == "HT"
+    assert row_tp02_ht["consumer_scope"] == "TOLL_PLAZA"
+    assert float(row_tp02_ht["sanctioned_load_kw"]) == 120.0
+
+    row_tp03_ht = df[df["consumer_account_no"] == "813000000281"].iloc[0]
+    assert row_tp03_ht["toll_plaza_id"] == "TP03"
+    assert row_tp03_ht["bill_type"] == "HT"
+    assert row_tp03_ht["consumer_scope"] == "TOLL_PLAZA"
+    assert float(row_tp03_ht["sanctioned_load_kw"]) == 120.0
+
+    # Verify key LT accounts (Street Lighting connections are LT)
+    row_tp01_lt = df[df["consumer_account_no"] == "411001070208"].iloc[0]
+    assert row_tp01_lt["toll_plaza_id"] == "TP01"
+    assert row_tp01_lt["bill_type"] == "LT"
+    assert row_tp01_lt["asset_code"] == "SR-E-EM-EB-5-200"
+    assert row_tp01_lt["consumer_scope"] == "HIGHWAY"
+    assert row_tp01_lt["division_name"] == "SED SAMBALPUR"
+    assert row_tp01_lt["usage_type"] == "Street Light"
+    assert float(row_tp01_lt["sanctioned_load_kw"]) == 10.0
+
+    row_tp02_lt = df[df["consumer_account_no"] == "413001070099"].iloc[0]
+    assert row_tp02_lt["toll_plaza_id"] == "TP02"
+    assert row_tp02_lt["bill_type"] == "LT"
+    assert row_tp02_lt["asset_code"] == "SR-E-EM-EB-62-600"
+    assert row_tp02_lt["consumer_scope"] == "HIGHWAY"
+    assert row_tp02_lt["division_name"] == "JED JHARSUGUDA"
+    assert row_tp02_lt["usage_type"] == "Street Light"
+    assert float(row_tp02_lt["sanctioned_load_kw"]) == 18.0
+
+    row_tp03_lt = df[df["consumer_account_no"] == "812001070018"].iloc[0]
+    assert row_tp03_lt["toll_plaza_id"] == "TP03"
+    assert row_tp03_lt["bill_type"] == "LT"
+    assert row_tp03_lt["division_name"] == "SED SUNDARAGADA"
+    assert float(row_tp03_lt["sanctioned_load_kw"]) == 28.0
 
 
 def test_consumer_mapping_dict():
     mapping = get_consumer_mapping_dict()
     assert "411001070208" in mapping
     assert mapping["411001070208"]["asset_code"] == "SR-E-EM-EB-5-200"
-    assert mapping["411001070208"]["location"] == "Ainthapalli"
     assert mapping["411001070208"]["toll_plaza_id"] == "TP01"
+    assert mapping["411001070208"]["bill_type"] == "LT"
+
+    assert "416000000110" in mapping
+    assert mapping["416000000110"]["bill_type"] == "HT"
 
 
 def test_save_and_delete_consumer_account():
     new_acc = {
         "consumer_account_no": "999001079999",
         "toll_plaza_id": "TP03",
-        "bill_type": "HT",
+        "bill_type": "LT",
         "asset_code": "SR-E-EM-EB-TEST",
         "consumer_scope": "HIGHWAY",
         "division_name": "RED",
         "usage_type": "Street Light",
         "sanctioned_load_kw": 25.0,
-        "location": "Rourkela Incomer",
+        "location": "Rourkela Corridor",
         "is_active": True,
     }
 
@@ -106,13 +133,13 @@ def test_save_consumer_account_cloud():
     cloud_acc = {
         "consumer_account_no": "888001078888",
         "toll_plaza_id": "TP01",
-        "bill_type": "HT",
+        "bill_type": "LT",
         "asset_code": "SR-E-EM-EB-TEST2",
         "consumer_scope": "HIGHWAY",
         "division_name": "SED",
         "usage_type": "Street Light",
         "sanctioned_load_kw": 30.0,
-        "location": "Sambalpur Incomer",
+        "location": "Sambalpur Corridor",
         "is_active": True,
     }
 
@@ -121,6 +148,7 @@ def test_save_consumer_account_cloud():
         mock_client.return_value = mock_instance
         mock_table = MagicMock()
         mock_instance.table.return_value = mock_table
+        mock_instance.schema.return_value.table.return_value = mock_table
         mock_table.upsert.return_value.execute.return_value = MagicMock()
         mock_table.select.return_value.order.return_value.execute.return_value = MagicMock(
             data=[cloud_acc]
@@ -137,6 +165,7 @@ def test_save_consumer_account_cloud():
 def test_correlated_consumer_reconciliation():
     corr_df = get_correlated_consumer_reconciliation()
     assert not corr_df.empty
+    assert len(corr_df) == 60, f"Expected 60 accounts in reconciliation, found {len(corr_df)}"
     assert "consumer_account_no" in corr_df.columns
     assert "discom_billed_kwh" in corr_df.columns
     assert "juno_meter_kwh" in corr_df.columns

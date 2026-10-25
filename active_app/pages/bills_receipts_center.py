@@ -1648,17 +1648,19 @@ def render():
         cons_df = get_all_consumer_accounts()
         corr_df = get_correlated_consumer_reconciliation()
 
-        # Top Metric Cards
+        # Top Metric Cards (60 Consumers: 3 HT Toll Plazas, 57 LT Corridor Lighting)
         tot_accounts = len(cons_df) if not cons_df.empty else 0
+        ht_accounts = len(cons_df[cons_df["bill_type"] == "HT"]) if not cons_df.empty and "bill_type" in cons_df.columns else 0
+        lt_accounts = len(cons_df[cons_df["bill_type"] == "LT"]) if not cons_df.empty and "bill_type" in cons_df.columns else 0
         tot_load = float(cons_df["sanctioned_load_kw"].sum()) if not cons_df.empty and "sanctioned_load_kw" in cons_df.columns else 0.0
         tot_plazas = len(cons_df["toll_plaza_id"].dropna().unique()) if not cons_df.empty and "toll_plaza_id" in cons_df.columns else 0
         tot_assets = len(cons_df["asset_code"].dropna().unique()) if not cons_df.empty and "asset_code" in cons_df.columns else 0
 
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("⚡ Registered Consumer A/Cs", f"{tot_accounts} Accounts", help="DISCOM Connections")
-        m2.metric("🏢 Covered Toll Plazas", f"{tot_plazas} Plazas", help="TP01, TP02, TP03")
-        m3.metric("🔌 Mapped EB Meters", f"{tot_assets} Meters", help="Linked JUNO Physical Meters")
-        m4.metric("⚙️ Sanctioned Load", f"{tot_load:,.1f} kW", help="Total Contract Demand / Sanctioned Load")
+        m1.metric("⚡ Registered Consumer A/Cs", f"{tot_accounts} Accounts", "100% Highway Corridor Coverage")
+        m2.metric("🔌 High Tension (HT)", f"{ht_accounts} Incomers", "Toll Plazas (120 kW each)")
+        m3.metric("💡 Low Tension (LT)", f"{lt_accounts} Connections", "Highway Corridor Lighting")
+        m4.metric("⚙️ Sanctioned Load", f"{tot_load:,.1f} kW", f"{tot_plazas} Plazas (20 per Plaza)")
 
         st.divider()
 
