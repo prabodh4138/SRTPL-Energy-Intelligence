@@ -54,6 +54,21 @@ def get_supabase_client():
         or os.getenv("SUPABASE_ANON_KEY", "").strip()
     )
     if not url or not key:
+        try:
+            import streamlit as st
+            if hasattr(st, "secrets"):
+                if "SUPABASE_URL" in st.secrets:
+                    url = str(st.secrets["SUPABASE_URL"]).strip()
+                if "SUPABASE_SERVICE_ROLE_KEY" in st.secrets:
+                    key = str(st.secrets["SUPABASE_SERVICE_ROLE_KEY"]).strip()
+                elif "SUPABASE_KEY" in st.secrets:
+                    key = str(st.secrets["SUPABASE_KEY"]).strip()
+                elif "SUPABASE_ANON_KEY" in st.secrets:
+                    key = str(st.secrets["SUPABASE_ANON_KEY"]).strip()
+        except Exception:
+            pass
+
+    if not url or not key:
         return None
     try:
         from supabase import create_client
@@ -67,6 +82,21 @@ def test_database_connection() -> dict[str, Any]:
     url = os.getenv("SUPABASE_URL", "").strip()
     key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip() or os.getenv("SUPABASE_KEY", "").strip()
     db_url = os.getenv("DATABASE_URL", "").strip()
+
+    if not url or not key:
+        try:
+            import streamlit as st
+            if hasattr(st, "secrets"):
+                if "SUPABASE_URL" in st.secrets:
+                    url = str(st.secrets["SUPABASE_URL"]).strip()
+                if "SUPABASE_SERVICE_ROLE_KEY" in st.secrets:
+                    key = str(st.secrets["SUPABASE_SERVICE_ROLE_KEY"]).strip()
+                elif "SUPABASE_KEY" in st.secrets:
+                    key = str(st.secrets["SUPABASE_KEY"]).strip()
+                elif "SUPABASE_ANON_KEY" in st.secrets:
+                    key = str(st.secrets["SUPABASE_ANON_KEY"]).strip()
+        except Exception:
+            pass
 
     if not url and not db_url:
         return {

@@ -21,3 +21,11 @@ def test_precheck():
     assert metadata.sha256
     assert metadata.report_type == "SOLAR"
     assert any(c.code == "REPORT_DETECTED" and c.status == "PASS" for c in checks)
+
+
+def test_load_settings_graceful():
+    from supabase_import.config import load_settings
+    settings = load_settings()
+    assert hasattr(settings, "supabase_url")
+    assert hasattr(settings, "supabase_key")
+    assert hasattr(settings, "storage_bucket")
