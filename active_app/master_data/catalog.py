@@ -1,4 +1,5 @@
 MASTER_DOMAINS = {
+    "CONSUMER_ACCOUNT": "Energy Consumer & Asset Mapping Master",
     "PLAZA": "Plaza Master",
     "ASSET": "Asset / Equipment Master",
     "PARAMETER": "Parameter Master",

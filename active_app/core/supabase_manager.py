@@ -200,6 +200,20 @@ def inject_master_and_sample_data(progress_callback: Callable[[str, float], None
         {"asset_id": "AST-TRF-01", "asset_code": "SR-E-HT-TFR-000001", "asset_name": "HT Substation Transformer 1", "plaza_id": "TP03", "source_type": "TRANSFORMER", "capacity_kva": 500.0, "is_active": True},
         {"asset_id": "AST-UPS-10", "asset_code": "SR-E-AP-UPS-000010", "asset_name": "Toll Plaza UPS 10", "plaza_id": "TP03", "source_type": "UPS", "capacity_kva": 40.0, "is_active": True},
         {"asset_id": "AST-UPS-12", "asset_code": "SR-E-AP-UPS-000012", "asset_name": "Toll Plaza UPS 12", "plaza_id": "TP03", "source_type": "UPS", "capacity_kva": 40.0, "is_active": True},
+
+        # Additional Corridor EB Meters
+        {"asset_id": "AST-EB-04", "asset_code": "SR-E-EM-EB-5-200", "asset_name": "Corridor Lighting Meter 05.200 (Ainthapalli)", "plaza_id": "TP01", "source_type": "EB", "capacity_kva": 50.0, "is_active": True},
+        {"asset_id": "AST-EB-05", "asset_code": "SR-E-EM-EB-62-600", "asset_name": "Corridor Lighting Meter 62.600 (Tangarpali)", "plaza_id": "TP02", "source_type": "EB", "capacity_kva": 50.0, "is_active": True},
+    ]
+
+    # 2B. Master Energy Consumer Accounts Mapping
+    consumer_accounts_data = [
+        {"consumer_account_no": "411001070208", "toll_plaza_id": "TP01", "bill_type": "HT", "asset_code": "SR-E-EM-EB-5-200", "consumer_scope": "HIGHWAY", "division_name": "SED", "usage_type": "Street Light", "sanctioned_load_kw": 10.0, "location": "Ainthapalli", "is_active": True},
+        {"consumer_account_no": "413001070099", "toll_plaza_id": "TP02", "bill_type": "HT", "asset_code": "SR-E-EM-EB-62-600", "consumer_scope": "HIGHWAY", "division_name": "JED", "usage_type": "Street Light", "sanctioned_load_kw": 18.0, "location": "TANGARPALI", "is_active": True},
+        {"consumer_account_no": "416000000110", "toll_plaza_id": "TP01", "bill_type": "HT", "asset_code": "SR-E-EM-EB-000TP01", "consumer_scope": "TOLL_PLAZA", "division_name": "SEED SAMBALPUR", "usage_type": "General Purpose", "sanctioned_load_kw": 120.0, "location": "TP-01 EB Meter", "is_active": True},
+        {"consumer_account_no": "813001070057", "toll_plaza_id": "TP02", "bill_type": "LT", "asset_code": "SR-E-EM-EB-130-000", "consumer_scope": "HIGHWAY", "division_name": "KUTRA", "usage_type": "Public Light", "sanctioned_load_kw": 15.0, "location": "Kutra EB METER", "is_active": True},
+        {"consumer_account_no": "413001070102", "toll_plaza_id": "TP02", "bill_type": "HT", "asset_code": "SR-E-EM-EB-112-800", "consumer_scope": "HIGHWAY", "division_name": "JED JHARSUGUDA", "usage_type": "Street Light", "sanctioned_load_kw": 14.0, "location": "Jharsuguda Bypass", "is_active": True},
+        {"consumer_account_no": "413001070344", "toll_plaza_id": "TP02", "bill_type": "HT", "asset_code": "SR-E-EM-EB-95-400", "consumer_scope": "HIGHWAY", "division_name": "JED JHARSUGUDA", "usage_type": "Street Light", "sanctioned_load_kw": 12.0, "location": "Badmal", "is_active": True},
     ]
 
     if progress_callback:
@@ -223,8 +237,20 @@ def inject_master_and_sample_data(progress_callback: Callable[[str, float], None
             except Exception:
                 pass
 
+        try:
+            client.table("energy_consumer_master").upsert(consumer_accounts_data, on_conflict="consumer_account_no").execute()
+        except Exception:
+            try:
+                client.table("consumer_account").upsert(consumer_accounts_data, on_conflict="consumer_account_no").execute()
+            except Exception:
+                try:
+                    client.schema("energy_master").table("consumer_account").upsert(consumer_accounts_data, on_conflict="consumer_account_no").execute()
+                except Exception:
+                    pass
+
     stats["plazas"] = len(plazas_data)
     stats["assets"] = len(assets_data)
+    stats["consumer_accounts"] = len(consumer_accounts_data)
 
     # 3. Extract & Inject Energy Bills
     if progress_callback:

@@ -59,6 +59,27 @@ CREATE TABLE IF NOT EXISTS energy_master.asset (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Master Consumer Account & Asset Mapping Table
+CREATE TABLE IF NOT EXISTS energy_master.consumer_account (
+    consumer_account_no VARCHAR(64) PRIMARY KEY,
+    toll_plaza_id VARCHAR(16) REFERENCES energy_master.plaza(plaza_id) ON DELETE SET NULL,
+    bill_type VARCHAR(32) NOT NULL DEFAULT 'HT',
+    asset_code VARCHAR(64) NOT NULL,
+    consumer_scope VARCHAR(64) NOT NULL DEFAULT 'HIGHWAY',
+    division_name VARCHAR(128) NOT NULL,
+    usage_type VARCHAR(128) NOT NULL DEFAULT 'Street Light',
+    sanctioned_load_kw NUMERIC(10, 2) NOT NULL DEFAULT 0.0,
+    location VARCHAR(256) NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    remarks TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_consumer_account_asset ON energy_master.consumer_account(asset_code);
+CREATE INDEX IF NOT EXISTS idx_consumer_account_plaza ON energy_master.consumer_account(toll_plaza_id);
+CREATE INDEX IF NOT EXISTS idx_consumer_account_division ON energy_master.consumer_account(division_name);
+
 -- STEP 4: IMPORT TRACKING (Level 1 Duplicate Prevention: SHA-256 Uniqueness)
 CREATE TABLE IF NOT EXISTS energy_import.import_file (
     import_file_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -349,6 +370,8 @@ CREATE TABLE IF NOT EXISTS public.payment_receipts (
 -- STEP 9: PUBLIC CONVENIENCE VIEWS (Allows querying both schema styles)
 CREATE OR REPLACE VIEW public.plaza AS SELECT * FROM energy_master.plaza;
 CREATE OR REPLACE VIEW public.asset AS SELECT * FROM energy_master.asset;
+CREATE OR REPLACE VIEW public.energy_consumer_master AS SELECT * FROM energy_master.consumer_account;
+CREATE OR REPLACE VIEW public.consumer_account AS SELECT * FROM energy_master.consumer_account;
 CREATE OR REPLACE VIEW public.import_file AS SELECT * FROM energy_import.import_file;
 CREATE OR REPLACE VIEW public.import_batch AS SELECT * FROM energy_import.import_batch;
 CREATE OR REPLACE VIEW public.import_row AS SELECT * FROM energy_import.import_row;
@@ -407,6 +430,7 @@ GRANT EXECUTE ON FUNCTION public.reload_schema_cache() TO anon, authenticated, s
 -- STEP 11: ENABLE ROW LEVEL SECURITY (RLS) ON ALL TABLES
 ALTER TABLE energy_master.plaza ENABLE ROW LEVEL SECURITY;
 ALTER TABLE energy_master.asset ENABLE ROW LEVEL SECURITY;
+ALTER TABLE energy_master.consumer_account ENABLE ROW LEVEL SECURITY;
 ALTER TABLE energy_import.import_file ENABLE ROW LEVEL SECURITY;
 ALTER TABLE energy_import.import_batch ENABLE ROW LEVEL SECURITY;
 ALTER TABLE energy_import.import_row ENABLE ROW LEVEL SECURITY;
@@ -425,6 +449,9 @@ CREATE POLICY "allow_all_plaza" ON energy_master.plaza FOR ALL TO anon, authenti
 
 DROP POLICY IF EXISTS "allow_all_asset" ON energy_master.asset;
 CREATE POLICY "allow_all_asset" ON energy_master.asset FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "allow_all_consumer_account" ON energy_master.consumer_account;
+CREATE POLICY "allow_all_consumer_account" ON energy_master.consumer_account FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "allow_all_import_file" ON energy_import.import_file;
 CREATE POLICY "allow_all_import_file" ON energy_import.import_file FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
@@ -508,8 +535,41 @@ INSERT INTO energy_master.asset (asset_id, asset_code, asset_name, plaza_id, sou
     ('AST-SOL-03', 'SR-E-AP-SPX-000003', 'Solar Plant 3', 'TP03', 'SOLAR', 100.0),
     ('AST-TRF-01', 'SR-E-HT-TFR-000001', 'HT Substation Transformer 1', 'TP03', 'TRANSFORMER', 500.0),
     ('AST-UPS-10', 'SR-E-AP-UPS-000010', 'Toll Plaza UPS 10', 'TP03', 'UPS', 40.0),
-    ('AST-UPS-12', 'SR-E-AP-UPS-000012', 'Toll Plaza UPS 12', 'TP03', 'UPS', 40.0)
-ON CONFLICT (asset_id) DO NOTHING;
+    ('AST-UPS-12', 'SR-E-AP-UPS-000012', 'Toll Plaza UPS 12', 'TP03', 'UPS', 40.0),
+
+    -- Additional Corridor EB Meters
+    ('AST-EB-04', 'SR-E-EM-EB-5-200', 'Corridor Lighting Meter 05.200 (Ainthapalli)', 'TP01', 'EB', 50.0),
+    ('AST-EB-05', 'SR-E-EM-EB-62-600', 'Corridor Lighting Meter 62.600 (Tangarpali)', 'TP02', 'EB', 50.0)
+ON CONFLICT (asset_id) DO UPDATE
+SET asset_code = EXCLUDED.asset_code,
+    asset_name = EXCLUDED.asset_name,
+    plaza_id = EXCLUDED.plaza_id;
+
+-- Seed Energy Consumer Accounts Master Data
+INSERT INTO energy_master.consumer_account (
+    consumer_account_no, toll_plaza_id, bill_type, asset_code, consumer_scope, division_name, usage_type, sanctioned_load_kw, location, is_active
+) VALUES
+    ('411001070208', 'TP01', 'HT', 'SR-E-EM-EB-5-200', 'HIGHWAY', 'SED', 'Street Light', 10.0, 'Ainthapalli', true),
+    ('413001070099', 'TP02', 'HT', 'SR-E-EM-EB-62-600', 'HIGHWAY', 'JED', 'Street Light', 18.0, 'TANGARPALI', true),
+    ('416000000110', 'TP01', 'HT', 'SR-E-EM-EB-000TP01', 'TOLL_PLAZA', 'SEED SAMBALPUR', 'General Purpose', 120.0, 'TP-01 EB Meter', true),
+    ('813001070057', 'TP02', 'LT', 'SR-E-EM-EB-130-000', 'HIGHWAY', 'KUTRA', 'Public Light', 15.0, 'Kutra EB METER', true),
+    ('413001070102', 'TP02', 'HT', 'SR-E-EM-EB-112-800', 'HIGHWAY', 'JED JHARSUGUDA', 'Street Light', 14.0, 'Jharsuguda Bypass', true),
+    ('413001070344', 'TP02', 'HT', 'SR-E-EM-EB-95-400', 'HIGHWAY', 'JED JHARSUGUDA', 'Street Light', 12.0, 'Badmal', true),
+    ('416001070082', 'TP01', 'HT', 'SR-E-EM-EB-12-300', 'HIGHWAY', 'SEED SAMBALPUR', 'Public Light', 10.0, 'Rengali', true),
+    ('416001070084', 'TP01', 'HT', 'SR-E-EM-EB-24-500', 'HIGHWAY', 'SEED SAMBALPUR', 'Public Light', 10.0, 'Lapanga', true),
+    ('416001070086', 'TP01', 'HT', 'SR-E-EM-EB-36-800', 'HIGHWAY', 'SEED SAMBALPUR', 'Public Light', 10.0, 'Bhojpur', true),
+    ('416001070090', 'TP01', 'HT', 'SR-E-EM-EB-48-200', 'HIGHWAY', 'SEED SAMBALPUR', 'Public Light', 10.0, 'Kuchinda Road', true)
+ON CONFLICT (consumer_account_no) DO UPDATE
+SET toll_plaza_id = EXCLUDED.toll_plaza_id,
+    bill_type = EXCLUDED.bill_type,
+    asset_code = EXCLUDED.asset_code,
+    consumer_scope = EXCLUDED.consumer_scope,
+    division_name = EXCLUDED.division_name,
+    usage_type = EXCLUDED.usage_type,
+    sanctioned_load_kw = EXCLUDED.sanctioned_load_kw,
+    location = EXCLUDED.location,
+    is_active = EXCLUDED.is_active,
+    updated_at = NOW();
 
 -- STEP 15: RELOAD POSTGREST SCHEMA CACHE (Fixes PGRST002)
 NOTIFY pgrst, 'reload schema';

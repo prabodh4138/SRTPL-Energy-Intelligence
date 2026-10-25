@@ -8,6 +8,9 @@ from core.db_sync import (
     get_all_assets,
     save_asset,
     delete_asset,
+    get_all_consumer_accounts,
+    save_consumer_account,
+    delete_consumer_account,
 )
 from core.supabase_manager import test_database_connection
 
@@ -42,7 +45,9 @@ def render():
             key="md_browse_domain",
         )
 
-        if domain == "PLAZA":
+        if domain == "CONSUMER_ACCOUNT":
+            df = repo.consumer_accounts()
+        elif domain == "PLAZA":
             df = repo.plazas()
         elif domain == "ASSET":
             df = repo.assets()
@@ -67,13 +72,57 @@ def render():
             st.dataframe(df, width="stretch", hide_index=True)
 
     # -----------------------------------------------------------------------
-    # TAB 2: Add New Record (Plaza or Asset)
+    # TAB 2: Add New Record (Consumer Account, Plaza, Asset)
     # -----------------------------------------------------------------------
     with m_tab_add:
         st.subheader("Add Master Record")
-        add_type = st.radio("Select Entity to Add", ["Plaza", "Asset"], horizontal=True, key="add_entity_type")
+        add_type = st.radio("Select Entity to Add", ["Consumer Account", "Plaza", "Asset"], horizontal=True, key="add_entity_type")
 
-        if add_type == "Plaza":
+        if add_type == "Consumer Account":
+            plazas_df = get_all_plazas()
+            plaza_ids = plazas_df["plaza_id"].tolist() if not plazas_df.empty else ["TP01", "TP02", "TP03"]
+            with st.form("form_add_consumer_account"):
+                st.markdown("##### ⚡ Register Energy Consumer Account & Mapping")
+                c1, c2, c3 = st.columns(3)
+                ca_no = c1.text_input("Consumer Account No.*", placeholder="411001070208")
+                ca_plz = c2.selectbox("Toll Plaza ID*", plaza_ids)
+                ca_type = c3.selectbox("Bill Type*", ["HT", "LT"])
+
+                c4, c5, c6 = st.columns(3)
+                ca_asset = c4.text_input("Asset Code*", placeholder="SR-E-EM-EB-5-200")
+                ca_scope = c5.selectbox("Consumer Scope*", ["HIGHWAY", "TOLL_PLAZA", "ADMIN"])
+                ca_div = c6.text_input("Division Name*", placeholder="SED")
+
+                c7, c8, c9 = st.columns(3)
+                ca_usage = c7.text_input("Usage Type*", value="Street Light")
+                ca_load = c8.number_input("Sanctioned Load (kW)*", min_value=0.0, value=10.0, step=1.0)
+                ca_loc = c9.text_input("Location*", placeholder="Ainthapalli")
+
+                ca_rem = st.text_input("Remarks", placeholder="Master mapping record")
+                ca_act = st.checkbox("Active Status", value=True)
+
+                if st.form_submit_button("💾 Save Consumer Account to Database", type="primary"):
+                    if not ca_no or not ca_asset or not ca_loc:
+                        st.error("Consumer Account No, Asset Code, and Location are required.")
+                    else:
+                        res = save_consumer_account({
+                            "consumer_account_no": ca_no,
+                            "toll_plaza_id": ca_plz,
+                            "bill_type": ca_type,
+                            "asset_code": ca_asset,
+                            "consumer_scope": ca_scope,
+                            "division_name": ca_div,
+                            "usage_type": ca_usage,
+                            "sanctioned_load_kw": ca_load,
+                            "location": ca_loc,
+                            "is_active": ca_act,
+                            "remarks": ca_rem,
+                        })
+                        sync_msg = "and synchronized to Supabase" if res.get("cloud_synced") else "in local operational store"
+                        st.success(f"✅ Consumer Account **{ca_no}** saved successfully {sync_msg}!")
+                        st.rerun()
+
+        elif add_type == "Plaza":
             with st.form("form_add_plaza"):
                 st.markdown("##### 🏢 Register New Toll Plaza")
                 p_id = st.text_input("Plaza ID (e.g. TP04)", placeholder="TP04")
@@ -123,9 +172,63 @@ def render():
     # -----------------------------------------------------------------------
     with m_tab_edit:
         st.subheader("Modify Existing Record")
-        edit_type = st.radio("Select Entity to Edit", ["Plaza", "Asset"], horizontal=True, key="edit_entity_type")
+        edit_type = st.radio("Select Entity to Edit", ["Consumer Account", "Plaza", "Asset"], horizontal=True, key="edit_entity_type")
 
-        if edit_type == "Plaza":
+        if edit_type == "Consumer Account":
+            ca_df = get_all_consumer_accounts()
+            plazas_df = get_all_plazas()
+            plaza_ids = plazas_df["plaza_id"].tolist() if not plazas_df.empty else ["TP01", "TP02", "TP03"]
+            if ca_df.empty:
+                st.warning("No consumer accounts found in database.")
+            else:
+                ac_list = ca_df["consumer_account_no"].astype(str).tolist()
+                sel_ac = st.selectbox("Select Consumer Account to Modify", ac_list, key="sel_edit_ca")
+                curr_ca = ca_df[ca_df["consumer_account_no"].astype(str) == sel_ac].iloc[0]
+
+                with st.form("form_edit_ca"):
+                    ec1, ec2, ec3 = st.columns(3)
+                    curr_p = str(curr_ca.get("toll_plaza_id", plaza_ids[0]))
+                    p_idx = plaza_ids.index(curr_p) if curr_p in plaza_ids else 0
+                    e_plz = ec1.selectbox("Toll Plaza ID", plaza_ids, index=p_idx)
+                    curr_bt = str(curr_ca.get("bill_type", "HT")).upper()
+                    bt_idx = 0 if curr_bt == "HT" else 1
+                    e_bt = ec2.selectbox("Bill Type", ["HT", "LT"], index=bt_idx)
+                    e_asset = ec3.text_input("Asset Code", value=str(curr_ca.get("asset_code", "")))
+
+                    ec4, ec5, ec6 = st.columns(3)
+                    curr_sc = str(curr_ca.get("consumer_scope", "HIGHWAY")).upper()
+                    sc_list = ["HIGHWAY", "TOLL_PLAZA", "ADMIN"]
+                    sc_idx = sc_list.index(curr_sc) if curr_sc in sc_list else 0
+                    e_scope = ec4.selectbox("Consumer Scope", sc_list, index=sc_idx)
+                    e_div = ec5.text_input("Division Name", value=str(curr_ca.get("division_name", "")))
+                    e_usage = ec6.text_input("Usage Type", value=str(curr_ca.get("usage_type", "Street Light")))
+
+                    ec7, ec8, ec9 = st.columns(3)
+                    e_load = ec7.number_input("Sanctioned Load (kW)", value=float(curr_ca.get("sanctioned_load_kw", 10.0) or 0.0), step=1.0)
+                    e_loc = ec8.text_input("Location", value=str(curr_ca.get("location", "")))
+                    e_act = ec9.checkbox("Active", value=bool(curr_ca.get("is_active", True)), key="edit_ca_active")
+
+                    e_rem = st.text_input("Remarks", value=str(curr_ca.get("remarks", "")))
+
+                    if st.form_submit_button("🔄 Update Consumer Account in Database", type="primary"):
+                        res = save_consumer_account({
+                            "consumer_account_no": sel_ac,
+                            "toll_plaza_id": e_plz,
+                            "bill_type": e_bt,
+                            "asset_code": e_asset,
+                            "consumer_scope": e_scope,
+                            "division_name": e_div,
+                            "usage_type": e_usage,
+                            "sanctioned_load_kw": e_load,
+                            "location": e_loc,
+                            "is_active": e_act,
+                            "remarks": e_rem,
+                        })
+                        sync_msg = "and synchronized to Supabase" if res.get("cloud_synced") else "in local operational store"
+                        st.success(f"✅ Consumer Account **{sel_ac}** updated successfully {sync_msg}!")
+                        st.rerun()
+
+        elif edit_type == "Plaza":
             plazas_df = get_all_plazas()
             if plazas_df.empty:
                 st.warning("No plazas found in database.")
@@ -186,9 +289,23 @@ def render():
     # -----------------------------------------------------------------------
     with m_tab_delete:
         st.subheader("Delete Master Record")
-        del_type = st.radio("Select Entity to Delete", ["Plaza", "Asset"], horizontal=True, key="del_entity_type")
+        del_type = st.radio("Select Entity to Delete", ["Consumer Account", "Plaza", "Asset"], horizontal=True, key="del_entity_type")
 
-        if del_type == "Plaza":
+        if del_type == "Consumer Account":
+            ca_df = get_all_consumer_accounts()
+            if ca_df.empty:
+                st.warning("No consumer accounts found to delete.")
+            else:
+                sel_del_ca = st.selectbox("Select Consumer Account to Remove", ca_df["consumer_account_no"].astype(str).tolist(), key="sel_del_ca")
+                st.warning(f"⚠️ Deleting Consumer Account **{sel_del_ca}** will remove it from both the application and the Supabase database.")
+                confirm_del_ca = st.checkbox(f"Confirm deletion of consumer account {sel_del_ca}", key="confirm_del_ca")
+                if st.button("🗑️ Delete Consumer Account from Database", type="primary", disabled=not confirm_del_ca, key="btn_exec_del_ca"):
+                    res = delete_consumer_account(sel_del_ca)
+                    sync_msg = "and removed from Supabase" if res.get("cloud_synced") else "from local store"
+                    st.success(f"🧹 Consumer Account **{sel_del_ca}** deleted successfully {sync_msg}!")
+                    st.rerun()
+
+        elif del_type == "Plaza":
             plazas_df = get_all_plazas()
             if plazas_df.empty:
                 st.warning("No plazas found to delete.")

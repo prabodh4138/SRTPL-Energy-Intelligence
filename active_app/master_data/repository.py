@@ -9,6 +9,19 @@ class MasterDataRepository:
                 return df
         return pd.DataFrame(columns=empty_cols)
 
+    def consumer_accounts(self):
+        try:
+            from core.db_sync import get_all_consumer_accounts
+            df = get_all_consumer_accounts()
+            if not df.empty:
+                return df
+        except Exception:
+            pass
+        return self._demo_or_empty("CONSUMER_ACCOUNT", [
+            "consumer_account_no", "toll_plaza_id", "bill_type", "asset_code",
+            "consumer_scope", "division_name", "usage_type", "sanctioned_load_kw", "location"
+        ])
+
     def plazas(self):
         try:
             from core.db_sync import get_all_plazas

@@ -29,6 +29,11 @@ from core.db_sync import (
     get_existing_provisional_bill_numbers,
     get_all_provisional_energy_bills,
     delete_provisional_energy_bill,
+    get_all_consumer_accounts,
+    save_consumer_account,
+    delete_consumer_account,
+    get_correlated_consumer_reconciliation,
+    get_consumer_mapping_dict,
 )
 
 SAMPLE_DIR = "source_data/user_uploaded_bills/extractor"
@@ -58,11 +63,12 @@ def render():
 
     st.divider()
 
-    tab_monthly, tab_extract, tab_reconcile, tab_register = st.tabs([
+    tab_monthly, tab_extract, tab_reconcile, tab_register, tab_master = st.tabs([
         "📅 Month-wise EB Consumption",
         "📄 Bill Field Extraction & Verification",
         "⚖️ Meter vs. Bill Reconciliation",
         "💳 Bill & Receipt Register",
+        "🏛️ Energy Consumer Master & Mapping",
     ])
 
     # -------------------------------------------------------------------------
@@ -1323,6 +1329,158 @@ def render():
                         res_p = delete_provisional_energy_bill(sel_del_prov)
                         sync_msg = "and removed from Supabase" if res_p.get("cloud_deleted") else "from local store"
                         st.success(f"🧹 Provisional Bill **{sel_del_prov}** deleted successfully {sync_msg}!")
+                        st.rerun()
+
+    # -------------------------------------------------------------------------
+    # TAB 5: Energy Consumer Master & Asset Mapping
+    # -------------------------------------------------------------------------
+    with tab_master:
+        st.subheader("Energy Consumer Master & Asset Mapping")
+        st.caption("Master database table mapping DISCOM Consumer Accounts to Toll Plazas, EB Incomer Meters, Highway Locations, and Billed Consumption.")
+
+        cons_df = get_all_consumer_accounts()
+        corr_df = get_correlated_consumer_reconciliation()
+
+        # Top Metric Cards
+        tot_accounts = len(cons_df) if not cons_df.empty else 0
+        tot_load = float(cons_df["sanctioned_load_kw"].sum()) if not cons_df.empty and "sanctioned_load_kw" in cons_df.columns else 0.0
+        tot_plazas = len(cons_df["toll_plaza_id"].dropna().unique()) if not cons_df.empty and "toll_plaza_id" in cons_df.columns else 0
+        tot_assets = len(cons_df["asset_code"].dropna().unique()) if not cons_df.empty and "asset_code" in cons_df.columns else 0
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("⚡ Registered Consumer A/Cs", f"{tot_accounts} Accounts", help="DISCOM Connections")
+        m2.metric("🏢 Covered Toll Plazas", f"{tot_plazas} Plazas", help="TP01, TP02, TP03")
+        m3.metric("🔌 Mapped EB Meters", f"{tot_assets} Meters", help="Linked JUNO Physical Meters")
+        m4.metric("⚙️ Sanctioned Load", f"{tot_load:,.1f} kW", help="Total Contract Demand / Sanctioned Load")
+
+        st.divider()
+
+        sub_mast_reg, sub_mast_corr, sub_mast_add = st.tabs([
+            f"📋 Master Mapping Directory ({tot_accounts})",
+            "📊 Correlated Telemetry & Billing Reconciliation",
+            "➕ Register New Consumer Account",
+        ])
+
+        with sub_mast_reg:
+            st.markdown("##### 📋 Master Consumer Account Table (`public.energy_consumer_master`)")
+            st.caption("Central directory correlating DISCOM account numbers with physical assets and locations.")
+
+            if cons_df.empty:
+                st.info("No consumer accounts currently registered in the database.")
+            else:
+                st.dataframe(cons_df, width="stretch", hide_index=True)
+
+                col_cdl, _ = st.columns([1, 1])
+                with col_cdl:
+                    out_c = io.BytesIO()
+                    with pd.ExcelWriter(out_c, engine="openpyxl") as writer:
+                        cons_df.to_excel(writer, index=False, sheet_name="Consumer_Master")
+
+                    st.download_button(
+                        label=f"📥 Download Master Mapping Excel ({len(cons_df)} records)",
+                        data=out_c.getvalue(),
+                        file_name=f"SRTPL_Energy_Consumer_Master_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        width="stretch",
+                    )
+
+                with st.expander("🗑️ Delete Consumer Account from Master"):
+                    ac_del_list = cons_df["consumer_account_no"].astype(str).tolist()
+                    sel_del_ac = st.selectbox("Select Account Number to Delete", ac_del_list, key="sel_del_cm_ac")
+                    chk_del_ac = st.checkbox(f"Confirm deletion of consumer account {sel_del_ac}", key="chk_del_cm_ac")
+                    if st.button("🗑️ Delete from Master Table", type="primary", disabled=not chk_del_ac, key="btn_del_cm_ac"):
+                        res_del = delete_consumer_account(sel_del_ac)
+                        sync_msg = "and removed from Supabase" if res_del.get("cloud_synced") else "from local store"
+                        st.success(f"🧹 Account **{sel_del_ac}** deleted successfully {sync_msg}!")
+                        st.rerun()
+
+        with sub_mast_corr:
+            st.markdown("##### 📊 Full Cross-Table Correlation (`v_energy_consumer_reconciliation`)")
+            st.caption("Unified telemetry view automatically joining Master Data with live DISCOM Energy Bills, physical JUNO Meter Readings, and Payment Receipts.")
+
+            if corr_df.empty:
+                st.info("No correlation data available.")
+            else:
+                st.dataframe(corr_df, width="stretch", hide_index=True)
+
+                st.markdown("---")
+                st.markdown("#### 🔍 Consumer Account Drill-down & Variance Inspection")
+                ac_corr_list = corr_df["consumer_account_no"].astype(str).tolist()
+                sel_corr_ac = st.selectbox(
+                    "Select Consumer Account for Detailed Reconciliation:",
+                    ac_corr_list,
+                    key="sel_corr_ac_inspect",
+                )
+                sel_corr_row = corr_df[corr_df["consumer_account_no"].astype(str) == sel_corr_ac].iloc[0].to_dict()
+
+                cr1, cr2, cr3, cr4 = st.columns(4)
+                cr1.metric("DISCOM Billed Units", f"{sel_corr_row.get('discom_billed_kwh', 0):,.0f} kWh")
+                cr2.metric("JUNO Meter Units", f"{sel_corr_row.get('juno_meter_kwh', 0):,.0f} kWh")
+                cr3.metric("Variance", f"{sel_corr_row.get('kwh_variance', 0):+,.0f} kWh ({sel_corr_row.get('variance_percentage', 0):.2f}%)")
+                cr4.metric("Billed Amount", f"₹{sel_corr_row.get('discom_billed_amount', 0):,.2f}")
+
+                st.markdown(
+                    f"""
+                    <div style="background: rgba(30, 41, 59, 0.7); border: 1px solid #334155; border-radius: 8px; padding: 14px; margin-top: 10px;">
+                        <div style="font-weight: 600; color: #38bdf8; font-size: 14px;">🏢 Account Metadata & Mapping Details: {sel_corr_ac}</div>
+                        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; font-size: 13px; color: #cbd5e1;">
+                            <div>• <b>Toll Plaza:</b> {sel_corr_row.get('toll_plaza_id', 'TP01')}</div>
+                            <div>• <b>Asset Code:</b> <code>{sel_corr_row.get('asset_code', '—')}</code></div>
+                            <div>• <b>Location:</b> {sel_corr_row.get('location', '—')}</div>
+                            <div>• <b>Bill Type:</b> {sel_corr_row.get('bill_type', 'HT')}</div>
+                            <div>• <b>Consumer Scope:</b> {sel_corr_row.get('consumer_scope', 'HIGHWAY')}</div>
+                            <div>• <b>Division:</b> {sel_corr_row.get('division_name', 'SED')}</div>
+                            <div>• <b>Usage Type:</b> {sel_corr_row.get('usage_type', 'Street Light')}</div>
+                            <div>• <b>Sanctioned Load:</b> {sel_corr_row.get('sanctioned_load_kw', 10.0)} kW</div>
+                            <div>• <b>Latest Bill Month:</b> {sel_corr_row.get('latest_bill_month', '—')}</div>
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+        with sub_mast_add:
+            st.markdown("##### ➕ Register New Consumer Account & Asset Mapping")
+            st.caption("Add new electricity connections into Supabase (`public.energy_consumer_master`).")
+
+            with st.form("form_register_consumer_account"):
+                fc1, fc2, fc3 = st.columns(3)
+                f_ac = fc1.text_input("Consumer Account No.*", placeholder="411001070208")
+                f_plz = fc2.selectbox("Toll Plaza ID*", ["TP01", "TP02", "TP03"])
+                f_type = fc3.selectbox("Bill Type*", ["HT", "LT"])
+
+                fc4, fc5, fc6 = st.columns(3)
+                f_asset = fc4.text_input("Asset Code*", placeholder="SR-E-EM-EB-5-200")
+                f_scope = fc5.selectbox("Consumer Scope*", ["HIGHWAY", "TOLL_PLAZA", "ADMIN"])
+                f_div = fc6.text_input("Division Name*", placeholder="SED")
+
+                fc7, fc8, fc9 = st.columns(3)
+                f_usage = fc7.text_input("Usage Type*", value="Street Light")
+                f_load = fc8.number_input("Sanctioned Load (kW)*", min_value=0.0, value=10.0, step=1.0)
+                f_loc = fc9.text_input("Location*", placeholder="Ainthapalli")
+
+                f_rem = st.text_input("Remarks / Notes", placeholder="Corridor lighting meter")
+                f_act = st.checkbox("Active Status", value=True)
+
+                if st.form_submit_button("💾 Save Consumer Account to Supabase", type="primary", width="stretch"):
+                    if not f_ac or not f_asset or not f_loc:
+                        st.error("Consumer Account No, Asset Code, and Location are mandatory.")
+                    else:
+                        res = save_consumer_account({
+                            "consumer_account_no": f_ac,
+                            "toll_plaza_id": f_plz,
+                            "bill_type": f_type,
+                            "asset_code": f_asset,
+                            "consumer_scope": f_scope,
+                            "division_name": f_div,
+                            "usage_type": f_usage,
+                            "sanctioned_load_kw": f_load,
+                            "location": f_loc,
+                            "is_active": f_act,
+                            "remarks": f_rem,
+                        })
+                        sync_msg = "and synchronized to Supabase" if res.get("cloud_synced") else "in local operational store"
+                        st.success(f"✅ Consumer Account **{f_ac}** saved successfully {sync_msg}!")
                         st.rerun()
 
 
