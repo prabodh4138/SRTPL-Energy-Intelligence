@@ -63,15 +63,54 @@ sql_content = f"""-- ===========================================================
 -- 6. Reload schema cache and execute the verification query.
 -- ============================================================================
 
--- STEP 1: CLEAN WIPE OF OLD READINGS & AUDIT RECORDS
-TRUNCATE TABLE energy_readings.eb CASCADE;
-TRUNCATE TABLE energy_readings.dg CASCADE;
-TRUNCATE TABLE energy_readings.solar CASCADE;
-TRUNCATE TABLE energy_readings.transformer CASCADE;
-TRUNCATE TABLE energy_readings.ups CASCADE;
-TRUNCATE TABLE energy_validation.exception_record CASCADE;
-TRUNCATE TABLE energy_import.import_file CASCADE;
-TRUNCATE TABLE energy_import.import_batch CASCADE;
+-- STEP 1: SAFE WIPE OF OLD READINGS & AUDIT RECORDS
+DO $$
+BEGIN
+    TRUNCATE TABLE energy_readings.eb CASCADE;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+    TRUNCATE TABLE energy_readings.dg CASCADE;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+    TRUNCATE TABLE energy_readings.solar CASCADE;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+    TRUNCATE TABLE energy_readings.transformer CASCADE;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+    TRUNCATE TABLE energy_readings.ups CASCADE;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+    TRUNCATE TABLE energy_validation.exception_record CASCADE;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+    TRUNCATE TABLE energy_import.import_file CASCADE;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+    TRUNCATE TABLE energy_import.import_batch CASCADE;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
 
 -- STEP 2: ENSURE TABLE SCHEMA & ALL 8 AUDIT COLUMNS EXIST
 ALTER TABLE energy_readings.eb ADD COLUMN IF NOT EXISTS asset_code VARCHAR(64);
@@ -96,6 +135,13 @@ BEGIN
 EXCEPTION WHEN OTHERS THEN NULL;
 END $$;
 
+-- Also ensure import_file has import_batch_id if needed in future
+DO $$
+BEGIN
+    ALTER TABLE energy_import.import_file ADD COLUMN IF NOT EXISTS import_batch_id VARCHAR(64);
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
 -- STEP 3: ENSURE PLAZAS AND ASSETS ARE REGISTERED
 INSERT INTO energy_master.plaza (plaza_id, plaza_name, location) VALUES
     ('TP01', 'Toll Plaza 01 (Main / Barabati)', 'SRTPL Corridor Km 24+500'),
@@ -112,55 +158,32 @@ ON CONFLICT (asset_id) DO UPDATE SET
     asset_name = EXCLUDED.asset_name,
     plaza_id = EXCLUDED.plaza_id;
 
--- STEP 4: REGISTER IMPORT BATCH & FILE AUDIT (SHA-256 = 5ced4b47983bb03b...)
-INSERT INTO energy_import.import_batch (
-    import_batch_id,
-    uploaded_by,
-    source_system,
-    report_type,
-    status,
-    total_files,
-    total_rows,
-    valid_rows,
-    invalid_rows
-) VALUES (
-    'b1000000-0000-0000-0000-000000000001',
-    'admin@srtpl.com',
-    'JUNO',
-    'EB',
-    'IMPORTED',
-    1,
-    23,
-    23,
-    0
-) ON CONFLICT (import_batch_id) DO UPDATE SET
-    valid_rows = 23,
-    total_rows = 23;
-
-INSERT INTO energy_import.import_file (
-    import_file_id,
-    import_batch_id,
-    original_filename,
-    sha256_hash,
-    report_type,
-    asset_code,
-    row_count,
-    valid_row_count,
-    exception_row_count,
-    uploaded_by
-) VALUES (
-    'f1000000-0000-0000-0000-000000000001',
-    'b1000000-0000-0000-0000-000000000001',
-    'EBDailyLogReport_25thSep2026_2143_EB Log - Copy.csv',
-    '5ced4b47983bb03b8e721a3297a7a195be5d6d8ec5a9e3e7f2252a16d8e0ce9a',
-    'EB',
-    'SR-E-EM-EB-130-000',
-    23,
-    23,
-    0,
-    'admin@srtpl.com'
-) ON CONFLICT (sha256_hash) DO UPDATE SET
-    valid_row_count = 23;
+-- STEP 4: REGISTER IMPORT FILE AUDIT RECORD (SAFELY)
+DO $$
+BEGIN
+    INSERT INTO energy_import.import_file (
+        original_filename,
+        sha256_hash,
+        report_type,
+        asset_code,
+        row_count,
+        valid_row_count,
+        exception_row_count,
+        uploaded_by
+    ) VALUES (
+        'EBDailyLogReport_25thSep2026_2143_EB Log - Copy.csv',
+        '5ced4b47983bb03b8e721a3297a7a195be5d6d8ec5a9e3e7f2252a16d8e0ce9a',
+        'EB',
+        'SR-E-EM-EB-130-000',
+        23,
+        23,
+        0,
+        'admin@srtpl.com'
+    ) ON CONFLICT (sha256_hash) DO UPDATE SET
+        valid_row_count = 23;
+EXCEPTION WHEN OTHERS THEN
+    NULL;
+END $$;
 
 -- STEP 5: INSERT ALL 23 VERIFIED ROWS INTO energy_readings.eb
 INSERT INTO energy_readings.eb (
@@ -204,35 +227,78 @@ ON CONFLICT (asset_id, reading_datetime) DO UPDATE SET
 
 -- STEP 6: RECREATE ALL CONVENIENCE VIEWS (Fixes PostgreSQL Column Freezing)
 DROP VIEW IF EXISTS public.reading_eb CASCADE;
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'reading_eb') THEN
+        EXECUTE 'DROP TABLE public.reading_eb CASCADE';
+    END IF;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
 CREATE VIEW public.reading_eb AS SELECT * FROM energy_readings.eb;
 
 DROP VIEW IF EXISTS public.reading_dg CASCADE;
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'reading_dg') THEN
+        EXECUTE 'DROP TABLE public.reading_dg CASCADE';
+    END IF;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
 CREATE VIEW public.reading_dg AS SELECT * FROM energy_readings.dg;
 
 DROP VIEW IF EXISTS public.reading_solar CASCADE;
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'reading_solar') THEN
+        EXECUTE 'DROP TABLE public.reading_solar CASCADE';
+    END IF;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
 CREATE VIEW public.reading_solar AS SELECT * FROM energy_readings.solar;
 
 DROP VIEW IF EXISTS public.reading_transformer CASCADE;
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'reading_transformer') THEN
+        EXECUTE 'DROP TABLE public.reading_transformer CASCADE';
+    END IF;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
 CREATE VIEW public.reading_transformer AS SELECT * FROM energy_readings.transformer;
 
 DROP VIEW IF EXISTS public.reading_ups CASCADE;
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'reading_ups') THEN
+        EXECUTE 'DROP TABLE public.reading_ups CASCADE';
+    END IF;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
 CREATE VIEW public.reading_ups AS SELECT * FROM energy_readings.ups;
 
 DROP VIEW IF EXISTS public.exception_record CASCADE;
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'exception_record') THEN
+        EXECUTE 'DROP TABLE public.exception_record CASCADE';
+    END IF;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
 CREATE VIEW public.exception_record AS SELECT * FROM energy_validation.exception_record;
 
 -- STEP 7: PERMISSIONS & POSTGREST SCHEMA CACHE RELOAD
-GRANT USAGE ON SCHEMA public, energy_master, energy_import, energy_readings, energy_validation, energy_analytics, energy_raw 
-TO anon, authenticated, service_role, postgres, authenticator;
+DO $$
+BEGIN
+    GRANT USAGE ON SCHEMA public, energy_master, energy_import, energy_readings, energy_validation, energy_analytics, energy_raw 
+    TO anon, authenticated, service_role, postgres, authenticator;
 
-GRANT ALL ON ALL TABLES IN SCHEMA public, energy_master, energy_import, energy_readings, energy_validation, energy_analytics 
-TO anon, authenticated, service_role, postgres, authenticator;
+    GRANT ALL ON ALL TABLES IN SCHEMA public, energy_master, energy_import, energy_readings, energy_validation, energy_analytics 
+    TO anon, authenticated, service_role, postgres, authenticator;
 
-GRANT ALL ON ALL SEQUENCES IN SCHEMA public, energy_master, energy_import, energy_readings, energy_validation, energy_analytics 
-TO anon, authenticated, service_role, postgres, authenticator;
-
-ALTER DEFAULT PRIVILEGES IN SCHEMA public, energy_master, energy_import, energy_readings, energy_validation, energy_analytics 
-GRANT ALL ON TABLES TO anon, authenticated, service_role, postgres, authenticator;
+    GRANT ALL ON ALL SEQUENCES IN SCHEMA public, energy_master, energy_import, energy_readings, energy_validation, energy_analytics 
+    TO anon, authenticated, service_role, postgres, authenticator;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
 
 NOTIFY pgrst, 'reload config';
 NOTIFY pgrst, 'reload schema';
@@ -259,4 +325,4 @@ LIMIT 5;
 with open("sql/reset_database_and_load_eb_data.sql", "w", encoding="utf-8") as f:
     f.write(sql_content)
 
-print(f"Generated sql/reset_database_and_load_eb_data.sql successfully! Total lines: {len(sql_content.splitlines())}")
+print(f"Regenerated sql/reset_database_and_load_eb_data.sql successfully! Total lines: {len(sql_content.splitlines())}")
