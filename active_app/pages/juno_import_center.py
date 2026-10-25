@@ -125,6 +125,16 @@ def render():
 
         if res.get("status") == "DUPLICATE_FILE":
             st.error(res["message"])
+            col_clear, col_wipe = st.columns(2)
+            if col_clear.button("🔄 Clear Ingestion Session Cache & Retry", key="clear_dup_center", width="stretch"):
+                from core.live_pipeline import clear_local_ingestion_hashes
+                clear_local_ingestion_hashes()
+                st.rerun()
+            if col_wipe.button("🗑️ Wipe All Database Data (Clean Start)", key="wipe_dup_center", width="stretch"):
+                from core.supabase_manager import remove_all_database_data
+                wipe_res = remove_all_database_data()
+                st.success(wipe_res["message"])
+                st.rerun()
             if is_temp:
                 temp_path.unlink(missing_ok=True)
             return
