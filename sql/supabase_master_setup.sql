@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS energy_import.import_file (
 );
 
 CREATE TABLE IF NOT EXISTS energy_import.import_batch (
-    import_batch_id VARCHAR(64) PRIMARY KEY,
+    import_batch_id VARCHAR(64) PRIMARY KEY DEFAULT gen_random_uuid()::text,
     uploaded_by VARCHAR(128) DEFAULT 'admin@srtpl.com',
     source_system VARCHAR(32) DEFAULT 'JUNO',
     report_type VARCHAR(32),
@@ -86,6 +86,20 @@ CREATE TABLE IF NOT EXISTS energy_import.import_batch (
     invalid_rows INTEGER DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Ensure default generator exists on existing tables (handles both text/varchar and UUID)
+DO $$
+BEGIN
+    BEGIN
+        ALTER TABLE energy_import.import_batch ALTER COLUMN import_batch_id SET DEFAULT gen_random_uuid()::text;
+    EXCEPTION WHEN OTHERS THEN
+        BEGIN
+            ALTER TABLE energy_import.import_batch ALTER COLUMN import_batch_id SET DEFAULT gen_random_uuid();
+        EXCEPTION WHEN OTHERS THEN
+            NULL;
+        END;
+    END;
+END $$;
 
 CREATE TABLE IF NOT EXISTS energy_import.import_row (
     import_row_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

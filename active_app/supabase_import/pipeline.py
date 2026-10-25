@@ -1,4 +1,5 @@
 from pathlib import Path
+import uuid
 from .hash_utils import sha256_file
 from .repository import ImportRepository
 from .storage import StorageService
@@ -27,7 +28,9 @@ class ImportPipeline:
         inspection = self.parser.inspect(str(path))
         report_type = inspection["report_type"]
 
+        batch_id = str(uuid.uuid4())
         batch = self.repo.create_batch({
+            "import_batch_id": batch_id,
             "uploaded_by": uploaded_by,
             "source_system": "JUNO",
             "report_type": report_type,
@@ -35,7 +38,7 @@ class ImportPipeline:
             "status": "PARSING",
             "total_files": 1,
         })
-        batch_id = batch["import_batch_id"]
+        batch_id = batch.get("import_batch_id", batch_id)
 
         # Storage path deliberately uses hash to make it deterministic.
         storage_path = f"{report_type}/{file_hash[:2]}/{file_hash}.csv"
@@ -46,7 +49,9 @@ class ImportPipeline:
         except Exception:
             pass
 
+        file_id = str(uuid.uuid4())
         file_row = self.repo.create_file({
+            "import_file_id": file_id,
             "import_batch_id": batch_id,
             "original_filename": path.name,
             "storage_bucket": self.settings.storage_bucket,
@@ -63,11 +68,13 @@ class ImportPipeline:
             "parsed_row_count": inspection["record_count"],
             "parse_status": "PARSED",
         })
+        file_id = file_row.get("import_file_id", file_id)
 
         import_rows = []
         for rec in inspection["records"]:
             import_rows.append({
-                "import_file_id": file_row["import_file_id"],
+                "import_row_id": str(uuid.uuid4()),
+                "import_file_id": file_id,
                 "source_row_number": rec.source_row_number,
                 "source_record_hash": rec.source_record_hash,
                 "business_key": rec.business_key,

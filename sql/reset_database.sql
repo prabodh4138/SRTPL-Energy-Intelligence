@@ -12,6 +12,8 @@ TRUNCATE TABLE
     energy_readings.ups,
     energy_validation.exception_record,
     energy_import.import_file,
+    energy_import.import_row,
+    energy_import.import_batch,
     public.energy_bills,
     public.payment_receipts
 CASCADE;

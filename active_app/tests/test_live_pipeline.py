@@ -84,3 +84,30 @@ def test_wipe_and_reset_clears_hashes():
     # Now the file can be ingested again after clean wipe
     res2 = execute_live_juno_ingestion(SAMPLE_EB, expected_type="EB")
     assert res2["status"] == "SUCCESS"
+
+
+def test_import_repository_generates_batch_id():
+    from unittest.mock import MagicMock
+    from supabase_import.repository import ImportRepository
+
+    mock_db = MagicMock()
+    # Mock insert failure or success to test fallback behavior
+    mock_db.table.side_effect = Exception("Not connected")
+    mock_db.schema.side_effect = Exception("Not connected")
+
+    repo = ImportRepository(mock_db)
+    payload = {"source_system": "JUNO", "report_type": "EB"}
+    batch = repo.create_batch(payload)
+    assert "import_batch_id" in batch
+    assert batch["import_batch_id"] is not None
+    assert len(batch["import_batch_id"]) > 0
+
+    file_payload = {"original_filename": "test.csv"}
+    file_record = repo.create_file(file_payload)
+    assert "import_file_id" in file_record
+    assert file_record["import_file_id"] is not None
+
+    rows = [{"raw_payload": {"test": 1}}]
+    created_rows = repo.create_rows(rows)
+    assert len(created_rows) == 1
+    assert "import_row_id" in created_rows[0]

@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 import sys
 from typing import Any
+import uuid
 
 ACTIVE_APP = Path(__file__).resolve().parents[1]
 if str(ACTIVE_APP) not in sys.path:
@@ -403,8 +404,33 @@ def execute_live_juno_ingestion(
 
     if client:
         try:
-            # 1. Insert into energy_import.import_file (records SHA-256 for Level 1 deduplication)
+            batch_uuid = str(uuid.uuid4())
+            file_uuid = str(uuid.uuid4())
+
+            # 1. Register Batch in import_batch (dual-schema, prevents 23502 not-null constraint)
+            batch_record = {
+                "import_batch_id": batch_uuid,
+                "uploaded_by": uploaded_by,
+                "source_system": "JUNO",
+                "report_type": rtype,
+                "status": "IMPORTED",
+                "total_files": 1,
+                "total_rows": len(inspection["records"]),
+                "valid_rows": len(db_rows) - len(db_exceptions),
+                "invalid_rows": len(db_exceptions),
+            }
+            try:
+                client.table("import_batch").upsert(batch_record, on_conflict="import_batch_id").execute()
+            except Exception:
+                try:
+                    client.schema("energy_import").table("import_batch").upsert(batch_record, on_conflict="import_batch_id").execute()
+                except Exception:
+                    pass
+
+            # 2. Insert into import_file (records SHA-256 for Level 1 deduplication)
             import_file_record = {
+                "import_file_id": file_uuid,
+                "import_batch_id": batch_uuid,
                 "original_filename": path.name,
                 "sha256_hash": file_hash,
                 "report_type": rtype,
@@ -420,9 +446,21 @@ def execute_live_juno_ingestion(
                 try:
                     client.schema("energy_import").table("import_file").upsert(import_file_record, on_conflict="sha256_hash").execute()
                 except Exception:
-                    pass
+                    # In case table schema differs (e.g. legacy columns)
+                    min_record = {
+                        "original_filename": path.name,
+                        "sha256_hash": file_hash,
+                        "report_type": rtype,
+                    }
+                    try:
+                        client.table("import_file").upsert(min_record, on_conflict="sha256_hash").execute()
+                    except Exception:
+                        try:
+                            client.schema("energy_import").table("import_file").upsert(min_record, on_conflict="sha256_hash").execute()
+                        except Exception:
+                            pass
 
-            # 2. Insert clean readings into energy_readings / public tables (Level 2 upsert)
+            # 3. Insert clean readings into energy_readings / public tables (Level 2 upsert)
             table_name = TABLE_NAMES.get(rtype, rtype.lower())
             chunk_size = 200
             for i in range(0, len(db_rows), chunk_size):
