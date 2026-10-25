@@ -12,10 +12,12 @@ from bill_extractor.ai_model_router import (
 BILL_1_PATH = r"C:\Users\prabo\.gemini\antigravity\brain\83225691-b0cb-4392-bb5b-407b77fc9a89\.user_uploaded\media_1792933000331_d9c0f442.pdf"
 BILL_2_PATH = r"C:\Users\prabo\.gemini\antigravity\brain\83225691-b0cb-4392-bb5b-407b77fc9a89\.user_uploaded\media_1792933000331_bc65641e.pdf"
 BILL_3_PATH = r"C:\Users\prabo\.gemini\antigravity\brain\83225691-b0cb-4392-bb5b-407b77fc9a89\.user_uploaded\media_1792933000331_f382d16f.pdf"
+BILL_4_PATH = r"C:\Users\prabo\.gemini\antigravity\brain\83225691-b0cb-4392-bb5b-407b77fc9a89\.user_uploaded\media_1792935623399_80b3efcd.pdf"
 
 
 def test_ai_model_catalog_structure():
-    assert "MODEL_1_HT_TOD" in MODEL_CATALOG
+    assert "MODEL_1A_HT_LARGE_TOD" in MODEL_CATALOG
+    assert "MODEL_1B_HT_MEDIUM_TOD" in MODEL_CATALOG
     assert "MODEL_2_LT_SBM" in MODEL_CATALOG
     assert "MODEL_3_LT_COMMERCIAL_TOD" in MODEL_CATALOG
     assert "MODEL_4_UNIVERSAL_ADAPTIVE" in MODEL_CATALOG
@@ -38,8 +40,8 @@ def test_ai_classifier_bill_1_ht():
     v = verify_bill_calculations(full)
 
     # 1. AI Model Identification
-    assert m["AI Model ID"] == "MODEL_1_HT_TOD"
-    assert "HT Industrial" in m["AI Model Applied"]
+    assert m["AI Model ID"] in ["MODEL_1_HT_TOD", "MODEL_1A_HT_LARGE_TOD"]
+    assert "HT" in m["AI Model Applied"]
     assert float(m["AI Model Confidence"].replace("%", "")) >= 90.0
 
     # 2. Key Field Verifications
@@ -122,6 +124,52 @@ def test_ai_classifier_bill_3_lt_sbm():
     assert md["Net Payable Amount After Rbt. Dt.(Rs.)"] == "408.00"
 
     # 4. Exact Zero Variance
+    assert v["match_energy_charges"] is True
+    assert v["match_electricity_charges"] is True
+    assert v["match_current_total"] is True
+    assert abs(v["diff_energy_charges"]) == 0.0
+    assert abs(v["diff_electricity_charges"]) == 0.0
+    assert abs(v["diff_current_total"]) == 0.0
+    assert "VERIFIED" in v["audit_status"]
+
+
+def test_ai_classifier_bill_4_ht_medium_tod():
+    if not os.path.exists(BILL_4_PATH):
+        pytest.skip("Bill 4 PDF not available in test environment")
+
+    m = extract_energy_bill_full(BILL_4_PATH, "bill_4.pdf")
+    md = extract_md_bill_data(BILL_4_PATH, "bill_4.pdf")
+    full = {**m, **md}
+    v = verify_bill_calculations(full)
+
+    # 1. AI Model Identification
+    assert m["AI Model ID"] == "MODEL_1B_HT_MEDIUM_TOD"
+    assert "HT Medium Power" in m["AI Model Applied"]
+    assert float(m["AI Model Confidence"].replace("%", "")) >= 95.0
+
+    # 2. Key Field Verifications
+    assert m["Consumer A/c No."] == "812001020208"
+    assert m["Consumer ID"] == "8120000028"
+    assert m["Bill Number"] == "812010205251515119"
+    assert m["Old Consumer No."] == "157(A) L"
+    assert m["Bill Month"] == "2025/04"
+    assert m["Bill Basis"] == "ACTUAL"
+    assert "GENERAL PURPOSE >70 KVA <110 KVA" in m["Tariff Category"]
+
+    # 3. Critical Fix: Incentive on TOD must be -1054.60 (NOT 54.60!)
+    assert m["Incentive on TOD / TOD Surchg"] == "-1054.60 / 1923.80"
+    assert v["tod_incentive"] == -1054.60
+    assert v["tod_surcharge"] == 1923.80
+
+    # 4. Financial Calculations & Exact Zero Variance
+    assert float(m["a. Energy Charges"]) == 195021.45
+    assert float(m["Demand Charge / MMFC"]) == 19000.00
+    assert float(m["Electricity Charge (i)"]) == 214890.65
+    assert float(m["Electricity Duty (j)"]) == 15671.25
+    assert float(m["Current Total (o)"]) == 231811.90
+    assert md["Net Payable Amount Before Rbt. Dt.(Rs.)"] == "228478.00"
+    assert md["Net Payable Amount After Rbt. Dt.(Rs.)"] == "231812.00"
+
     assert v["match_energy_charges"] is True
     assert v["match_electricity_charges"] is True
     assert v["match_current_total"] is True

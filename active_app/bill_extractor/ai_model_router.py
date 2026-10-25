@@ -19,13 +19,29 @@ from typing import Dict, Any, List, Tuple
 # AI MODEL SPECIFICATIONS & TARIFF METADATA
 # =====================================================================
 MODEL_CATALOG = {
+    "MODEL_1A_HT_LARGE_TOD": {
+        "model_name": "TPWODL HT Large Power (>= 110 kVA) TOD Model (v2.5)",
+        "voltage_class": "High Tension Large Supply (HT >= 110 kVA / 11kV / 33kV)",
+        "metering_unit": "kVAh",
+        "default_ed_pct": 8.0,
+        "demand_unit": "kVA",
+        "description": "Specialized for Large High Tension supplies (>= 110 kVA) with kVAh billing, TOD peak/solar slots, decimal load-factor slabs, and power factor audits.",
+    },
+    "MODEL_1B_HT_MEDIUM_TOD": {
+        "model_name": "TPWODL HT Medium Power (70-110 kVA) TOD Model (v2.5)",
+        "voltage_class": "High Tension Medium Supply (HT >70 to <110 kVA / 11kV)",
+        "metering_unit": "kVAh",
+        "default_ed_pct": 8.0,
+        "demand_unit": "kVA",
+        "description": "Specialized for Medium High Tension supplies (>70 to <110 kVA) such as toll plazas and highway infrastructure with kVAh apparent metering, thousands-comma TOD incentives/surcharges, and ₹250/kVA demand rates.",
+    },
     "MODEL_1_HT_TOD": {
         "model_name": "TPWODL HT Industrial TOD Model (v2.5)",
         "voltage_class": "High Tension (HT >= 110 kVA / 11kV / 33kV)",
         "metering_unit": "kVAh",
         "default_ed_pct": 8.0,
         "demand_unit": "kVA",
-        "description": "Specialized for High Tension supplies with kVAh billing, TOD peak/solar slots, decimal load-factor slabs, and power factor audits.",
+        "description": "High Tension Industrial TOD billing model.",
     },
     "MODEL_2_LT_SBM": {
         "model_name": "TPWODL LT SBM Spot Billing Model (v2.5)",
@@ -62,44 +78,57 @@ def classify_bill_format(raw_text: str, pdf_metadata: Dict[str, Any] = None) -> 
     text = (raw_text or "").upper()
     features_detected: List[str] = []
     scores = {
-        "MODEL_1_HT_TOD": 0.0,
+        "MODEL_1A_HT_LARGE_TOD": 0.0,
+        "MODEL_1B_HT_MEDIUM_TOD": 0.0,
         "MODEL_2_LT_SBM": 0.0,
         "MODEL_3_LT_COMMERCIAL_TOD": 0.0,
     }
 
+    is_ht_cat = "CATEGORY TYPE : HT" in text or "CATEGORY TYPE: HT" in text or "METERING SIDE : HT" in text
+
     # 1. Voltage / Capacity Markers
-    if ">= 110 KVA" in text or "HT CATEGORY" in text:
-        scores["MODEL_1_HT_TOD"] += 4.0
-        features_detected.append("HT Voltage Category (>= 110 kVA)")
+    if (">70" in text and "<110" in text) or ">70 KVA" in text or ">70, <=110" in text:
+        scores["MODEL_1B_HT_MEDIUM_TOD"] += 7.0
+        features_detected.append("HT Medium Category (>70 kVA <110 kVA)")
+    elif ">= 110 KVA" in text or ">=110 KVA" in text or (is_ht_cat and "110 KVA" in text and "<" not in text and ">70" not in text):
+        scores["MODEL_1A_HT_LARGE_TOD"] += 7.0
+        features_detected.append("HT Large Category (>= 110 kVA)")
+    elif is_ht_cat:
+        scores["MODEL_1A_HT_LARGE_TOD"] += 4.0
+        scores["MODEL_1B_HT_MEDIUM_TOD"] += 3.0
+        features_detected.append("High Tension (HT) Category Type")
+
     if "KVAH" in text:
-        scores["MODEL_1_HT_TOD"] += 2.0
+        scores["MODEL_1A_HT_LARGE_TOD"] += 2.0
+        scores["MODEL_1B_HT_MEDIUM_TOD"] += 2.0
         features_detected.append("kVAh Reactive/Apparent Metering")
     if "11KV" in text or "33KV" in text or "SUPPLY VOLTAGE : 11" in text or "SUPPLY VOLTAGE : 33" in text:
-        scores["MODEL_1_HT_TOD"] += 2.0
+        scores["MODEL_1A_HT_LARGE_TOD"] += 2.0
+        scores["MODEL_1B_HT_MEDIUM_TOD"] += 2.0
         features_detected.append("Primary HT Distribution Voltage")
 
     # 2. SBM Spot Billing Markers
     if "SBM CONNECTION" in text:
-        scores["MODEL_2_LT_SBM"] += 4.0
+        scores["MODEL_2_LT_SBM"] += 5.0
         features_detected.append("SBM Connection Header Marker")
     if re.search(r"BILL NUMBER\s*:\s*\d{10,}M\d+", text):
-        scores["MODEL_2_LT_SBM"] += 3.5
+        scores["MODEL_2_LT_SBM"] += 4.5
         features_detected.append("Alphanumeric SBM Bill Number (M-suffix)")
     if "BILLABLE DEMAND-KW" in text:
         scores["MODEL_2_LT_SBM"] += 2.5
         features_detected.append("Billable Demand-KW Metric")
-    if "< 110 KVA" in text or "GP < 110" in text or "GENERAL PURPOSE < 110" in text:
-        scores["MODEL_2_LT_SBM"] += 2.0
+    if ("< 110 KVA" in text or "GP < 110" in text or "GENERAL PURPOSE < 110" in text) and not is_ht_cat:
+        scores["MODEL_2_LT_SBM"] += 3.0
         features_detected.append("LT Category (< 110 kVA)")
 
     # 3. Commercial & Public Lighting TOD Markers
     if "PUBLIC LIGHT" in text or "PUBLIC LIGHTING" in text:
         scores["MODEL_3_LT_COMMERCIAL_TOD"] += 4.0
         features_detected.append("Public Lighting Category")
-    if "SLAB NORMAL" in text and "SLAB PEAK" in text:
+    if "SLAB NORMAL" in text and "SLAB PEAK" in text and not is_ht_cat:
         scores["MODEL_3_LT_COMMERCIAL_TOD"] += 3.0
         features_detected.append("3-Slot TOD Slabs (Normal/Peak/Solar)")
-    if "COMMERCIAL" in text:
+    if "COMMERCIAL" in text and not is_ht_cat:
         scores["MODEL_3_LT_COMMERCIAL_TOD"] += 1.5
         features_detected.append("Commercial Tariff Marker")
 
@@ -108,13 +137,15 @@ def classify_bill_format(raw_text: str, pdf_metadata: Dict[str, Any] = None) -> 
         scores["MODEL_2_LT_SBM"] += 2.0
         features_detected.append("4% Electricity Duty Schedule")
     elif re.search(r"ELECTRICITY DUTY\s*\(8%\)", text):
-        scores["MODEL_1_HT_TOD"] += 1.0
+        scores["MODEL_1A_HT_LARGE_TOD"] += 1.0
+        scores["MODEL_1B_HT_MEDIUM_TOD"] += 1.0
         scores["MODEL_3_LT_COMMERCIAL_TOD"] += 1.0
         features_detected.append("8% Electricity Duty Schedule")
 
     # 5. Decimal Slab Detection
     if re.search(r"SLAB\s+\d+\s*[-:]?\s*(?:KWH|KVAH)\s*\d+\.\d+@", text):
-        scores["MODEL_1_HT_TOD"] += 3.0
+        scores["MODEL_1A_HT_LARGE_TOD"] += 3.0
+        scores["MODEL_1B_HT_MEDIUM_TOD"] += 3.0
         features_detected.append("Decimal Load-Factor Slabs")
 
     # Internal Decision Classifier

@@ -43,7 +43,7 @@ def extract_energy_bill_full(pdf_file, source_name):
     entry["Due Date"] = extract_clean_number(r"Due Date\s*:\s*(\d{2}/\d{2}/\d{4})", text)
     entry["Consumer A/c No."] = extract_clean_number(r"Consumer A/c No\.\s*:\s*([\w\-]+)", text)
     entry["Consumer ID"] = extract_clean_number(r"Consumer ID\s*:\s*([A-Za-z0-9]+)", text)
-    entry["Old Consumer No."] = extract_clean_number(r"Old Consumer No\.\s*:\s*([\w\-/]+)", text)
+    entry["Old Consumer No."] = extract_clean_number(r"Old Consumer No\.\s*:\s*([^\n\r]+)", text)
     entry["Bill Number"] = extract_clean_number(r"Bill Number\s*:\s*([A-Za-z0-9]+)", text)
     entry["Bill Issue Date"] = extract_clean_number(r"Bill Issue Date\s*:\s*(\d{2}/\d{2}/\d{4})", text)
     
@@ -79,10 +79,15 @@ def extract_energy_bill_full(pdf_file, source_name):
     raw_cat = extract_clean_number(
         r"Tariff Category\s*:\s*([^:\n]+?)(?=\s+(?:Power Factor|Category Type|Billable Demand|Supply Voltage|\n|$))", text
     )
-    if raw_cat.endswith("<") or raw_cat.endswith(">=") or raw_cat.endswith(">"):
-        m_next = re.search(re.escape(raw_cat) + r".*?\n\s*(\d+\s*KVA)", text, re.DOTALL | re.IGNORECASE)
-        if m_next:
-            raw_cat = f"{raw_cat} {m_next.group(1).strip()}"
+    # Check if the next line continues the KVA rating (e.g. >70 KVA <110 KVA, or 110 KVA)
+    for i, l in enumerate(lines):
+        if "Tariff Category" in l and i + 1 < len(lines):
+            m_cont = re.search(r"^\s*([><=0-9\s]+KVA(?:[><=0-9\s]+KVA)?)", lines[i+1])
+            if m_cont:
+                cont_str = m_cont.group(1).strip()
+                if cont_str and cont_str not in raw_cat:
+                    raw_cat = f"{raw_cat} {cont_str}".strip()
+            break
     entry["Tariff Category"] = raw_cat
 
     # ================= SUPPLY & METER DETAILS =================
@@ -163,7 +168,9 @@ def extract_energy_bill_full(pdf_file, source_name):
                 pass
 
     cat_upper = entry.get("Tariff Category", "").upper()
-    if ">= 110 KVA" in cat_upper or "HT" in cat_upper or ("110 KVA" in cat_upper and "<" not in cat_upper):
+    if ">70" in cat_upper or ">70 KVA" in cat_upper:
+        entry["Tariff Type"] = "HT General Purpose >70 to <110 kVA (TOD Tariff)"
+    elif ">= 110 KVA" in cat_upper or "HT" in cat_upper or ("110 KVA" in cat_upper and "<" not in cat_upper):
         entry["Tariff Type"] = "HT General Purpose >= 110 kVA (TOD Tariff)"
     elif has_gps_tiers:
         entry["Tariff Type"] = "GPS (General Purpose < 110 kVA Tiered Slabs)"
@@ -202,13 +209,13 @@ def extract_energy_bill_full(pdf_file, source_name):
             break
     entry["DPS(Rs.)"] = dps_val
 
-    # TOD & other charges
+    # TOD & other charges (handles comma-separated thousands like -1,054.60 and +1,923.80)
     match_tod = re.search(
-        r"Incentive on TOD\s*/\s*TOD Surchg\s*.*?([\d\.\-]+)\s*/\s*([\d\.\-]+)",
+        r"Incentive on TOD\s*/\s*TOD Surchg\s*[:\s]*([-+]?[\d,]+\.?\d*)\s*/\s*([-+]?[\d,]+\.?\d*)",
         table_text
     )
     entry["Incentive on TOD / TOD Surchg"] = (
-        f"{match_tod.group(1)} / {match_tod.group(2)}" if match_tod else ""
+        f"{match_tod.group(1).replace(',', '').strip()} / {match_tod.group(2).replace(',', '').strip()}" if match_tod else ""
     )
 
     entry["Demand Charge / MMFC"] = extract_clean_number(

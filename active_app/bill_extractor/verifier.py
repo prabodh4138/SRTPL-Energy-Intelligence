@@ -99,7 +99,10 @@ def verify_bill_calculations(bill_data: dict, raw_text: str = "") -> dict:
                 formula_parts = [f"Slab 1 ({norm_u:,.0f}×₹{norm_r:.2f})"]
 
     # Determine Tariff Classification & Applicable Official Schedule
-    if ">= 110 KVA" in cat or "HT" in cat or ("110 KVA" in cat and "<" not in cat):
+    if ">70" in cat or ">70 KVA" in cat:
+        tariff_type = "HT General Purpose >70 to <110 kVA (Time-of-Day HT Tariff)"
+        tariff_rules = "Normal (16-18, 00-08): ₹5.85/kVAh | Peak (18-00): ₹6.44/kVAh (+10%) | Solar (08-16): ₹5.27/kVAh (-10%) | Demand Charge: ₹250/kVA"
+    elif ">= 110 KVA" in cat or "HT" in cat or ("110 KVA" in cat and "<" not in cat):
         tariff_type = "HT General Purpose ≥ 110 kVA (Time-of-Day HT Tariff)"
         tariff_rules = "Normal (16-18, 00-08): ₹5.85/kVAh | Peak (18-00): ₹6.44/kVAh (+10%) | Solar (08-16): ₹5.27/kVAh (-10%) | Demand Charge: ₹250/kVA"
     elif has_gps or "< 110 KVA" in cat or "GPS" in cat:
@@ -126,7 +129,10 @@ def verify_bill_calculations(bill_data: dict, raw_text: str = "") -> dict:
         tod_inc = _parse_num(parts[0])
         tod_sur = _parse_num(parts[1])
     else:
-        m_tod = re.search(r"Incentive on TOD\s*/\s*TOD Surchg\s*.*?([-\d\.]+)\s*/\s*([-\d\.]+)", text)
+        m_tod = re.search(
+            r"Incentive on TOD\s*/\s*TOD Surchg\s*[:\s]*([-+]?[\d,]+\.?\d*)\s*/\s*([-+]?[\d,]+\.?\d*)",
+            text
+        )
         if m_tod:
             tod_inc = _parse_num(m_tod.group(1))
             tod_sur = _parse_num(m_tod.group(2))
@@ -147,7 +153,10 @@ def verify_bill_calculations(bill_data: dict, raw_text: str = "") -> dict:
     cust_service = _parse_num(bill_data.get("Customer Service Charge (l)"))
 
     ebill_rebate = 0.0
-    m_eb = re.search(r"LF Rebate/\s*Spl Discount\s*/\s*EBill Rebate\s*.*?([-\d\.]+)\s*/\s*([-\d\.]+)\s*/\s*([-\d\.]+)", text)
+    m_eb = re.search(
+        r"LF Rebate/\s*Spl Discount\s*/\s*EBill Rebate\s*.*?([-+]?[\d,]+\.?\d*)\s*/\s*([-+]?[\d,]+\.?\d*)\s*/\s*([-+]?[\d,]+\.?\d*)",
+        text
+    )
     if m_eb:
         ebill_rebate = _parse_num(m_eb.group(3))
 
