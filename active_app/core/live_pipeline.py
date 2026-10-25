@@ -390,6 +390,7 @@ def execute_live_juno_ingestion(
 
     # Step 6: Direct Supabase Cloud Injection
     cloud_injected = False
+    cloud_error: str | None = None
     injected_row_count = 0
     injected_exc_count = 0
 
@@ -436,8 +437,7 @@ def execute_live_juno_ingestion(
 
             cloud_injected = True
         except Exception as exc:
-            # If cloud injection failed due to table constraint or connection error, report details
-            pass
+            cloud_error = str(exc)
 
     # Step 7: Master KPI Calculation
     calc_func, calc_version = KPI_CALCULATORS[rtype]
@@ -455,6 +455,7 @@ def execute_live_juno_ingestion(
         "status": "SUCCESS",
         "success": True,
         "cloud_injected": cloud_injected,
+        "cloud_error": cloud_error,
         "report_type": rtype,
         "calculation_version": calc_version,
         "filename": path.name,

@@ -3,21 +3,31 @@
 -- Target Project: Srtpl_Project
 --
 -- This script is 100% self-contained. It:
--- 1. Drops deprecated 'energy_raw' schema
+-- 1. Drops legacy tables, creates empty schema to prevent PostgREST PGRST002 cache crash
 -- 2. Creates all required schemas (energy_master, energy_import, energy_readings, energy_validation, etc.)
 -- 3. Creates all tables with proper types, primary keys, and strict UNIQUE constraints
 --    - Level 1 Deduplication: energy_import.import_file UNIQUE(sha256_hash)
 --    - Level 2 Deduplication: energy_readings.* UNIQUE(asset_id, reading_datetime)
 -- 4. Exposes synchronized views in 'public' for instant Supabase UI & REST API access
 -- 5. Enables Row Level Security (RLS) on all tables with full CRUD policies
--- 6. Seeds default Plazas and 21 Assets
+-- 6. Grants permissions to anon, authenticated, service_role, and authenticator
+-- 7. Signals PostgREST to reload its schema cache (eliminating PGRST002)
+-- 8. Seeds default Plazas and 21 Assets
 -- ============================================================================
 
 -- STEP 1: EXTENSIONS & CLEANUP
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-DROP SCHEMA IF EXISTS energy_raw CASCADE;
 
--- STEP 2: CREATE ALL SCHEMAS (Guarantees no "schema does not exist" error)
+-- Reset legacy energy_raw tables, but keep empty schema so PostgREST doesn't crash with PGRST002
+DO $$
+BEGIN
+    DROP SCHEMA IF EXISTS energy_raw CASCADE;
+    CREATE SCHEMA IF NOT EXISTS energy_raw;
+EXCEPTION WHEN OTHERS THEN
+    CREATE SCHEMA IF NOT EXISTS energy_raw;
+END $$;
+
+-- STEP 2: CREATE ALL SCHEMAS
 CREATE SCHEMA IF NOT EXISTS energy_master;
 CREATE SCHEMA IF NOT EXISTS energy_import;
 CREATE SCHEMA IF NOT EXISTS energy_readings;
@@ -231,7 +241,7 @@ CREATE OR REPLACE VIEW public.reading_transformer AS SELECT * FROM energy_readin
 CREATE OR REPLACE VIEW public.reading_ups AS SELECT * FROM energy_readings.ups;
 CREATE OR REPLACE VIEW public.exception_record AS SELECT * FROM energy_validation.exception_record;
 
--- STEP 10: RESET / WIPE STORED PROCEDURE
+-- STEP 10: RESET & CACHE RELOAD PROCEDURES
 CREATE OR REPLACE FUNCTION public.reset_all_energy_data()
 RETURNS void
 LANGUAGE plpgsql
@@ -251,6 +261,17 @@ BEGIN
     CASCADE;
 END;
 $$;
+
+CREATE OR REPLACE FUNCTION public.reload_schema_cache()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+    NOTIFY pgrst, 'reload schema';
+END;
+$$;
+GRANT EXECUTE ON FUNCTION public.reload_schema_cache() TO anon, authenticated, service_role, postgres;
 
 -- STEP 11: ENABLE ROW LEVEL SECURITY (RLS) ON ALL TABLES
 ALTER TABLE energy_master.plaza ENABLE ROW LEVEL SECURITY;
@@ -299,10 +320,21 @@ CREATE POLICY "allow_all_bills" ON public.energy_bills FOR ALL TO anon, authenti
 DROP POLICY IF EXISTS "allow_all_receipts" ON public.payment_receipts;
 CREATE POLICY "allow_all_receipts" ON public.payment_receipts FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
 
--- STEP 13: GRANT PERMISSIONS TO POSTGREST & SUPABASE ROLES
-GRANT USAGE ON SCHEMA public, energy_master, energy_import, energy_readings, energy_validation, energy_analytics TO anon, authenticated, service_role;
-GRANT ALL ON ALL TABLES IN SCHEMA public, energy_master, energy_import, energy_readings, energy_validation, energy_analytics TO anon, authenticated, service_role;
-GRANT ALL ON ALL SEQUENCES IN SCHEMA public, energy_master, energy_import, energy_readings, energy_validation, energy_analytics TO anon, authenticated, service_role;
+-- STEP 13: GRANT PERMISSIONS TO POSTGREST & SUPABASE ROLES (INCLUDING authenticator)
+GRANT USAGE ON SCHEMA public, energy_master, energy_import, energy_readings, energy_validation, energy_analytics, energy_raw 
+TO anon, authenticated, service_role, postgres, authenticator;
+
+GRANT ALL ON ALL TABLES IN SCHEMA public, energy_master, energy_import, energy_readings, energy_validation, energy_analytics 
+TO anon, authenticated, service_role, postgres, authenticator;
+
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public, energy_master, energy_import, energy_readings, energy_validation, energy_analytics 
+TO anon, authenticated, service_role, postgres, authenticator;
+
+GRANT ALL ON ALL ROUTINES IN SCHEMA public, energy_master, energy_import, energy_readings, energy_validation, energy_analytics 
+TO anon, authenticated, service_role, postgres, authenticator;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public, energy_master, energy_import, energy_readings, energy_validation, energy_analytics 
+GRANT ALL ON TABLES TO anon, authenticated, service_role, postgres, authenticator;
 
 -- STEP 14: SEED MASTER DATA (Plazas & 21 Assets)
 INSERT INTO energy_master.plaza (plaza_id, plaza_name, location) VALUES
@@ -340,7 +372,10 @@ INSERT INTO energy_master.asset (asset_id, asset_code, asset_name, plaza_id, sou
     ('AST-UPS-12', 'SR-E-AP-UPS-000012', 'Toll Plaza UPS 12', 'TP03', 'UPS', 40.0)
 ON CONFLICT (asset_id) DO NOTHING;
 
+-- STEP 15: RELOAD POSTGREST SCHEMA CACHE (Fixes PGRST002)
+NOTIFY pgrst, 'reload schema';
+
 DO $$
 BEGIN
-    RAISE NOTICE 'SUCCESS: All schemas, tables, RLS policies, duplicate constraints, and master data configured with zero errors!';
+    RAISE NOTICE 'SUCCESS: All schemas, tables, RLS policies, duplicate constraints, and PostgREST schema cache reloaded with zero errors!';
 END $$;

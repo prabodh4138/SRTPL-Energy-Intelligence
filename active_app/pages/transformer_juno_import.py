@@ -145,6 +145,11 @@ def render():
                 f"✅ **Transformer Pipeline Complete!** Clean readings successfully injected into Supabase "
                 f"(`energy_readings.transformer`). Linked Asset: `{res['asset_id']}`"
             )
+        elif res.get("cloud_error"):
+            st.warning(
+                f"⚠️ **Supabase Cloud Notice**: Database reported: `{res['cloud_error']}`.\n\n"
+                "💡 **Fix PGRST002**: Run `NOTIFY pgrst, 'reload schema';` in Supabase SQL Editor to reload the schema cache."
+            )
         else:
             st.info(
                 f"⚡ **Transformer Pipeline Verified!** Running in local mode (Asset: `{res['asset_id']}`). "
