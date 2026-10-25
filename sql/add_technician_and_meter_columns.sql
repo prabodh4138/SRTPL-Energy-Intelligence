@@ -92,12 +92,23 @@ EXCEPTION WHEN OTHERS THEN NULL;
 END $$;
 
 -- STEP 7: RECREATE VIEWS IN PUBLIC SCHEMA TO EXPOSE AUDIT COLUMNS
-CREATE OR REPLACE VIEW public.reading_eb AS SELECT * FROM energy_readings.eb;
-CREATE OR REPLACE VIEW public.reading_dg AS SELECT * FROM energy_readings.dg;
-CREATE OR REPLACE VIEW public.reading_solar AS SELECT * FROM energy_readings.solar;
-CREATE OR REPLACE VIEW public.reading_transformer AS SELECT * FROM energy_readings.transformer;
-CREATE OR REPLACE VIEW public.reading_ups AS SELECT * FROM energy_readings.ups;
-CREATE OR REPLACE VIEW public.exception_record AS SELECT * FROM energy_validation.exception_record;
+DROP VIEW IF EXISTS public.reading_eb CASCADE;
+CREATE VIEW public.reading_eb AS SELECT * FROM energy_readings.eb;
+
+DROP VIEW IF EXISTS public.reading_dg CASCADE;
+CREATE VIEW public.reading_dg AS SELECT * FROM energy_readings.dg;
+
+DROP VIEW IF EXISTS public.reading_solar CASCADE;
+CREATE VIEW public.reading_solar AS SELECT * FROM energy_readings.solar;
+
+DROP VIEW IF EXISTS public.reading_transformer CASCADE;
+CREATE VIEW public.reading_transformer AS SELECT * FROM energy_readings.transformer;
+
+DROP VIEW IF EXISTS public.reading_ups CASCADE;
+CREATE VIEW public.reading_ups AS SELECT * FROM energy_readings.ups;
+
+DROP VIEW IF EXISTS public.exception_record CASCADE;
+CREATE VIEW public.exception_record AS SELECT * FROM energy_validation.exception_record;
 
 -- STEP 8: ENSURE DEFAULT PLAZAS & ASSETS EXIST
 INSERT INTO energy_master.plaza (plaza_id, plaza_name, location) VALUES

@@ -69,10 +69,17 @@ def _flt(val: Any) -> float | None:
     if val is None:
         return None
     try:
+        if isinstance(val, (int, float)):
+            if pd.isna(val) or val != val:
+                return None
+            return float(val)
         s = str(val).replace(",", "").strip()
         if not s or s.lower() in {"none", "null", "nan", "-"}:
             return None
-        return float(s)
+        f = float(s)
+        if pd.isna(f) or f != f:
+            return None
+        return f
     except (ValueError, TypeError):
         return None
 
@@ -190,19 +197,39 @@ def _map_row_for_database(
         or raw_values.get("created_by")
         or raw_values.get("Created By")
         or raw_values.get("Created by")
-        or (getattr(metadata, "downloaded_by", None) if metadata else None)
     )
+    if not technician_name:
+        for k, v in raw_values.items():
+            if ("created_by" in k.lower() or k.lower() in {"technician", "operator", "user"}) and v:
+                technician_name = v
+                break
+    if not technician_name and metadata:
+        technician_name = getattr(metadata, "downloaded_by", None)
     technician_name = str(technician_name).strip() if technician_name and str(technician_name).lower() not in {"none", "null", "nan", "-"} else None
 
     technician_created_on = (
         _format_datetime(norm_values.get("created_on"))
         or _format_datetime(raw_values.get("created_on"))
+        or _format_datetime(raw_values.get("created_on__date_and_time"))
+        or _format_datetime(raw_values.get("created_on___created_by"))
         or _format_datetime(raw_values.get("Created On"))
         or _format_datetime(raw_values.get("Created on ( Date and Time)"))
         or _format_datetime(raw_values.get("Created on"))
     )
+    if not technician_created_on:
+        for k, v in raw_values.items():
+            if k.lower().startswith("created_on") and v:
+                parsed_time = _format_datetime(v)
+                if parsed_time:
+                    technician_created_on = parsed_time
+                    break
 
     remarks = raw_values.get("remarks") or raw_values.get("Remarks") or norm_values.get("remarks")
+    if not remarks:
+        for k, v in raw_values.items():
+            if "remark" in k.lower() and v:
+                remarks = v
+                break
     remarks = str(remarks).strip() if remarks and str(remarks).lower() not in {"none", "null", "nan", "-"} else None
 
     asset_code = (
@@ -212,14 +239,52 @@ def _map_row_for_database(
         or norm_values.get("solar_plant_id")
         or norm_values.get("transformer_id")
         or norm_values.get("ups_id")
+        or raw_values.get("eb_meter_id")
+        or raw_values.get("generator_no")
+        or raw_values.get("solar_plant_id")
+        or raw_values.get("transformer_id")
+        or raw_values.get("ups_id")
         or asset_id
     )
+    if asset_code:
+        ac_str = str(asset_code).strip()
+        asset_code = ac_str if ac_str.lower() not in {"none", "null", "nan", "-"} else str(asset_id)
 
     location = (
         (getattr(metadata, "location", None) if metadata else None)
         or raw_values.get("Location")
         or raw_values.get("location")
     )
+    if location:
+        loc_str = str(location).strip()
+        location = loc_str if loc_str.lower() not in {"none", "null", "nan", "-"} else None
+
+    consumer_number = (
+        getattr(metadata, "consumer_number", None)
+        or raw_values.get("Consumer Number")
+        or raw_values.get("consumer_number")
+    )
+    if consumer_number:
+        c_str = str(consumer_number).strip()
+        if c_str.endswith(".0"):
+            c_str = c_str[:-2]
+        consumer_number = c_str if c_str.lower() not in {"none", "null", "nan", "-"} else None
+
+    category = (
+        getattr(metadata, "category", None)
+        or raw_values.get("Category")
+        or raw_values.get("category")
+    )
+    if category:
+        cat_str = str(category).strip()
+        category = cat_str if cat_str.lower() not in {"none", "null", "nan", "-"} else None
+
+    maximum_demand = _flt(norm_values.get("md") or raw_values.get("MD") or raw_values.get("md"))
+    if maximum_demand is None:
+        for k, v in raw_values.items():
+            if k.lower() in {"md", "maximum_demand", "max_demand"} and v:
+                maximum_demand = _flt(v)
+                break
 
     if report_type == "EB":
         return {
@@ -233,13 +298,13 @@ def _map_row_for_database(
             "interval_kvah": _flt(norm_values.get("interval_kvah")),
             "interval_kvarh": _flt(norm_values.get("interval_kvarh")),
             "pf": _flt(norm_values.get("pf")),
-            "maximum_demand": _flt(norm_values.get("md") or raw_values.get("MD") or raw_values.get("md")),
+            "maximum_demand": maximum_demand,
             "created_by": technician_name,
             "created_on": technician_created_on,
             "remarks": remarks,
-            "consumer_number": getattr(metadata, "consumer_number", None) or raw_values.get("Consumer Number"),
+            "consumer_number": consumer_number,
             "location": location,
-            "category": getattr(metadata, "category", None) or raw_values.get("Category"),
+            "category": category,
             "data_quality_status": status,
         }
     elif report_type == "DG":
@@ -576,13 +641,13 @@ def execute_live_juno_ingestion(
                         chunk_saved = True
                     except Exception as e2:
                         readings_error = str(e2)
-                        # Strategy 3: Try public schema table if mapped
+                        # Strategy 3: Try public schema view/table with upsert
                         try:
-                            client.table(table_name).upsert(chunk, on_conflict="asset_id,reading_datetime").execute()
+                            client.table(f"reading_{table_name}").upsert(chunk, on_conflict="asset_id,reading_datetime").execute()
                             chunk_saved = True
                         except Exception as e3:
                             readings_error = str(e3)
-                            # Strategy 4: Plain insert into public view
+                            # Strategy 4: Try public schema view/table with insert
                             try:
                                 client.table(f"reading_{table_name}").insert(chunk).execute()
                                 chunk_saved = True

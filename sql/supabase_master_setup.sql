@@ -310,12 +310,23 @@ CREATE OR REPLACE VIEW public.asset AS SELECT * FROM energy_master.asset;
 CREATE OR REPLACE VIEW public.import_file AS SELECT * FROM energy_import.import_file;
 CREATE OR REPLACE VIEW public.import_batch AS SELECT * FROM energy_import.import_batch;
 CREATE OR REPLACE VIEW public.import_row AS SELECT * FROM energy_import.import_row;
-CREATE OR REPLACE VIEW public.reading_eb AS SELECT * FROM energy_readings.eb;
-CREATE OR REPLACE VIEW public.reading_dg AS SELECT * FROM energy_readings.dg;
-CREATE OR REPLACE VIEW public.reading_solar AS SELECT * FROM energy_readings.solar;
-CREATE OR REPLACE VIEW public.reading_transformer AS SELECT * FROM energy_readings.transformer;
-CREATE OR REPLACE VIEW public.reading_ups AS SELECT * FROM energy_readings.ups;
-CREATE OR REPLACE VIEW public.exception_record AS SELECT * FROM energy_validation.exception_record;
+DROP VIEW IF EXISTS public.reading_eb CASCADE;
+CREATE VIEW public.reading_eb AS SELECT * FROM energy_readings.eb;
+
+DROP VIEW IF EXISTS public.reading_dg CASCADE;
+CREATE VIEW public.reading_dg AS SELECT * FROM energy_readings.dg;
+
+DROP VIEW IF EXISTS public.reading_solar CASCADE;
+CREATE VIEW public.reading_solar AS SELECT * FROM energy_readings.solar;
+
+DROP VIEW IF EXISTS public.reading_transformer CASCADE;
+CREATE VIEW public.reading_transformer AS SELECT * FROM energy_readings.transformer;
+
+DROP VIEW IF EXISTS public.reading_ups CASCADE;
+CREATE VIEW public.reading_ups AS SELECT * FROM energy_readings.ups;
+
+DROP VIEW IF EXISTS public.exception_record CASCADE;
+CREATE VIEW public.exception_record AS SELECT * FROM energy_validation.exception_record;
 
 -- STEP 10: RESET & CACHE RELOAD PROCEDURES
 CREATE OR REPLACE FUNCTION public.reset_all_energy_data()
