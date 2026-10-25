@@ -51,11 +51,23 @@ def calculate_dg_kpis_from_normalized(
 
 
 def _batch_rows(db, batch_id):
-    files = db.schema("energy_import").table("import_file").select("import_file_id").eq("import_batch_id", batch_id).execute().data
+    try:
+        files = db.table("import_file").select("import_file_id").eq("import_batch_id", batch_id).execute().data
+    except Exception:
+        try:
+            files = db.schema("energy_import").table("import_file").select("import_file_id").eq("import_batch_id", batch_id).execute().data
+        except Exception:
+            files = []
     ids = [x["import_file_id"] for x in files]
     if not ids:
         return []
-    return db.schema("energy_import").table("import_row").select("import_row_id").in_("import_file_id", ids).execute().data
+    try:
+        return db.table("import_row").select("import_row_id").in_("import_file_id", ids).execute().data
+    except Exception:
+        try:
+            return db.schema("energy_import").table("import_row").select("import_row_id").in_("import_file_id", ids).execute().data
+        except Exception:
+            return []
 
 
 def calculate_dg_kpis(db, batch_id, calculation_version="5.3"):

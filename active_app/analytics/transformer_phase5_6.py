@@ -123,26 +123,24 @@ def calculate_transformer_kpis(
     db: Any, batch_id: str, calculation_version: str = "5.6.0"
 ) -> dict[str, Any]:
     """Calculate and persist Transformer KPIs in Supabase with full audit traceability."""
-    files = (
-        db.schema("energy_import")
-        .table("import_file")
-        .select("import_file_id")
-        .eq("import_batch_id", batch_id)
-        .execute()
-        .data
-    )
+    try:
+        files = db.table("import_file").select("import_file_id").eq("import_batch_id", batch_id).execute().data
+    except Exception:
+        try:
+            files = db.schema("energy_import").table("import_file").select("import_file_id").eq("import_batch_id", batch_id).execute().data
+        except Exception:
+            files = []
     ids = [x["import_file_id"] for x in files]
     if not ids:
         return {"batch_id": batch_id, "results": []}
 
-    rows = (
-        db.schema("energy_import")
-        .table("import_row")
-        .select("import_row_id")
-        .in_("import_file_id", ids)
-        .execute()
-        .data
-    )
+    try:
+        rows = db.table("import_row").select("import_row_id").in_("import_file_id", ids).execute().data
+    except Exception:
+        try:
+            rows = db.schema("energy_import").table("import_row").select("import_row_id").in_("import_file_id", ids).execute().data
+        except Exception:
+            rows = []
     row_ids = [r["import_row_id"] for r in rows]
     if not row_ids:
         raise ValueError("No import rows found for batch.")

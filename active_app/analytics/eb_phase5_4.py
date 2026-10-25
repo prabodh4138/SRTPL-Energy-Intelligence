@@ -10,11 +10,23 @@ KPI_SPECS = [
 
 
 def _batch_rows(db, batch_id):
-    files = db.schema("energy_import").table("import_file").select("import_file_id").eq("import_batch_id", batch_id).execute().data
+    try:
+        files = db.table("import_file").select("import_file_id").eq("import_batch_id", batch_id).execute().data
+    except Exception:
+        try:
+            files = db.schema("energy_import").table("import_file").select("import_file_id").eq("import_batch_id", batch_id).execute().data
+        except Exception:
+            files = []
     ids = [x["import_file_id"] for x in files]
     if not ids:
         return []
-    return db.schema("energy_import").table("import_row").select("import_row_id").in_("import_file_id", ids).order("source_row_number").execute().data
+    try:
+        return db.table("import_row").select("import_row_id").in_("import_file_id", ids).order("source_row_number").execute().data
+    except Exception:
+        try:
+            return db.schema("energy_import").table("import_row").select("import_row_id").in_("import_file_id", ids).order("source_row_number").execute().data
+        except Exception:
+            return []
 
 
 def calculate_eb_kpis_from_normalized(

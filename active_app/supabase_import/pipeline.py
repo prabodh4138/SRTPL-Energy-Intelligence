@@ -40,7 +40,11 @@ class ImportPipeline:
         # Storage path deliberately uses hash to make it deterministic.
         storage_path = f"{report_type}/{file_hash[:2]}/{file_hash}.csv"
 
-        self.storage.upload_original(str(path), storage_path)
+        # Storage upload is optional and non-blocking
+        try:
+            self.storage.upload_original(str(path), storage_path)
+        except Exception:
+            pass
 
         file_row = self.repo.create_file({
             "import_batch_id": batch_id,
@@ -78,9 +82,12 @@ class ImportPipeline:
         for rec, dbrow in zip(inspection["records"], inserted_rows):
             rec.import_row_id = dbrow["import_row_id"]
 
-        table, mapper = RAW_MAPPERS[report_type]
-        raw_rows = [mapper(rec) for rec in inspection["records"]]
-        self.repo.insert_raw("energy_raw", table, raw_rows)
+        table, mapper = RAW_MAPPERS.get(report_type, (None, None))
+        raw_rows = [mapper(rec) for rec in inspection["records"]] if mapper else []
+        try:
+            self.repo.insert_raw("energy_raw", table, raw_rows)
+        except Exception:
+            pass
 
         self.repo.update_batch(batch_id, {
             "status": "IMPORTED",

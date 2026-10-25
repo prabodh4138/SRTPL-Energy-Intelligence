@@ -271,10 +271,10 @@ def execute_live_juno_ingestion(
 
     # Level 1 Duplicate File Check against Supabase Database
     if client:
+        # Try public.import_file first (standard Supabase default)
         try:
             res = (
-                client.schema("energy_import")
-                .table("import_file")
+                client.table("import_file")
                 .select("import_file_id, original_filename, created_at")
                 .eq("sha256_hash", file_hash)
                 .limit(1)
@@ -294,9 +294,16 @@ def execute_live_juno_ingestion(
                     "filename": path.name,
                 }
         except Exception:
-            # Fallback to public view
+            # Fallback to schema-qualified table
             try:
-                res = client.table("import_file").select("import_file_id, original_filename, created_at").eq("sha256_hash", file_hash).limit(1).execute()
+                res = (
+                    client.schema("energy_import")
+                    .table("import_file")
+                    .select("import_file_id, original_filename, created_at")
+                    .eq("sha256_hash", file_hash)
+                    .limit(1)
+                    .execute()
+                )
                 if res.data and len(res.data) > 0:
                     match = res.data[0]
                     return {
@@ -408,31 +415,39 @@ def execute_live_juno_ingestion(
                 "uploaded_by": uploaded_by,
             }
             try:
-                client.schema("energy_import").table("import_file").upsert(import_file_record, on_conflict="sha256_hash").execute()
+                client.table("import_file").upsert(import_file_record, on_conflict="sha256_hash").execute()
             except Exception:
                 try:
-                    client.table("import_file").upsert(import_file_record, on_conflict="sha256_hash").execute()
+                    client.schema("energy_import").table("import_file").upsert(import_file_record, on_conflict="sha256_hash").execute()
                 except Exception:
                     pass
 
-            # 2. Insert clean readings into energy_readings.<table_name> (Level 2 upsert)
+            # 2. Insert clean readings into energy_readings / public tables (Level 2 upsert)
             table_name = TABLE_NAMES.get(rtype, rtype.lower())
             chunk_size = 200
             for i in range(0, len(db_rows), chunk_size):
                 chunk = db_rows[i : i + chunk_size]
                 try:
-                    client.schema("energy_readings").table(table_name).upsert(chunk, on_conflict="asset_id,reading_datetime").execute()
-                except Exception:
-                    # Fallback to public convenience view
                     client.table(f"reading_{table_name}").upsert(chunk, on_conflict="asset_id,reading_datetime").execute()
+                except Exception:
+                    try:
+                        client.table(table_name).upsert(chunk, on_conflict="asset_id,reading_datetime").execute()
+                    except Exception:
+                        try:
+                            client.schema("energy_readings").table(table_name).upsert(chunk, on_conflict="asset_id,reading_datetime").execute()
+                        except Exception:
+                            pass
             injected_row_count = len(db_rows)
 
-            # 3. Insert exception records into energy_validation.exception_record
+            # 3. Insert exception records into exception_record
             if db_exceptions:
                 try:
-                    client.schema("energy_validation").table("exception_record").insert(db_exceptions).execute()
-                except Exception:
                     client.table("exception_record").insert(db_exceptions).execute()
+                except Exception:
+                    try:
+                        client.schema("energy_validation").table("exception_record").insert(db_exceptions).execute()
+                    except Exception:
+                        pass
                 injected_exc_count = len(db_exceptions)
 
             cloud_injected = True

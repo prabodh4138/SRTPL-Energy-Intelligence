@@ -27,7 +27,7 @@ EXCEPTION WHEN OTHERS THEN
     CREATE SCHEMA IF NOT EXISTS energy_raw;
 END $$;
 
--- STEP 2: CREATE ALL SCHEMAS
+-- STEP 2: CREATE ALL SCHEMAS & EXPOSE TO POSTGREST API
 CREATE SCHEMA IF NOT EXISTS energy_master;
 CREATE SCHEMA IF NOT EXISTS energy_import;
 CREATE SCHEMA IF NOT EXISTS energy_readings;
@@ -35,6 +35,9 @@ CREATE SCHEMA IF NOT EXISTS energy_validation;
 CREATE SCHEMA IF NOT EXISTS energy_analytics;
 CREATE SCHEMA IF NOT EXISTS energy_admin;
 CREATE SCHEMA IF NOT EXISTS energy_audit;
+
+-- Expose schemas in PostgREST configuration to eliminate PGRST205 errors
+ALTER ROLE authenticator SET pgrst.db_schemas = 'public, energy_master, energy_import, energy_readings, energy_validation, energy_analytics';
 
 -- STEP 3: MASTER DATA TABLES (Plazas & Assets)
 CREATE TABLE IF NOT EXISTS energy_master.plaza (
@@ -67,6 +70,32 @@ CREATE TABLE IF NOT EXISTS energy_import.import_file (
     valid_row_count INTEGER NOT NULL DEFAULT 0,
     exception_row_count INTEGER NOT NULL DEFAULT 0,
     uploaded_by VARCHAR(128) DEFAULT 'admin@srtpl.com',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS energy_import.import_batch (
+    import_batch_id VARCHAR(64) PRIMARY KEY,
+    uploaded_by VARCHAR(128) DEFAULT 'admin@srtpl.com',
+    source_system VARCHAR(32) DEFAULT 'JUNO',
+    report_type VARCHAR(32),
+    parser_version VARCHAR(32),
+    status VARCHAR(32) DEFAULT 'IMPORTED',
+    total_files INTEGER DEFAULT 1,
+    total_rows INTEGER DEFAULT 0,
+    valid_rows INTEGER DEFAULT 0,
+    invalid_rows INTEGER DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS energy_import.import_row (
+    import_row_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    import_file_id UUID REFERENCES energy_import.import_file(import_file_id) ON DELETE CASCADE,
+    source_row_number INTEGER,
+    source_record_hash VARCHAR(64),
+    business_key VARCHAR(128),
+    raw_payload JSONB,
+    parse_status VARCHAR(32) DEFAULT 'PARSED',
+    validation_status VARCHAR(32) DEFAULT 'VALID',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -234,6 +263,8 @@ CREATE TABLE IF NOT EXISTS public.payment_receipts (
 CREATE OR REPLACE VIEW public.plaza AS SELECT * FROM energy_master.plaza;
 CREATE OR REPLACE VIEW public.asset AS SELECT * FROM energy_master.asset;
 CREATE OR REPLACE VIEW public.import_file AS SELECT * FROM energy_import.import_file;
+CREATE OR REPLACE VIEW public.import_batch AS SELECT * FROM energy_import.import_batch;
+CREATE OR REPLACE VIEW public.import_row AS SELECT * FROM energy_import.import_row;
 CREATE OR REPLACE VIEW public.reading_eb AS SELECT * FROM energy_readings.eb;
 CREATE OR REPLACE VIEW public.reading_dg AS SELECT * FROM energy_readings.dg;
 CREATE OR REPLACE VIEW public.reading_solar AS SELECT * FROM energy_readings.solar;
@@ -256,6 +287,8 @@ BEGIN
         energy_readings.ups,
         energy_validation.exception_record,
         energy_import.import_file,
+        energy_import.import_row,
+        energy_import.import_batch,
         public.energy_bills,
         public.payment_receipts
     CASCADE;
@@ -277,6 +310,8 @@ GRANT EXECUTE ON FUNCTION public.reload_schema_cache() TO anon, authenticated, s
 ALTER TABLE energy_master.plaza ENABLE ROW LEVEL SECURITY;
 ALTER TABLE energy_master.asset ENABLE ROW LEVEL SECURITY;
 ALTER TABLE energy_import.import_file ENABLE ROW LEVEL SECURITY;
+ALTER TABLE energy_import.import_batch ENABLE ROW LEVEL SECURITY;
+ALTER TABLE energy_import.import_row ENABLE ROW LEVEL SECURITY;
 ALTER TABLE energy_readings.eb ENABLE ROW LEVEL SECURITY;
 ALTER TABLE energy_readings.dg ENABLE ROW LEVEL SECURITY;
 ALTER TABLE energy_readings.solar ENABLE ROW LEVEL SECURITY;
@@ -295,6 +330,12 @@ CREATE POLICY "allow_all_asset" ON energy_master.asset FOR ALL TO anon, authenti
 
 DROP POLICY IF EXISTS "allow_all_import_file" ON energy_import.import_file;
 CREATE POLICY "allow_all_import_file" ON energy_import.import_file FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "allow_all_import_batch" ON energy_import.import_batch;
+CREATE POLICY "allow_all_import_batch" ON energy_import.import_batch FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "allow_all_import_row" ON energy_import.import_row;
+CREATE POLICY "allow_all_import_row" ON energy_import.import_row FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "allow_all_eb" ON energy_readings.eb;
 CREATE POLICY "allow_all_eb" ON energy_readings.eb FOR ALL TO anon, authenticated, service_role USING (true) WITH CHECK (true);
