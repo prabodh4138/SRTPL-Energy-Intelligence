@@ -34,6 +34,8 @@ from core.db_sync import (
     delete_consumer_account,
     get_correlated_consumer_reconciliation,
     get_consumer_mapping_dict,
+    get_unified_billing_kpi_dataset,
+    get_missing_bills_kpi,
 )
 
 SAMPLE_DIR = "source_data/user_uploaded_bills/extractor"
@@ -63,13 +65,286 @@ def render():
 
     st.divider()
 
-    tab_monthly, tab_extract, tab_reconcile, tab_register, tab_master = st.tabs([
+    tab_kpi, tab_monthly, tab_extract, tab_reconcile, tab_register, tab_master = st.tabs([
+        "📊 Executive Billing KPIs",
         "📅 Month-wise EB Consumption",
         "📄 Bill Field Extraction & Verification",
         "⚖️ Meter vs. Bill Reconciliation",
         "💳 Bill & Receipt Register",
         "🏛️ Energy Consumer Master & Mapping",
     ])
+
+    # -------------------------------------------------------------------------
+    # TAB 0: Executive Billing KPIs & Multi-Dimensional Analytics
+    # -------------------------------------------------------------------------
+    with tab_kpi:
+        st.subheader("Executive Billing KPIs & Multi-Dimensional Intelligence")
+        st.caption("Cross-correlating Consumer Accounts, DISCOM Energy Bills, Reading Basis, and Payment Clearance across Plazas, Tariffs, and Time Horizons.")
+
+        raw_kpi_df = get_unified_billing_kpi_dataset()
+
+        # Multi-Dimensional Filter Controls Container
+        with st.container(border=True):
+            st.markdown("##### 🎛️ Multi-Dimensional Filter Controls")
+            f_col1, f_col2, f_col3, f_col4 = st.columns(4)
+
+            # 1. Plaza Filter
+            all_plazas = ["All Plazas"] + sorted([str(p) for p in raw_kpi_df["toll_plaza_id"].dropna().unique()])
+            sel_plaza = f_col1.selectbox("Toll Plaza", all_plazas, index=0, key="kpi_sel_plaza")
+
+            # 2. Month Filter
+            all_months = ["All Months"] + sorted([str(m) for m in raw_kpi_df["bill_month"].dropna().unique()], reverse=True)
+            sel_month = f_col2.selectbox("Bill Month / Cycle", all_months, index=0, key="kpi_sel_month")
+
+            # 3. HT vs LT Tariff Filter
+            sel_type = f_col3.selectbox("Tariff / Bill Type", ["All", "HT (High Tension)", "LT (Low Tension)"], index=0, key="kpi_sel_type")
+
+            # 4. Bill Reading Basis (Actual vs Prov vs Avg)
+            sel_basis = f_col4.selectbox("Reading Basis", ["All", "ACTUAL Only", "PROVISIONAL / AVERAGE Only", "AVERAGE Only", "PROVISIONAL Only"], index=0, key="kpi_sel_basis")
+
+            f_col5, f_col6, f_col7 = st.columns(3)
+            # 5. Payment Clearance Status
+            sel_status = f_col5.selectbox("Payment Clearance", ["All", "PAID Only", "UNPAID / PARTIAL Only"], index=0, key="kpi_sel_status")
+
+            # 6. Consumer Scope
+            all_scopes = ["All Scopes"] + sorted([str(s) for s in raw_kpi_df["consumer_scope"].dropna().unique()])
+            sel_scope = f_col6.selectbox("Consumer Scope", all_scopes, index=0, key="kpi_sel_scope")
+
+            # 7. Division Filter
+            all_divs = ["All Divisions"] + sorted([str(d) for d in raw_kpi_df["division_name"].dropna().unique()])
+            sel_div = f_col7.selectbox("DISCOM Division", all_divs, index=0, key="kpi_sel_div")
+
+        # Apply Filtering
+        filtered_kpi = raw_kpi_df.copy()
+
+        if sel_plaza != "All Plazas":
+            filtered_kpi = filtered_kpi[filtered_kpi["toll_plaza_id"] == sel_plaza]
+
+        if sel_month != "All Months":
+            filtered_kpi = filtered_kpi[filtered_kpi["bill_month"] == sel_month]
+
+        if sel_type != "All":
+            type_code = "HT" if "HT" in sel_type else "LT"
+            filtered_kpi = filtered_kpi[filtered_kpi["bill_type"] == type_code]
+
+        if sel_basis == "ACTUAL Only":
+            filtered_kpi = filtered_kpi[filtered_kpi["bill_basis"] == "ACTUAL"]
+        elif sel_basis == "PROVISIONAL / AVERAGE Only":
+            filtered_kpi = filtered_kpi[filtered_kpi["bill_basis"].isin(["PROVISIONAL", "AVERAGE", "ESTIMATED"])]
+        elif sel_basis == "AVERAGE Only":
+            filtered_kpi = filtered_kpi[filtered_kpi["bill_basis"] == "AVERAGE"]
+        elif sel_basis == "PROVISIONAL Only":
+            filtered_kpi = filtered_kpi[filtered_kpi["bill_basis"] == "PROVISIONAL"]
+
+        if sel_status == "PAID Only":
+            filtered_kpi = filtered_kpi[filtered_kpi["payment_status"] == "PAID"]
+        elif sel_status == "UNPAID / PARTIAL Only":
+            filtered_kpi = filtered_kpi[filtered_kpi["payment_status"].isin(["UNPAID", "PARTIAL"])]
+
+        if sel_scope != "All Scopes":
+            filtered_kpi = filtered_kpi[filtered_kpi["consumer_scope"] == sel_scope]
+
+        if sel_div != "All Divisions":
+            filtered_kpi = filtered_kpi[filtered_kpi["division_name"] == sel_div]
+
+        # Calculate Missing Bills for the filtered timeframe
+        target_months = None if sel_month == "All Months" else [sel_month]
+        missing_df = get_missing_bills_kpi(filtered_kpi, target_months=target_months)
+        if sel_plaza != "All Plazas":
+            missing_df = missing_df[missing_df["toll_plaza_id"] == sel_plaza]
+        if sel_type != "All":
+            t_code = "HT" if "HT" in sel_type else "LT"
+            missing_df = missing_df[missing_df["bill_type"] == t_code]
+
+        # KPI Computations
+        tot_kwh = float(filtered_kpi["total_billed_kwh"].sum()) if not filtered_kpi.empty else 0.0
+        tot_invoiced = float(filtered_kpi["total_amount_payable"].sum()) if not filtered_kpi.empty else 0.0
+        tot_paid = float(filtered_kpi["amount_paid"].sum()) if not filtered_kpi.empty else 0.0
+        tot_outstanding = float(filtered_kpi["outstanding_balance"].sum()) if not filtered_kpi.empty else 0.0
+
+        num_gen_bills = len(filtered_kpi)
+        num_miss_bills = len(missing_df)
+        total_expected_bills = num_gen_bills + num_miss_bills
+        gen_rate = (num_gen_bills / max(1, total_expected_bills)) * 100.0
+
+        actual_count = len(filtered_kpi[filtered_kpi["bill_basis"] == "ACTUAL"]) if not filtered_kpi.empty else 0
+        prov_avg_count = len(filtered_kpi[filtered_kpi["bill_basis"].isin(["PROVISIONAL", "AVERAGE", "ESTIMATED"])]) if not filtered_kpi.empty else 0
+        basis_actual_pct = (actual_count / max(1, num_gen_bills)) * 100.0 if num_gen_bills > 0 else 0.0
+
+        avg_unit_cost = (tot_invoiced / max(1.0, tot_kwh)) if tot_kwh > 0 else 0.0
+        pay_realization_rate = (tot_paid / max(1.0, tot_invoiced)) * 100.0 if tot_invoiced > 0 else 100.0
+
+        # Section 1: Top KPI Cards Row
+        st.markdown("#### 📌 Key Performance Indicators Summary")
+        kp1, kp2, kp3, kp4 = st.columns(4)
+        kp1.metric("⚡ Total Billed Units", f"{tot_kwh:,.0f} kWh", help="Normal + Peak + Solar consumption from DISCOM invoices")
+        kp2.metric("💳 Invoiced Amount", f"₹{tot_invoiced:,.0f}", help="Total billed charges including duty and fixed charges")
+        kp3.metric("🟢 Payments Cleared", f"₹{tot_paid:,.0f}", f"{pay_realization_rate:.1f}% Realized")
+        kp4.metric("🟡 Outstanding Balance", f"₹{tot_outstanding:,.0f}", help="Pending clearance or under audit exception")
+
+        kp5, kp6, kp7, kp8 = st.columns(4)
+        kp5.metric("📋 Generation Coverage", f"{gen_rate:.1f}%", f"{num_gen_bills}/{total_expected_bills} Bills Present")
+        kp6.metric("🛡️ Reading Basis Integrity", f"{basis_actual_pct:.1f}% Actual", f"{actual_count} Actual | {prov_avg_count} Estimated")
+        kp7.metric("💵 Average Realized Tariff", f"₹{avg_unit_cost:.2f} / kWh", help="Overall effective tariff per consumed unit")
+        kp8.metric("⚠️ Missing Bills Count", f"{num_miss_bills} Accounts", help="Active connections without bills in selected period")
+
+        st.divider()
+
+        # Detailed Subtabs for Deep Dive
+        sub_kpi_plaza, sub_kpi_month, sub_kpi_miss, sub_kpi_basis, sub_kpi_all = st.tabs([
+            "🏢 Plaza & Tariff Breakdown",
+            "📅 Month-wise Trends & Payments",
+            f"⚠️ Bill Generation vs. Missing ({num_miss_bills})",
+            f"🛡️ Actual vs. Provisional vs. Average ({prov_avg_count})",
+            "📋 Master KPI Data Matrix",
+        ])
+
+        with sub_kpi_plaza:
+            st.markdown("##### 🏢 Plaza-wise Consumption & Financial Analysis")
+            if filtered_kpi.empty:
+                st.info("No data available for the selected filters.")
+            else:
+                plz_chart = filtered_kpi.groupby("toll_plaza_id").agg({
+                    "total_billed_kwh": "sum",
+                    "total_amount_payable": "sum",
+                    "amount_paid": "sum",
+                    "outstanding_balance": "sum",
+                }).reset_index().rename(columns={
+                    "toll_plaza_id": "Plaza",
+                    "total_billed_kwh": "Billed Units (kWh)",
+                    "total_amount_payable": "Invoiced (₹)",
+                    "amount_paid": "Paid (₹)",
+                    "outstanding_balance": "Outstanding (₹)",
+                })
+
+                ch_c1, ch_c2 = st.columns(2)
+                with ch_c1:
+                    st.caption("⚡ Consumption by Toll Plaza (kWh)")
+                    st.bar_chart(plz_chart.set_index("Plaza")[["Billed Units (kWh)"]])
+
+                with ch_c2:
+                    st.caption("💳 Invoiced vs. Cleared Amount by Toll Plaza (₹)")
+                    st.bar_chart(plz_chart.set_index("Plaza")[["Invoiced (₹)", "Paid (₹)"]])
+
+                st.markdown("###### Plaza Financial Summary Table")
+                st.dataframe(plz_chart, width="stretch", hide_index=True)
+
+                st.divider()
+                st.markdown("##### ⚡ High Tension (HT) vs. Low Tension (LT) Breakdown")
+                type_chart = filtered_kpi.groupby("bill_type").agg({
+                    "total_billed_kwh": "sum",
+                    "total_amount_payable": "sum",
+                    "amount_paid": "sum",
+                    "consumer_account_no": "nunique",
+                }).reset_index().rename(columns={
+                    "bill_type": "Connection Type",
+                    "consumer_account_no": "Active Accounts",
+                    "total_billed_kwh": "Total kWh",
+                    "total_amount_payable": "Invoiced (₹)",
+                    "amount_paid": "Paid (₹)",
+                })
+                st.dataframe(type_chart, width="stretch", hide_index=True)
+
+        with sub_kpi_month:
+            st.markdown("##### 📅 Month-wise Consumption & Payment Realization Trends")
+            if filtered_kpi.empty:
+                st.info("No data available.")
+            else:
+                m_chart = filtered_kpi.groupby("bill_month").agg({
+                    "total_billed_kwh": "sum",
+                    "total_amount_payable": "sum",
+                    "amount_paid": "sum",
+                    "outstanding_balance": "sum",
+                }).reset_index().rename(columns={
+                    "bill_month": "Month",
+                    "total_billed_kwh": "Billed Units (kWh)",
+                    "total_amount_payable": "Invoiced Amount (₹)",
+                    "amount_paid": "Paid Amount (₹)",
+                    "outstanding_balance": "Outstanding Balance (₹)",
+                })
+
+                mc1, mc2 = st.columns(2)
+                with mc1:
+                    st.caption("📈 Monthly Energy Consumption (kWh)")
+                    st.bar_chart(m_chart.set_index("Month")[["Billed Units (kWh)"]])
+
+                with mc2:
+                    st.caption("💰 Monthly Invoicing vs. Realized Payments (₹)")
+                    st.bar_chart(m_chart.set_index("Month")[["Invoiced Amount (₹)", "Paid Amount (₹)"]])
+
+                st.markdown("###### Monthly Settlement Details")
+                st.dataframe(m_chart, width="stretch", hide_index=True)
+
+        with sub_kpi_miss:
+            st.markdown("##### ⚠️ Bill Generation vs. Missing Invoices Audit")
+            st.caption("Cross-references registered master consumer accounts with uploaded DISCOM bills to detect unbilled or delayed utility invoices.")
+
+            msc1, msc2 = st.columns(2)
+            msc1.metric("✅ Bills Generated & Present", f"{num_gen_bills} Invoices", f"{gen_rate:.1f}% Generated")
+            msc2.metric("❌ Bills Missing / Pending", f"{num_miss_bills} Invoices", f"{100.0 - gen_rate:.1f}% Missing", delta_color="inverse")
+
+            if missing_df.empty:
+                st.success("🎉 All active consumer accounts have generated bills in the selected timeframe! Zero missing bills detected.")
+            else:
+                st.warning(f"⚠️ **{len(missing_df)} Missing Bills Found:** The following active connections have not received or uploaded invoices for the period:")
+                st.dataframe(missing_df, width="stretch", hide_index=True)
+
+                out_miss = io.BytesIO()
+                with pd.ExcelWriter(out_miss, engine="openpyxl") as writer:
+                    missing_df.to_excel(writer, index=False, sheet_name="Missing_Bills_Audit")
+                st.download_button(
+                    label=f"📥 Download Missing Bills Notice ({len(missing_df)} accounts)",
+                    data=out_miss.getvalue(),
+                    file_name=f"Missing_DISCOM_Bills_Audit_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    width="stretch",
+                )
+
+        with sub_kpi_basis:
+            st.markdown("##### 🛡️ Reading Basis Audit (Actual vs. Provisional vs. Average)")
+            st.caption("Identifies bills billed on estimated bases due to locked or defective meters, protecting SRTPL against DISCOM over-billing.")
+
+            bc1, bc2, bc3 = st.columns(3)
+            bc1.metric("🟢 Actual Physical Bills", f"{actual_count} Bills", f"{basis_actual_pct:.1f}% of Billed")
+            bc2.metric("🟡 Average Estimated Bills", f"{len(filtered_kpi[filtered_kpi['bill_basis'] == 'AVERAGE'])} Bills", "Requires JUNO Verification")
+            bc3.metric("🔴 Provisional Bills", f"{len(filtered_kpi[filtered_kpi['bill_basis'] == 'PROVISIONAL'])} Bills", "Requires DISCOM Audit")
+
+            prov_avg_subset = filtered_kpi[filtered_kpi["is_provisional_or_average"]]
+            prov_exposure = float(prov_avg_subset["total_amount_payable"].sum()) if not prov_avg_subset.empty else 0.0
+
+            st.markdown(
+                f"""
+                <div style="background: rgba(245, 158, 11, 0.12); border-left: 5px solid #f59e0b; border-radius: 6px; padding: 12px; margin-top: 10px; margin-bottom: 12px;">
+                    <div style="font-weight: 700; color: #fbbf24; font-size: 14px;">⚠️ Total Financial Exposure on Provisional/Average Bills: ₹{prov_exposure:,.2f}</div>
+                    <div style="font-size: 12px; color: #cbd5e1; margin-top: 4px;">
+                        These bills are based on estimated or historical average units. Always compare billed kWh against the sum of physical 15-minute JUNO interval readings before payment authorization.
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            if prov_avg_subset.empty:
+                st.info("No provisional or average bills present in the current filter selection.")
+            else:
+                st.dataframe(prov_avg_subset, width="stretch", hide_index=True)
+
+        with sub_kpi_all:
+            st.markdown("##### 📋 Master Correlated Billing & Telemetry Matrix")
+            st.caption("Consolidated master dataset with active filters applied.")
+
+            st.dataframe(filtered_kpi, width="stretch", hide_index=True)
+
+            out_kpi = io.BytesIO()
+            with pd.ExcelWriter(out_kpi, engine="openpyxl") as writer:
+                filtered_kpi.to_excel(writer, index=False, sheet_name="Billing_KPI_Matrix")
+            st.download_button(
+                label=f"📥 Download Filtered KPI Master Matrix (.xlsx) [{len(filtered_kpi)} records]",
+                data=out_kpi.getvalue(),
+                file_name=f"SRTPL_Executive_Billing_KPIs_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                width="stretch",
+            )
 
     # -------------------------------------------------------------------------
     # TAB 1: Month-wise EB Bill Consumption

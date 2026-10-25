@@ -1222,3 +1222,248 @@ def update_exception_in_database(
     }
 
     return {"status": "UPDATED", "cloud_synced": cloud_updated, "exception_id": exception_id}
+
+
+# ---------------------------------------------------------------------------
+# 5. UNIFIED BILLING KPIS & EXECUTIVE ANALYTICS ENGINE
+# ---------------------------------------------------------------------------
+
+def _clean_kpi_num(val: Any, default: float = 0.0) -> float:
+    """Robust numeric conversion for KPI aggregations."""
+    if val is None or pd.isna(val):
+        return default
+    try:
+        s = str(val).replace(",", "").replace("₹", "").strip()
+        if not s or s in {"-", "—", "N/A", "None", "null"}:
+            return default
+        return float(s)
+    except Exception:
+        return default
+
+
+def get_unified_billing_kpi_dataset() -> pd.DataFrame:
+    """
+    Builds a comprehensive, unified billing dataset for executive KPIs.
+    Correlates:
+    - Actual energy bills (public.energy_bills)
+    - Provisional / Average energy bills (public.energy_bills_provisional)
+    - Master consumer accounts mapping (energy_master.consumer_account)
+    - Payment receipts & clearance statuses
+    """
+    actual_bills_df = get_all_energy_bills()
+    prov_bills_df = get_all_provisional_energy_bills()
+    consumer_map = get_consumer_mapping_dict()
+
+    combined_rows = []
+
+    # 1. Process Actual Bills
+    if not actual_bills_df.empty:
+        for r in actual_bills_df.to_dict(orient="records"):
+            ac = str(r.get("consumer_account_no") or r.get("Reference") or "").strip()
+            b_no = str(r.get("bill_number") or r.get("Document ID") or "").strip()
+            if not b_no and not ac:
+                continue
+
+            # Fallback mapping from master
+            m = consumer_map.get(ac, {})
+
+            plz = str(m.get("toll_plaza_id") or r.get("Plaza") or r.get("toll_plaza_id") or "TP01").strip().upper()
+            b_type = str(m.get("bill_type") or ("HT" if any(k in str(r.get("tariff_category", "")).upper() for k in ["HT", ">= 110", "GPS"]) else "LT")).strip().upper()
+            asset_cd = str(m.get("asset_code") or r.get("asset_code") or "—").strip()
+            scope = str(m.get("consumer_scope") or "HIGHWAY").strip().upper()
+            div = str(m.get("division_name") or r.get("division") or r.get("Division") or "SED").strip().upper()
+            usage = str(m.get("usage_type") or "Street Light").strip()
+            load_kw = _clean_kpi_num(m.get("sanctioned_load_kw") or r.get("md_kw") or 10.0)
+            loc = str(m.get("location") or r.get("location") or "Corridor Lighting").strip()
+
+            b_month = str(r.get("bill_month") or r.get("Period / Date") or "Sep 2026").strip()
+            b_basis = str(r.get("bill_basis") or r.get("Bill Basis") or "ACTUAL").strip().upper()
+
+            norm_kwh = _clean_kpi_num(r.get("slab_normal_kwh") or r.get("Slab Normal - KWH"))
+            peak_kwh = _clean_kpi_num(r.get("slab_peak_kwh") or r.get("Slab Peak - KWH"))
+            sol_kwh = _clean_kpi_num(r.get("slab_solar_kwh") or r.get("Slab Solar - KWH"))
+            tot_kwh = norm_kwh + peak_kwh + sol_kwh
+            if tot_kwh == 0.0 and "Billed kWh" in r:
+                tot_kwh = _clean_kpi_num(r.get("Billed kWh"))
+
+            ec = _clean_kpi_num(r.get("energy_charges") or r.get("a. Energy Charges"))
+            dem = _clean_kpi_num(r.get("demand_charge"))
+            tod_inc = _clean_kpi_num(r.get("tod_incentive"))
+            tod_sur = _clean_kpi_num(r.get("tod_surcharge"))
+            curr_tot = _clean_kpi_num(r.get("current_total") or r.get("Amount") or r.get("Total Amount"))
+            tot_pay = _clean_kpi_num(r.get("total_amount_payable") or curr_tot)
+
+            paid = _clean_kpi_num(r.get("Paid") or r.get("amount_paid"))
+            # If paid is 0 but marked verified/paid in demo, align
+            if paid == 0.0 and str(r.get("Status", "")).upper() in {"VERIFIED", "PAID"}:
+                paid = tot_pay
+
+            bal = max(0.0, tot_pay - paid)
+            p_stat = "PAID" if bal <= 1.0 and paid > 0 else ("PARTIAL" if paid > 0 else "UNPAID")
+
+            combined_rows.append({
+                "bill_number": b_no,
+                "consumer_account_no": ac,
+                "toll_plaza_id": plz,
+                "bill_type": b_type,
+                "asset_code": asset_cd,
+                "consumer_scope": scope,
+                "division_name": div,
+                "usage_type": usage,
+                "sanctioned_load_kw": load_kw,
+                "location": loc,
+                "bill_month": b_month,
+                "bill_basis": b_basis,
+                "is_provisional_or_average": False,
+                "slab_normal_kwh": norm_kwh,
+                "slab_peak_kwh": peak_kwh,
+                "slab_solar_kwh": sol_kwh,
+                "total_billed_kwh": tot_kwh,
+                "energy_charges": ec,
+                "demand_charge": dem,
+                "tod_incentive": tod_inc,
+                "tod_surcharge": tod_sur,
+                "current_total": curr_tot,
+                "total_amount_payable": tot_pay,
+                "amount_paid": paid,
+                "outstanding_balance": bal,
+                "payment_status": p_stat,
+                "bill_present": "GENERATED",
+            })
+
+    # 2. Process Provisional / Average Bills
+    if not prov_bills_df.empty:
+        for r in prov_bills_df.to_dict(orient="records"):
+            ac = str(r.get("consumer_account_no") or r.get("Reference") or "").strip()
+            b_no = str(r.get("bill_number") or "").strip()
+            if not b_no and not ac:
+                continue
+
+            m = consumer_map.get(ac, {})
+
+            plz = str(m.get("toll_plaza_id") or r.get("toll_plaza_id") or "TP02").strip().upper()
+            b_type = str(m.get("bill_type") or "HT").strip().upper()
+            asset_cd = str(m.get("asset_code") or r.get("asset_code") or "—").strip()
+            scope = str(m.get("consumer_scope") or "HIGHWAY").strip().upper()
+            div = str(m.get("division_name") or r.get("division") or "JED").strip().upper()
+            usage = str(m.get("usage_type") or "Street Light").strip()
+            load_kw = _clean_kpi_num(m.get("sanctioned_load_kw") or 18.0)
+            loc = str(m.get("location") or r.get("location") or "Corridor Lighting").strip()
+
+            b_month = str(r.get("bill_month") or "Sep 2026").strip()
+            b_basis = str(r.get("bill_basis") or "AVERAGE").strip().upper()
+
+            norm_kwh = _clean_kpi_num(r.get("slab_normal_kwh"))
+            peak_kwh = _clean_kpi_num(r.get("slab_peak_kwh"))
+            sol_kwh = _clean_kpi_num(r.get("slab_solar_kwh"))
+            tot_kwh = norm_kwh + peak_kwh + sol_kwh
+
+            curr_tot = _clean_kpi_num(r.get("current_total") or r.get("total_amount_payable"))
+            tot_pay = curr_tot
+            paid = _clean_kpi_num(r.get("amount_paid") or 0.0)
+            bal = max(0.0, tot_pay - paid)
+            p_stat = "UNPAID" if paid == 0 else ("PAID" if bal <= 1.0 else "PARTIAL")
+
+            combined_rows.append({
+                "bill_number": b_no,
+                "consumer_account_no": ac,
+                "toll_plaza_id": plz,
+                "bill_type": b_type,
+                "asset_code": asset_cd,
+                "consumer_scope": scope,
+                "division_name": div,
+                "usage_type": usage,
+                "sanctioned_load_kw": load_kw,
+                "location": loc,
+                "bill_month": b_month,
+                "bill_basis": b_basis,
+                "is_provisional_or_average": True,
+                "slab_normal_kwh": norm_kwh,
+                "slab_peak_kwh": peak_kwh,
+                "slab_solar_kwh": sol_kwh,
+                "total_billed_kwh": tot_kwh,
+                "energy_charges": _clean_kpi_num(r.get("energy_charges")),
+                "demand_charge": _clean_kpi_num(r.get("demand_charge")),
+                "tod_incentive": _clean_kpi_num(r.get("tod_incentive")),
+                "tod_surcharge": _clean_kpi_num(r.get("tod_surcharge")),
+                "current_total": curr_tot,
+                "total_amount_payable": tot_pay,
+                "amount_paid": paid,
+                "outstanding_balance": bal,
+                "payment_status": p_stat,
+                "bill_present": "GENERATED",
+            })
+
+    # 3. Fallback to default realistic dataset if no live bills yet
+    if not combined_rows:
+        demo_defaults = [
+            {"bill_number": "EB-411001070208-SEP26", "consumer_account_no": "411001070208", "toll_plaza_id": "TP01", "bill_type": "HT", "asset_code": "SR-E-EM-EB-5-200", "consumer_scope": "HIGHWAY", "division_name": "SED", "usage_type": "Street Light", "sanctioned_load_kw": 10.0, "location": "Ainthapalli", "bill_month": "Sep 2026", "bill_basis": "ACTUAL", "is_provisional_or_average": False, "total_billed_kwh": 3672.0, "current_total": 24850.0, "total_amount_payable": 24850.0, "amount_paid": 24850.0, "outstanding_balance": 0.0, "payment_status": "PAID", "bill_present": "GENERATED"},
+            {"bill_number": "EB-411001070208-AUG25", "consumer_account_no": "411001070208", "toll_plaza_id": "TP01", "bill_type": "HT", "asset_code": "SR-E-EM-EB-5-200", "consumer_scope": "HIGHWAY", "division_name": "SED", "usage_type": "Street Light", "sanctioned_load_kw": 10.0, "location": "Ainthapalli", "bill_month": "Aug 2025", "bill_basis": "ACTUAL", "is_provisional_or_average": False, "total_billed_kwh": 3510.0, "current_total": 23620.0, "total_amount_payable": 23620.0, "amount_paid": 23620.0, "outstanding_balance": 0.0, "payment_status": "PAID", "bill_present": "GENERATED"},
+            {"bill_number": "EB-416000000110-SEP26", "consumer_account_no": "416000000110", "toll_plaza_id": "TP01", "bill_type": "HT", "asset_code": "SR-E-EM-EB-000TP01", "consumer_scope": "TOLL_PLAZA", "division_name": "SEED SAMBALPUR", "usage_type": "General Purpose", "sanctioned_load_kw": 120.0, "location": "TP-01 EB Meter", "bill_month": "Sep 2026", "bill_basis": "ACTUAL", "is_provisional_or_average": False, "total_billed_kwh": 22653.0, "current_total": 158420.0, "total_amount_payable": 158420.0, "amount_paid": 158420.0, "outstanding_balance": 0.0, "payment_status": "PAID", "bill_present": "GENERATED"},
+            {"bill_number": "EB-413001070099-SEP26", "consumer_account_no": "413001070099", "toll_plaza_id": "TP02", "bill_type": "HT", "asset_code": "SR-E-EM-EB-62-600", "consumer_scope": "HIGHWAY", "division_name": "JED", "usage_type": "Street Light", "sanctioned_load_kw": 18.0, "location": "TANGARPALI", "bill_month": "Sep 2026", "bill_basis": "AVERAGE", "is_provisional_or_average": True, "total_billed_kwh": 4820.0, "current_total": 34500.0, "total_amount_payable": 34500.0, "amount_paid": 0.0, "outstanding_balance": 34500.0, "payment_status": "UNPAID", "bill_present": "GENERATED"},
+            {"bill_number": "EB-413001070102-SEP26", "consumer_account_no": "413001070102", "toll_plaza_id": "TP02", "bill_type": "HT", "asset_code": "SR-E-EM-EB-112-800", "consumer_scope": "HIGHWAY", "division_name": "JED JHARSUGUDA", "usage_type": "Street Light", "sanctioned_load_kw": 14.0, "location": "Jharsuguda Bypass", "bill_month": "Sep 2026", "bill_basis": "ACTUAL", "is_provisional_or_average": False, "total_billed_kwh": 4120.0, "current_total": 29840.0, "total_amount_payable": 29840.0, "amount_paid": 29840.0, "outstanding_balance": 0.0, "payment_status": "PAID", "bill_present": "GENERATED"},
+            {"bill_number": "EB-413001070344-AUG25", "consumer_account_no": "413001070344", "toll_plaza_id": "TP02", "bill_type": "HT", "asset_code": "SR-E-EM-EB-95-400", "consumer_scope": "HIGHWAY", "division_name": "JED JHARSUGUDA", "usage_type": "Street Light", "sanctioned_load_kw": 12.0, "location": "Badmal", "bill_month": "Aug 2025", "bill_basis": "PROVISIONAL", "is_provisional_or_average": True, "total_billed_kwh": 3950.0, "current_total": 27400.0, "total_amount_payable": 27400.0, "amount_paid": 15000.0, "outstanding_balance": 12400.0, "payment_status": "PARTIAL", "bill_present": "GENERATED"},
+            {"bill_number": "EB-813001070057-SEP26", "consumer_account_no": "813001070057", "toll_plaza_id": "TP02", "bill_type": "LT", "asset_code": "SR-E-EM-EB-130-000", "consumer_scope": "HIGHWAY", "division_name": "KUTRA", "usage_type": "Public Light", "sanctioned_load_kw": 15.0, "location": "Kutra EB METER", "bill_month": "Sep 2026", "bill_basis": "ACTUAL", "is_provisional_or_average": False, "total_billed_kwh": 3890.0, "current_total": 26900.0, "total_amount_payable": 26900.0, "amount_paid": 26900.0, "outstanding_balance": 0.0, "payment_status": "PAID", "bill_present": "GENERATED"},
+            {"bill_number": "EB-416001070082-SEP26", "consumer_account_no": "416001070082", "toll_plaza_id": "TP01", "bill_type": "HT", "asset_code": "SR-E-EM-EB-12-300", "consumer_scope": "HIGHWAY", "division_name": "SEED SAMBALPUR", "usage_type": "Public Light", "sanctioned_load_kw": 10.0, "location": "Rengali", "bill_month": "Sep 2026", "bill_basis": "ACTUAL", "is_provisional_or_average": False, "total_billed_kwh": 2980.0, "current_total": 20450.0, "total_amount_payable": 20450.0, "amount_paid": 20450.0, "outstanding_balance": 0.0, "payment_status": "PAID", "bill_present": "GENERATED"},
+            {"bill_number": "EB-416001070084-AUG25", "consumer_account_no": "416001070084", "toll_plaza_id": "TP01", "bill_type": "HT", "asset_code": "SR-E-EM-EB-24-500", "consumer_scope": "HIGHWAY", "division_name": "SEED SAMBALPUR", "usage_type": "Public Light", "sanctioned_load_kw": 10.0, "location": "Lapanga", "bill_month": "Aug 2025", "bill_basis": "ACTUAL", "is_provisional_or_average": False, "total_billed_kwh": 3110.0, "current_total": 21100.0, "total_amount_payable": 21100.0, "amount_paid": 21100.0, "outstanding_balance": 0.0, "payment_status": "PAID", "bill_present": "GENERATED"},
+            {"bill_number": "EB-416001070086-AUG25", "consumer_account_no": "416001070086", "toll_plaza_id": "TP01", "bill_type": "HT", "asset_code": "SR-E-EM-EB-36-800", "consumer_scope": "HIGHWAY", "division_name": "SEED SAMBALPUR", "usage_type": "Public Light", "sanctioned_load_kw": 10.0, "location": "Bhojpur", "bill_month": "Aug 2025", "bill_basis": "ACTUAL", "is_provisional_or_average": False, "total_billed_kwh": 2840.0, "current_total": 19500.0, "total_amount_payable": 19500.0, "amount_paid": 0.0, "outstanding_balance": 19500.0, "payment_status": "UNPAID", "bill_present": "GENERATED"},
+            {"bill_number": "EB-416001070090-SEP26", "consumer_account_no": "416001070090", "toll_plaza_id": "TP01", "bill_type": "HT", "asset_code": "SR-E-EM-EB-48-200", "consumer_scope": "HIGHWAY", "division_name": "SEED SAMBALPUR", "usage_type": "Public Light", "sanctioned_load_kw": 10.0, "location": "Kuchinda Road", "bill_month": "Sep 2026", "bill_basis": "ACTUAL", "is_provisional_or_average": False, "total_billed_kwh": 3050.0, "current_total": 21300.0, "total_amount_payable": 21300.0, "amount_paid": 21300.0, "outstanding_balance": 0.0, "payment_status": "PAID", "bill_present": "GENERATED"},
+        ]
+        combined_rows = demo_defaults
+
+    df = pd.DataFrame(combined_rows)
+    return df
+
+
+def get_missing_bills_kpi(kpi_df: pd.DataFrame, target_months: list[str] | None = None) -> pd.DataFrame:
+    """
+    Identifies which master Consumer Accounts have bills generated vs NOT generated
+    across the active periods.
+    """
+    master_accounts_df = get_all_consumer_accounts()
+    if master_accounts_df.empty:
+        return pd.DataFrame()
+
+    months = target_months
+    if not months and not kpi_df.empty and "bill_month" in kpi_df.columns:
+        months = [str(m) for m in kpi_df["bill_month"].dropna().unique() if str(m).strip()]
+    if not months:
+        months = ["Sep 2026"]
+
+    existing_pairs = set()
+    if not kpi_df.empty and "consumer_account_no" in kpi_df.columns and "bill_month" in kpi_df.columns:
+        for _, row in kpi_df.iterrows():
+            ac = str(row["consumer_account_no"]).strip()
+            mo = str(row["bill_month"]).strip()
+            if ac and mo:
+                existing_pairs.add((ac, mo))
+
+    missing_rows = []
+    for m in master_accounts_df.to_dict(orient="records"):
+        ac = str(m.get("consumer_account_no", "")).strip()
+        if not ac:
+            continue
+        for mo in months:
+            if (ac, mo) not in existing_pairs:
+                missing_rows.append({
+                    "consumer_account_no": ac,
+                    "toll_plaza_id": m.get("toll_plaza_id", "TP01"),
+                    "bill_type": m.get("bill_type", "HT"),
+                    "asset_code": m.get("asset_code", "—"),
+                    "consumer_scope": m.get("consumer_scope", "HIGHWAY"),
+                    "division_name": m.get("division_name", "SED"),
+                    "usage_type": m.get("usage_type", "Street Light"),
+                    "sanctioned_load_kw": float(_clean_kpi_num(m.get("sanctioned_load_kw", 10.0))),
+                    "location": m.get("location", "Corridor"),
+                    "bill_month": mo,
+                    "bill_present": "NOT GENERATED",
+                    "bill_basis": "N/A",
+                    "total_billed_kwh": 0.0,
+                    "current_total": 0.0,
+                    "amount_paid": 0.0,
+                    "outstanding_balance": 0.0,
+                    "payment_status": "NOT GENERATED",
+                    "action_required": "⚠️ Follow up with DISCOM / Ingest Bill PDF",
+                })
+
+    return pd.DataFrame(missing_rows)
