@@ -131,6 +131,9 @@ DEFAULT_ASSETS = [
     {"asset_id": "AST-UPS-09", "asset_code": "SR-E-AP-UPS-000009", "asset_name": "Toll Plaza UPS 9", "plaza_id": "TP02", "source_type": "UPS", "capacity_kva": 40.0, "is_active": True},
 
     {"asset_id": "AST-EB-03", "asset_code": "SRTPL_Test_JUNO_EB", "asset_name": "Main EB Incomer TP03", "plaza_id": "TP03", "source_type": "EB", "capacity_kva": 500.0, "is_active": True},
+    {"asset_id": "AST-EB-06", "asset_code": "SR-E-EM-EB-148-500", "asset_name": "Garposh Corridor Lighting Meter", "plaza_id": "TP03", "source_type": "EB", "capacity_kva": 50.0, "is_active": True},
+    {"asset_id": "AST-EB-07", "asset_code": "SR-E-EM-EB-000TP03", "asset_name": "Main EB Substation TP03", "plaza_id": "TP03", "source_type": "EB", "capacity_kva": 500.0, "is_active": True},
+    {"asset_id": "AST-EB-08", "asset_code": "SR-E-EM-EB-160-200", "asset_name": "Garposh Toll Approach Meter", "plaza_id": "TP03", "source_type": "EB", "capacity_kva": 50.0, "is_active": True},
     {"asset_id": "AST-DG-05", "asset_code": "SR-E-AP-DGX-000005", "asset_name": "Diesel Generator 5", "plaza_id": "TP03", "source_type": "DG", "capacity_kva": 250.0, "is_active": True},
     {"asset_id": "AST-DG-06", "asset_code": "SR-E-AP-DGX-000006", "asset_name": "Diesel Generator 6", "plaza_id": "TP03", "source_type": "DG", "capacity_kva": 250.0, "is_active": True},
     {"asset_id": "AST-SOL-03", "asset_code": "SR-E-AP-SPX-000003", "asset_name": "Solar Plant 3", "plaza_id": "TP03", "source_type": "SOLAR", "capacity_kva": 100.0, "is_active": True},
@@ -322,6 +325,110 @@ DEFAULT_CONSUMER_ACCOUNTS = [
         "is_active": True,
         "remarks": "Badmal section corridor lighting",
     },
+    {
+        "consumer_account_no": "813000000281",
+        "toll_plaza_id": "TP03",
+        "bill_type": "HT",
+        "asset_code": "SR-E-EM-EB-000TP03",
+        "consumer_scope": "TOLL_PLAZA",
+        "division_name": "SED SUNDARAGADA",
+        "usage_type": "General Purpose",
+        "sanctioned_load_kw": 120.0,
+        "location": "TP-03 EB Meter (Garposh)",
+        "is_active": True,
+        "remarks": "Main Incomer for Toll Plaza 03 (Garposh)",
+    },
+    {
+        "consumer_account_no": "812001070018",
+        "toll_plaza_id": "TP03",
+        "bill_type": "LT",
+        "asset_code": "SR-E-EM-EB-148-500",
+        "consumer_scope": "HIGHWAY",
+        "division_name": "SED SUNDARAGADA",
+        "usage_type": "Public Light",
+        "sanctioned_load_kw": 28.0,
+        "location": "Bhawanipur / Garposh Corridor",
+        "is_active": True,
+        "remarks": "Garposh corridor lighting meter connection (SED SUNDARAGADA)",
+    },
+    {
+        "consumer_account_no": "812001070020",
+        "toll_plaza_id": "TP03",
+        "bill_type": "LT",
+        "asset_code": "SR-E-EM-EB-160-200",
+        "consumer_scope": "HIGHWAY",
+        "division_name": "SED SUNDARAGADA",
+        "usage_type": "Public Light",
+        "sanctioned_load_kw": 15.0,
+        "location": "Garposh Toll Approach",
+        "is_active": True,
+        "remarks": "Garposh toll approach road lighting",
+    },
+    {
+        "consumer_account_no": "416001070082",
+        "toll_plaza_id": "TP01",
+        "bill_type": "HT",
+        "asset_code": "SR-E-EM-EB-12-300",
+        "consumer_scope": "HIGHWAY",
+        "division_name": "SEED SAMBALPUR",
+        "usage_type": "Public Light",
+        "sanctioned_load_kw": 10.0,
+        "location": "Rengali",
+        "is_active": True,
+        "remarks": "Rengali corridor lighting connection",
+    },
+    {
+        "consumer_account_no": "416001070084",
+        "toll_plaza_id": "TP01",
+        "bill_type": "HT",
+        "asset_code": "SR-E-EM-EB-24-500",
+        "consumer_scope": "HIGHWAY",
+        "division_name": "SEED SAMBALPUR",
+        "usage_type": "Public Light",
+        "sanctioned_load_kw": 10.0,
+        "location": "Lapanga",
+        "is_active": True,
+        "remarks": "Lapanga corridor lighting connection",
+    },
+    {
+        "consumer_account_no": "416001070086",
+        "toll_plaza_id": "TP01",
+        "bill_type": "HT",
+        "asset_code": "SR-E-EM-EB-36-800",
+        "consumer_scope": "HIGHWAY",
+        "division_name": "SEED SAMBALPUR",
+        "usage_type": "Public Light",
+        "sanctioned_load_kw": 10.0,
+        "location": "Bhojpur",
+        "is_active": True,
+        "remarks": "Bhojpur corridor lighting connection",
+    },
+    {
+        "consumer_account_no": "416001070090",
+        "toll_plaza_id": "TP01",
+        "bill_type": "HT",
+        "asset_code": "SR-E-EM-EB-48-200",
+        "consumer_scope": "HIGHWAY",
+        "division_name": "SEED SAMBALPUR",
+        "usage_type": "Public Light",
+        "sanctioned_load_kw": 10.0,
+        "location": "Kuchinda Road",
+        "is_active": True,
+        "remarks": "Kuchinda Road corridor lighting",
+    },
+    {
+        "consumer_account_no": "416001111004",
+        "toll_plaza_id": "TP01",
+        "bill_type": "LT",
+        "asset_code": "SR-E-EM-EB-24-500-LT",
+        "consumer_scope": "HIGHWAY",
+        "division_name": "SEED SAMBALPUR",
+        "usage_type": "General Purpose",
+        "sanctioned_load_kw": 4.0,
+        "location": "Sambalpur Toll Admin",
+        "is_active": True,
+        "remarks": "Sambalpur auxiliary lighting and admin connection",
+    },
 ]
 
 
@@ -450,10 +557,11 @@ def get_correlated_consumer_reconciliation() -> pd.DataFrame:
     """
     Returns complete correlated dataset across:
     1. Consumer Account Master (Plaza, Asset Code, Division, Location, Scope, Load)
-    2. DISCOM Energy Bills (Billed Units, Billed Amounts, Month)
-    3. JUNO Physical Meter Telemetry (Metered Units, Max Demand, PF)
-    4. Payment Receipts (Amount Paid, Collections Date)
-    5. Calculated Reconciliation Variance (Metered kWh vs DISCOM Billed kWh)
+    2. DISCOM Energy Bills (Actual Billed Units, Billed Amounts, Month)
+    3. DISCOM Provisional / Average Bills (Estimated Units, Exposure Amount)
+    4. JUNO Physical Meter Telemetry (Metered Units, Max Demand, PF)
+    5. Payment Receipts (Amount Paid, Collections Date, UTR)
+    6. Calculated Reconciliation Variance (Metered kWh vs DISCOM Billed kWh)
     """
     client = get_supabase_client()
     if client:
@@ -473,28 +581,69 @@ def get_correlated_consumer_reconciliation() -> pd.DataFrame:
     if live_bills_df.empty:
         live_bills_df = get_demo_bills()
 
+    prov_bills_df = get_all_provisional_energy_bills()
+    receipts_df = get_all_payment_receipts()
+
     corr_rows = []
     for m in master_df.to_dict(orient="records"):
         ac = str(m.get("consumer_account_no", "")).strip()
         asset_cd = str(m.get("asset_code", "")).strip()
+        toll_plaza = str(m.get("toll_plaza_id", "TP01")).strip()
 
-        # Match bills
-        matching_bills = pd.DataFrame()
+        # Match actual bills
+        matching_actual = pd.DataFrame()
         if not live_bills_df.empty and "consumer_account_no" in live_bills_df.columns:
-            matching_bills = live_bills_df[live_bills_df["consumer_account_no"].astype(str) == ac]
+            matching_actual = live_bills_df[live_bills_df["consumer_account_no"].astype(str) == ac]
 
-        total_bills = len(matching_bills)
-        latest_month = matching_bills["bill_month"].iloc[0] if (not matching_bills.empty and "bill_month" in matching_bills.columns) else "—"
-        
-        tot_normal = matching_bills["slab_normal_kwh"].sum() if (not matching_bills.empty and "slab_normal_kwh" in matching_bills.columns) else 0.0
-        tot_peak = matching_bills["slab_peak_kwh"].sum() if (not matching_bills.empty and "slab_peak_kwh" in matching_bills.columns) else 0.0
-        tot_solar = matching_bills["slab_solar_kwh"].sum() if (not matching_bills.empty and "slab_solar_kwh" in matching_bills.columns) else 0.0
-        discom_kwh = float(tot_normal + tot_peak + tot_solar)
+        # Match provisional / average bills
+        matching_prov = pd.DataFrame()
+        if not prov_bills_df.empty and "consumer_account_no" in prov_bills_df.columns:
+            matching_prov = prov_bills_df[prov_bills_df["consumer_account_no"].astype(str) == ac]
 
-        discom_amt = float(matching_bills["current_total"].sum()) if (not matching_bills.empty and "current_total" in matching_bills.columns) else 0.0
+        # Match receipts
+        matching_receipts = pd.DataFrame()
+        if not receipts_df.empty:
+            ac_col = "account_no" if "account_no" in receipts_df.columns else "consumer_no"
+            if ac_col in receipts_df.columns:
+                matching_receipts = receipts_df[receipts_df[ac_col].astype(str) == ac]
+
+        actual_bills_cnt = len(matching_actual)
+        prov_bills_cnt = len(matching_prov)
+        total_bills = actual_bills_cnt + prov_bills_cnt
+
+        latest_month = "—"
+        if not matching_actual.empty and "bill_month" in matching_actual.columns:
+            latest_month = matching_actual["bill_month"].iloc[0]
+        elif not matching_prov.empty and "bill_month" in matching_prov.columns:
+            latest_month = matching_prov["bill_month"].iloc[0]
+
+        # Actual kWh
+        tot_normal = matching_actual["slab_normal_kwh"].sum() if (not matching_actual.empty and "slab_normal_kwh" in matching_actual.columns) else 0.0
+        tot_peak = matching_actual["slab_peak_kwh"].sum() if (not matching_actual.empty and "slab_peak_kwh" in matching_actual.columns) else 0.0
+        tot_solar = matching_actual["slab_solar_kwh"].sum() if (not matching_actual.empty and "slab_solar_kwh" in matching_actual.columns) else 0.0
+        actual_kwh = float(tot_normal + tot_peak + tot_solar)
+
+        # Prov kWh
+        prov_kwh = 0.0
+        if not matching_prov.empty:
+            if "slab_normal_kwh" in matching_prov.columns:
+                prov_kwh = float(matching_prov["slab_normal_kwh"].sum() + matching_prov.get("slab_peak_kwh", 0).sum() + matching_prov.get("slab_solar_kwh", 0).sum())
+            elif "total_billed_kwh" in matching_prov.columns:
+                prov_kwh = float(matching_prov["total_billed_kwh"].sum())
+
+        discom_kwh = actual_kwh + prov_kwh
+
+        actual_amt = float(matching_actual["current_total"].sum()) if (not matching_actual.empty and "current_total" in matching_actual.columns) else 0.0
+        prov_amt = float(matching_prov["current_total"].sum()) if (not matching_prov.empty and "current_total" in matching_prov.columns) else 0.0
+        discom_amt = actual_amt + prov_amt
+
+        # Receipts correlation
+        paid_from_rc = float(matching_receipts["amount_paid"].sum()) if not matching_receipts.empty else 0.0
+        latest_rc_date = str(matching_receipts["collections_date"].iloc[0]) if not matching_receipts.empty else "—"
+        tot_paid = paid_from_rc if paid_from_rc > 0 else (actual_amt if (actual_bills_cnt > 0 and prov_bills_cnt == 0) else 0.0)
+        outstanding = max(0.0, discom_amt - tot_paid)
 
         # Physical JUNO meter estimate or actual
-        # Correlate metered intervals: standard corridor meter range
         sanctioned = float(m.get("sanctioned_load_kw", 10.0))
         simulated_juno_kwh = discom_kwh * 0.985 if discom_kwh > 0 else (sanctioned * 24 * 30 * 0.45)
         kwh_var = discom_kwh - simulated_juno_kwh
@@ -502,7 +651,7 @@ def get_correlated_consumer_reconciliation() -> pd.DataFrame:
 
         corr_rows.append({
             "consumer_account_no": ac,
-            "toll_plaza_id": m.get("toll_plaza_id", "TP01"),
+            "toll_plaza_id": toll_plaza,
             "bill_type": m.get("bill_type", "HT"),
             "asset_code": asset_cd,
             "consumer_scope": m.get("consumer_scope", "HIGHWAY"),
@@ -511,15 +660,23 @@ def get_correlated_consumer_reconciliation() -> pd.DataFrame:
             "sanctioned_load_kw": sanctioned,
             "location": m.get("location", "Corridor"),
             "is_active": m.get("is_active", True),
+            "actual_bills_count": actual_bills_cnt,
+            "provisional_bills_count": prov_bills_cnt,
             "total_bills_count": total_bills,
             "latest_bill_month": latest_month,
-            "discom_billed_kwh": discom_kwh,
-            "discom_billed_amount": discom_amt,
+            "actual_billed_kwh": round(actual_kwh, 2),
+            "provisional_billed_kwh": round(prov_kwh, 2),
+            "discom_billed_kwh": round(discom_kwh, 2),
+            "actual_billed_amount": round(actual_amt, 2),
+            "provisional_exposure_amount": round(prov_amt, 2),
+            "discom_billed_amount": round(discom_amt, 2),
             "juno_meter_kwh": round(simulated_juno_kwh, 2),
             "kwh_variance": round(kwh_var, 2),
             "variance_percentage": var_pct,
-            "total_amount_paid": discom_amt,
-            "outstanding_balance": 0.0,
+            "total_amount_paid": round(tot_paid, 2),
+            "outstanding_balance": round(outstanding, 2),
+            "latest_payment_date": latest_rc_date,
+            "payment_status": "PAID" if outstanding <= 1.0 and tot_paid > 0 else ("PARTIAL" if tot_paid > 0 else "UNPAID"),
         })
 
     return pd.DataFrame(corr_rows)
@@ -1184,6 +1341,194 @@ def delete_provisional_energy_bill(bill_number: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# 3C. PAYMENT RECEIPTS (Add, Modify, Fetch from public.payment_receipts)
+# ---------------------------------------------------------------------------
+
+DEFAULT_PAYMENT_RECEIPTS = [
+    {
+        "receipt_no": "657221121225HDFC0003",
+        "account_no": "411001070208",
+        "consumer_no": "411001070208",
+        "consumer_name": "M/S. L & T SAMBALPUR-ROURKELA",
+        "toll_plaza_id": "TP01",
+        "collections_date": "12-12-2025",
+        "amount_paid": 15497.00,
+        "payment_type": "NEFT",
+        "transaction_id": "SBIN525346976046",
+        "bill_month": "November - 2025",
+        "category": "PUBLIC LIGHT",
+        "source_pdf": "657221121225HDFC0003.pdf",
+    },
+    {
+        "receipt_no": "657221171225HDFC0004",
+        "account_no": "411001070209",
+        "consumer_no": "411001070209",
+        "consumer_name": "M/S. L & T SAMBALPUR-ROURKELA",
+        "toll_plaza_id": "TP01",
+        "collections_date": "17-12-2025",
+        "amount_paid": 44429.00,
+        "payment_type": "NEFT",
+        "transaction_id": "SBIN525346976047",
+        "bill_month": "November - 2025",
+        "category": "PUBLIC LIGHT",
+        "source_pdf": "657221171225HDFC0004.pdf",
+    },
+    {
+        "receipt_no": "657245121225HDFC0005",
+        "account_no": "416001070085",
+        "consumer_no": "416001070085",
+        "consumer_name": "M/S. L & T SAMBALPUR-ROURKELA",
+        "toll_plaza_id": "TP01",
+        "collections_date": "12-12-2025",
+        "amount_paid": 10513.00,
+        "payment_type": "NEFT",
+        "transaction_id": "SBIN525346976048",
+        "bill_month": "November - 2025",
+        "category": "PUBLIC LIGHT",
+        "source_pdf": "657245121225HDFC0005.pdf",
+    },
+    {
+        "receipt_no": "657245121225HDFC0006",
+        "account_no": "416001070084",
+        "consumer_no": "416001070084",
+        "consumer_name": "M/S. L & T SAMBALPUR-ROURKELA",
+        "toll_plaza_id": "TP01",
+        "collections_date": "12-12-2025",
+        "amount_paid": 28850.00,
+        "payment_type": "NEFT",
+        "transaction_id": "SBIN525346976049",
+        "bill_month": "November - 2025",
+        "category": "PUBLIC LIGHT",
+        "source_pdf": "657245121225HDFC0006.pdf",
+    },
+    {
+        "receipt_no": "RC-TP01-SEP26-01",
+        "account_no": "411001070208",
+        "consumer_no": "411001070208",
+        "consumer_name": "M/S. L & T SAMBALPUR-ROURKELA",
+        "toll_plaza_id": "TP01",
+        "collections_date": "14-10-2026",
+        "amount_paid": 24850.00,
+        "payment_type": "NEFT",
+        "transaction_id": "HDFC982137401",
+        "bill_month": "Sep 2026",
+        "category": "PUBLIC LIGHT",
+        "source_pdf": "Receipt_411001070208_Sep26.pdf",
+    },
+    {
+        "receipt_no": "RC-TP01-SEP26-02",
+        "account_no": "416000000110",
+        "consumer_no": "416000000110",
+        "consumer_name": "M/S. L & T SAMBALPUR-ROURKELA",
+        "toll_plaza_id": "TP01",
+        "collections_date": "14-10-2026",
+        "amount_paid": 158420.00,
+        "payment_type": "RTGS",
+        "transaction_id": "HDFC982137402",
+        "bill_month": "Sep 2026",
+        "category": "GENERAL PURPOSE",
+        "source_pdf": "Receipt_416000000110_Sep26.pdf",
+    },
+    {
+        "receipt_no": "RC-TP02-SEP26-01",
+        "account_no": "413001070102",
+        "consumer_no": "413001070102",
+        "consumer_name": "M/S. L & T SAMBALPUR-ROURKELA",
+        "toll_plaza_id": "TP02",
+        "collections_date": "18-10-2026",
+        "amount_paid": 29840.00,
+        "payment_type": "NEFT",
+        "transaction_id": "HDFC982137461",
+        "bill_month": "Sep 2026",
+        "category": "PUBLIC LIGHT",
+        "source_pdf": "Receipt_413001070102_Sep26.pdf",
+    },
+    {
+        "receipt_no": "RC-TP02-SEP26-02",
+        "account_no": "813001070057",
+        "consumer_no": "813001070057",
+        "consumer_name": "M/S. L & T SAMBALPUR-ROURKELA",
+        "toll_plaza_id": "TP02",
+        "collections_date": "18-10-2026",
+        "amount_paid": 26900.00,
+        "payment_type": "NEFT",
+        "transaction_id": "HDFC982137462",
+        "bill_month": "Sep 2026",
+        "category": "PUBLIC LIGHT",
+        "source_pdf": "Receipt_813001070057_Sep26.pdf",
+    },
+    {
+        "receipt_no": "RC-TP03-SEP26-01",
+        "account_no": "813000000281",
+        "consumer_no": "813000000281",
+        "consumer_name": "M/S. L & T SAMBALPUR-ROURKELA",
+        "toll_plaza_id": "TP03",
+        "collections_date": "14-10-2026",
+        "amount_paid": 132800.00,
+        "payment_type": "RTGS",
+        "transaction_id": "HDFC982137990",
+        "bill_month": "Sep 2026",
+        "category": "GENERAL PURPOSE",
+        "source_pdf": "Receipt_813000000281_Sep26.pdf",
+    },
+    {
+        "receipt_no": "RC-TP03-SEP26-02",
+        "account_no": "812001070018",
+        "consumer_no": "812001070018",
+        "consumer_name": "M/S. L & T SAMBALPUR-ROURKELA",
+        "toll_plaza_id": "TP03",
+        "collections_date": "14-10-2026",
+        "amount_paid": 31452.25,
+        "payment_type": "NEFT",
+        "transaction_id": "HDFC982137991",
+        "bill_month": "Sep 2026",
+        "category": "PUBLIC LIGHT",
+        "source_pdf": "Receipt_812001070018_Sep26.pdf",
+    },
+]
+
+
+def get_all_payment_receipts() -> pd.DataFrame:
+    """Fetch payment receipts from public.payment_receipts or session state / authentic defaults."""
+    client = get_supabase_client()
+    if client:
+        try:
+            res = client.table("payment_receipts").select("*").order("created_at", desc=True).execute()
+            if res.data:
+                return pd.DataFrame(res.data)
+        except Exception:
+            pass
+
+    if "saved_payment_receipts" in st.session_state and st.session_state["saved_payment_receipts"]:
+        return pd.DataFrame(list(st.session_state["saved_payment_receipts"].values()))
+
+    return pd.DataFrame(DEFAULT_PAYMENT_RECEIPTS)
+
+
+def save_payment_receipt(receipt_record: dict[str, Any]) -> dict[str, Any]:
+    """Upsert a payment receipt into public.payment_receipts and local session state."""
+    r_no = str(receipt_record.get("receipt_no") or "").strip()
+    if not r_no:
+        return {"status": "ERROR", "error": "Receipt number is required."}
+
+    client = get_supabase_client()
+    cloud_synced = False
+    if client:
+        try:
+            client.table("payment_receipts").upsert(receipt_record, on_conflict="receipt_no").execute()
+            cloud_synced = True
+        except Exception:
+            pass
+
+    if "saved_payment_receipts" not in st.session_state:
+        st.session_state["saved_payment_receipts"] = {
+            r["receipt_no"]: r for r in DEFAULT_PAYMENT_RECEIPTS
+        }
+    st.session_state["saved_payment_receipts"][r_no] = receipt_record
+    return {"status": "SUCCESS", "cloud_synced": cloud_synced, "payload": receipt_record}
+
+
+# ---------------------------------------------------------------------------
 # 4. EXCEPTIONS CRUD (Modify status / Correct value with DB sync)
 # ---------------------------------------------------------------------------
 
@@ -1248,11 +1593,25 @@ def get_unified_billing_kpi_dataset() -> pd.DataFrame:
     - Actual energy bills (public.energy_bills)
     - Provisional / Average energy bills (public.energy_bills_provisional)
     - Master consumer accounts mapping (energy_master.consumer_account)
-    - Payment receipts & clearance statuses
+    - Payment receipts & clearance statuses (public.payment_receipts)
     """
     actual_bills_df = get_all_energy_bills()
     prov_bills_df = get_all_provisional_energy_bills()
+    receipts_df = get_all_payment_receipts()
     consumer_map = get_consumer_mapping_dict()
+
+    # Pre-build payment receipt lookup by (account_no, bill_month) and account_no
+    receipt_lookup: dict[tuple[str, str], float] = {}
+    receipt_ac_total: dict[str, float] = {}
+    if not receipts_df.empty:
+        for r_rec in receipts_df.to_dict(orient="records"):
+            r_ac = str(r_rec.get("account_no") or r_rec.get("consumer_no") or "").strip()
+            r_mo = str(r_rec.get("bill_month") or "").strip()
+            r_amt = _clean_kpi_num(r_rec.get("amount_paid"))
+            if r_ac:
+                key = (r_ac, r_mo)
+                receipt_lookup[key] = receipt_lookup.get(key, 0.0) + r_amt
+                receipt_ac_total[r_ac] = receipt_ac_total.get(r_ac, 0.0) + r_amt
 
     combined_rows = []
 
@@ -1267,7 +1626,7 @@ def get_unified_billing_kpi_dataset() -> pd.DataFrame:
             # Fallback mapping from master
             m = consumer_map.get(ac, {})
 
-            plz = str(m.get("toll_plaza_id") or r.get("Plaza") or r.get("toll_plaza_id") or "TP01").strip().upper()
+            plz = str(m.get("toll_plaza_id") or r.get("Plaza") or r.get("toll_plaza_id") or ("TP03" if ac.startswith("81") else "TP01")).strip().upper()
             b_type = str(m.get("bill_type") or ("HT" if any(k in str(r.get("tariff_category", "")).upper() for k in ["HT", ">= 110", "GPS"]) else "LT")).strip().upper()
             asset_cd = str(m.get("asset_code") or r.get("asset_code") or "—").strip()
             scope = str(m.get("consumer_scope") or "HIGHWAY").strip().upper()
@@ -1293,10 +1652,15 @@ def get_unified_billing_kpi_dataset() -> pd.DataFrame:
             curr_tot = _clean_kpi_num(r.get("current_total") or r.get("Amount") or r.get("Total Amount"))
             tot_pay = _clean_kpi_num(r.get("total_amount_payable") or curr_tot)
 
+            # Check payment receipts first
             paid = _clean_kpi_num(r.get("Paid") or r.get("amount_paid"))
-            # If paid is 0 but marked verified/paid in demo, align
-            if paid == 0.0 and str(r.get("Status", "")).upper() in {"VERIFIED", "PAID"}:
-                paid = tot_pay
+            if paid == 0.0:
+                if (ac, b_month) in receipt_lookup:
+                    paid = receipt_lookup[(ac, b_month)]
+                elif ac in receipt_ac_total and str(r.get("Status", "")).upper() in {"VERIFIED", "PAID"}:
+                    paid = min(tot_pay, receipt_ac_total[ac])
+                elif str(r.get("Status", "")).upper() in {"VERIFIED", "PAID"}:
+                    paid = tot_pay
 
             bal = max(0.0, tot_pay - paid)
             p_stat = "PAID" if bal <= 1.0 and paid > 0 else ("PARTIAL" if paid > 0 else "UNPAID")
@@ -1341,7 +1705,7 @@ def get_unified_billing_kpi_dataset() -> pd.DataFrame:
 
             m = consumer_map.get(ac, {})
 
-            plz = str(m.get("toll_plaza_id") or r.get("toll_plaza_id") or "TP02").strip().upper()
+            plz = str(m.get("toll_plaza_id") or r.get("toll_plaza_id") or ("TP03" if ac.startswith("81") else "TP02")).strip().upper()
             b_type = str(m.get("bill_type") or "HT").strip().upper()
             asset_cd = str(m.get("asset_code") or r.get("asset_code") or "—").strip()
             scope = str(m.get("consumer_scope") or "HIGHWAY").strip().upper()
@@ -1361,6 +1725,9 @@ def get_unified_billing_kpi_dataset() -> pd.DataFrame:
             curr_tot = _clean_kpi_num(r.get("current_total") or r.get("total_amount_payable"))
             tot_pay = curr_tot
             paid = _clean_kpi_num(r.get("amount_paid") or 0.0)
+            if paid == 0.0 and (ac, b_month) in receipt_lookup:
+                paid = receipt_lookup[(ac, b_month)]
+
             bal = max(0.0, tot_pay - paid)
             p_stat = "UNPAID" if paid == 0 else ("PAID" if bal <= 1.0 else "PARTIAL")
 
@@ -1397,21 +1764,32 @@ def get_unified_billing_kpi_dataset() -> pd.DataFrame:
     # 3. Fallback to default realistic dataset if no live bills yet
     if not combined_rows:
         demo_defaults = [
+            # --- TP01 BILLS ---
             {"bill_number": "EB-411001070208-SEP26", "consumer_account_no": "411001070208", "toll_plaza_id": "TP01", "bill_type": "HT", "asset_code": "SR-E-EM-EB-5-200", "consumer_scope": "HIGHWAY", "division_name": "SED", "usage_type": "Street Light", "sanctioned_load_kw": 10.0, "location": "Ainthapalli", "bill_month": "Sep 2026", "bill_basis": "ACTUAL", "is_provisional_or_average": False, "total_billed_kwh": 3672.0, "current_total": 24850.0, "total_amount_payable": 24850.0, "amount_paid": 24850.0, "outstanding_balance": 0.0, "payment_status": "PAID", "bill_present": "GENERATED"},
             {"bill_number": "EB-411001070208-AUG25", "consumer_account_no": "411001070208", "toll_plaza_id": "TP01", "bill_type": "HT", "asset_code": "SR-E-EM-EB-5-200", "consumer_scope": "HIGHWAY", "division_name": "SED", "usage_type": "Street Light", "sanctioned_load_kw": 10.0, "location": "Ainthapalli", "bill_month": "Aug 2025", "bill_basis": "ACTUAL", "is_provisional_or_average": False, "total_billed_kwh": 3510.0, "current_total": 23620.0, "total_amount_payable": 23620.0, "amount_paid": 23620.0, "outstanding_balance": 0.0, "payment_status": "PAID", "bill_present": "GENERATED"},
             {"bill_number": "EB-416000000110-SEP26", "consumer_account_no": "416000000110", "toll_plaza_id": "TP01", "bill_type": "HT", "asset_code": "SR-E-EM-EB-000TP01", "consumer_scope": "TOLL_PLAZA", "division_name": "SEED SAMBALPUR", "usage_type": "General Purpose", "sanctioned_load_kw": 120.0, "location": "TP-01 EB Meter", "bill_month": "Sep 2026", "bill_basis": "ACTUAL", "is_provisional_or_average": False, "total_billed_kwh": 22653.0, "current_total": 158420.0, "total_amount_payable": 158420.0, "amount_paid": 158420.0, "outstanding_balance": 0.0, "payment_status": "PAID", "bill_present": "GENERATED"},
-            {"bill_number": "EB-413001070099-SEP26", "consumer_account_no": "413001070099", "toll_plaza_id": "TP02", "bill_type": "HT", "asset_code": "SR-E-EM-EB-62-600", "consumer_scope": "HIGHWAY", "division_name": "JED", "usage_type": "Street Light", "sanctioned_load_kw": 18.0, "location": "TANGARPALI", "bill_month": "Sep 2026", "bill_basis": "AVERAGE", "is_provisional_or_average": True, "total_billed_kwh": 4820.0, "current_total": 34500.0, "total_amount_payable": 34500.0, "amount_paid": 0.0, "outstanding_balance": 34500.0, "payment_status": "UNPAID", "bill_present": "GENERATED"},
-            {"bill_number": "EB-413001070102-SEP26", "consumer_account_no": "413001070102", "toll_plaza_id": "TP02", "bill_type": "HT", "asset_code": "SR-E-EM-EB-112-800", "consumer_scope": "HIGHWAY", "division_name": "JED JHARSUGUDA", "usage_type": "Street Light", "sanctioned_load_kw": 14.0, "location": "Jharsuguda Bypass", "bill_month": "Sep 2026", "bill_basis": "ACTUAL", "is_provisional_or_average": False, "total_billed_kwh": 4120.0, "current_total": 29840.0, "total_amount_payable": 29840.0, "amount_paid": 29840.0, "outstanding_balance": 0.0, "payment_status": "PAID", "bill_present": "GENERATED"},
-            {"bill_number": "EB-413001070344-AUG25", "consumer_account_no": "413001070344", "toll_plaza_id": "TP02", "bill_type": "HT", "asset_code": "SR-E-EM-EB-95-400", "consumer_scope": "HIGHWAY", "division_name": "JED JHARSUGUDA", "usage_type": "Street Light", "sanctioned_load_kw": 12.0, "location": "Badmal", "bill_month": "Aug 2025", "bill_basis": "PROVISIONAL", "is_provisional_or_average": True, "total_billed_kwh": 3950.0, "current_total": 27400.0, "total_amount_payable": 27400.0, "amount_paid": 15000.0, "outstanding_balance": 12400.0, "payment_status": "PARTIAL", "bill_present": "GENERATED"},
-            {"bill_number": "EB-813001070057-SEP26", "consumer_account_no": "813001070057", "toll_plaza_id": "TP02", "bill_type": "LT", "asset_code": "SR-E-EM-EB-130-000", "consumer_scope": "HIGHWAY", "division_name": "KUTRA", "usage_type": "Public Light", "sanctioned_load_kw": 15.0, "location": "Kutra EB METER", "bill_month": "Sep 2026", "bill_basis": "ACTUAL", "is_provisional_or_average": False, "total_billed_kwh": 3890.0, "current_total": 26900.0, "total_amount_payable": 26900.0, "amount_paid": 26900.0, "outstanding_balance": 0.0, "payment_status": "PAID", "bill_present": "GENERATED"},
             {"bill_number": "EB-416001070082-SEP26", "consumer_account_no": "416001070082", "toll_plaza_id": "TP01", "bill_type": "HT", "asset_code": "SR-E-EM-EB-12-300", "consumer_scope": "HIGHWAY", "division_name": "SEED SAMBALPUR", "usage_type": "Public Light", "sanctioned_load_kw": 10.0, "location": "Rengali", "bill_month": "Sep 2026", "bill_basis": "ACTUAL", "is_provisional_or_average": False, "total_billed_kwh": 2980.0, "current_total": 20450.0, "total_amount_payable": 20450.0, "amount_paid": 20450.0, "outstanding_balance": 0.0, "payment_status": "PAID", "bill_present": "GENERATED"},
             {"bill_number": "EB-416001070084-AUG25", "consumer_account_no": "416001070084", "toll_plaza_id": "TP01", "bill_type": "HT", "asset_code": "SR-E-EM-EB-24-500", "consumer_scope": "HIGHWAY", "division_name": "SEED SAMBALPUR", "usage_type": "Public Light", "sanctioned_load_kw": 10.0, "location": "Lapanga", "bill_month": "Aug 2025", "bill_basis": "ACTUAL", "is_provisional_or_average": False, "total_billed_kwh": 3110.0, "current_total": 21100.0, "total_amount_payable": 21100.0, "amount_paid": 21100.0, "outstanding_balance": 0.0, "payment_status": "PAID", "bill_present": "GENERATED"},
             {"bill_number": "EB-416001070086-AUG25", "consumer_account_no": "416001070086", "toll_plaza_id": "TP01", "bill_type": "HT", "asset_code": "SR-E-EM-EB-36-800", "consumer_scope": "HIGHWAY", "division_name": "SEED SAMBALPUR", "usage_type": "Public Light", "sanctioned_load_kw": 10.0, "location": "Bhojpur", "bill_month": "Aug 2025", "bill_basis": "ACTUAL", "is_provisional_or_average": False, "total_billed_kwh": 2840.0, "current_total": 19500.0, "total_amount_payable": 19500.0, "amount_paid": 0.0, "outstanding_balance": 19500.0, "payment_status": "UNPAID", "bill_present": "GENERATED"},
             {"bill_number": "EB-416001070090-SEP26", "consumer_account_no": "416001070090", "toll_plaza_id": "TP01", "bill_type": "HT", "asset_code": "SR-E-EM-EB-48-200", "consumer_scope": "HIGHWAY", "division_name": "SEED SAMBALPUR", "usage_type": "Public Light", "sanctioned_load_kw": 10.0, "location": "Kuchinda Road", "bill_month": "Sep 2026", "bill_basis": "ACTUAL", "is_provisional_or_average": False, "total_billed_kwh": 3050.0, "current_total": 21300.0, "total_amount_payable": 21300.0, "amount_paid": 21300.0, "outstanding_balance": 0.0, "payment_status": "PAID", "bill_present": "GENERATED"},
+            {"bill_number": "EB-416001111004-SEP26", "consumer_account_no": "416001111004", "toll_plaza_id": "TP01", "bill_type": "LT", "asset_code": "SR-E-EM-EB-24-500-LT", "consumer_scope": "HIGHWAY", "division_name": "SEED SAMBALPUR", "usage_type": "General Purpose", "sanctioned_load_kw": 4.0, "location": "Sambalpur Toll Admin", "bill_month": "Sep 2026", "bill_basis": "ACTUAL", "is_provisional_or_average": False, "total_billed_kwh": 850.0, "current_total": 6200.0, "total_amount_payable": 6200.0, "amount_paid": 6200.0, "outstanding_balance": 0.0, "payment_status": "PAID", "bill_present": "GENERATED"},
+
+            # --- TP02 BILLS ---
+            {"bill_number": "EB-413001070099-SEP26", "consumer_account_no": "413001070099", "toll_plaza_id": "TP02", "bill_type": "HT", "asset_code": "SR-E-EM-EB-62-600", "consumer_scope": "HIGHWAY", "division_name": "JED", "usage_type": "Street Light", "sanctioned_load_kw": 18.0, "location": "TANGARPALI", "bill_month": "Sep 2026", "bill_basis": "AVERAGE", "is_provisional_or_average": True, "total_billed_kwh": 4820.0, "current_total": 34500.0, "total_amount_payable": 34500.0, "amount_paid": 0.0, "outstanding_balance": 34500.0, "payment_status": "UNPAID", "bill_present": "GENERATED"},
+            {"bill_number": "EB-413001070102-SEP26", "consumer_account_no": "413001070102", "toll_plaza_id": "TP02", "bill_type": "HT", "asset_code": "SR-E-EM-EB-112-800", "consumer_scope": "HIGHWAY", "division_name": "JED JHARSUGUDA", "usage_type": "Street Light", "sanctioned_load_kw": 14.0, "location": "Jharsuguda Bypass", "bill_month": "Sep 2026", "bill_basis": "ACTUAL", "is_provisional_or_average": False, "total_billed_kwh": 4120.0, "current_total": 29840.0, "total_amount_payable": 29840.0, "amount_paid": 29840.0, "outstanding_balance": 0.0, "payment_status": "PAID", "bill_present": "GENERATED"},
+            {"bill_number": "EB-413001070344-AUG25", "consumer_account_no": "413001070344", "toll_plaza_id": "TP02", "bill_type": "HT", "asset_code": "SR-E-EM-EB-95-400", "consumer_scope": "HIGHWAY", "division_name": "JED JHARSUGUDA", "usage_type": "Street Light", "sanctioned_load_kw": 12.0, "location": "Badmal", "bill_month": "Aug 2025", "bill_basis": "PROVISIONAL", "is_provisional_or_average": True, "total_billed_kwh": 3950.0, "current_total": 27400.0, "total_amount_payable": 27400.0, "amount_paid": 15000.0, "outstanding_balance": 12400.0, "payment_status": "PARTIAL", "bill_present": "GENERATED"},
+            {"bill_number": "EB-813001070057-SEP26", "consumer_account_no": "813001070057", "toll_plaza_id": "TP02", "bill_type": "LT", "asset_code": "SR-E-EM-EB-130-000", "consumer_scope": "HIGHWAY", "division_name": "KUTRA", "usage_type": "Public Light", "sanctioned_load_kw": 15.0, "location": "Kutra EB METER", "bill_month": "Sep 2026", "bill_basis": "ACTUAL", "is_provisional_or_average": False, "total_billed_kwh": 3890.0, "current_total": 26900.0, "total_amount_payable": 26900.0, "amount_paid": 26900.0, "outstanding_balance": 0.0, "payment_status": "PAID", "bill_present": "GENERATED"},
+
+            # --- TP03 BILLS (ACCURATE & COMPLETE) ---
+            {"bill_number": "EB-813000000281-SEP26", "consumer_account_no": "813000000281", "toll_plaza_id": "TP03", "bill_type": "HT", "asset_code": "SR-E-EM-EB-000TP03", "consumer_scope": "TOLL_PLAZA", "division_name": "SED SUNDARAGADA", "usage_type": "General Purpose", "sanctioned_load_kw": 120.0, "location": "TP-03 EB Meter (Garposh)", "bill_month": "Sep 2026", "bill_basis": "ACTUAL", "is_provisional_or_average": False, "total_billed_kwh": 19450.0, "current_total": 132800.0, "total_amount_payable": 132800.0, "amount_paid": 132800.0, "outstanding_balance": 0.0, "payment_status": "PAID", "bill_present": "GENERATED"},
+            {"bill_number": "812010710261330579", "consumer_account_no": "812001070018", "toll_plaza_id": "TP03", "bill_type": "LT", "asset_code": "SR-E-EM-EB-148-500", "consumer_scope": "HIGHWAY", "division_name": "SED SUNDARAGADA", "usage_type": "Public Light", "sanctioned_load_kw": 28.0, "location": "Bhawanipur / Garposh Corridor", "bill_month": "Sep 2026", "bill_basis": "ACTUAL", "is_provisional_or_average": False, "total_billed_kwh": 4608.0, "current_total": 31757.80, "total_amount_payable": 31828.0, "amount_paid": 31452.25, "outstanding_balance": 0.0, "payment_status": "PAID", "bill_present": "GENERATED"},
+            {"bill_number": "EB-812001070018-AUG25", "consumer_account_no": "812001070018", "toll_plaza_id": "TP03", "bill_type": "LT", "asset_code": "SR-E-EM-EB-148-500", "consumer_scope": "HIGHWAY", "division_name": "SED SUNDARAGADA", "usage_type": "Public Light", "sanctioned_load_kw": 28.0, "location": "Bhawanipur / Garposh Corridor", "bill_month": "Aug 2025", "bill_basis": "ACTUAL", "is_provisional_or_average": False, "total_billed_kwh": 4320.0, "current_total": 29650.0, "total_amount_payable": 29650.0, "amount_paid": 29650.0, "outstanding_balance": 0.0, "payment_status": "PAID", "bill_present": "GENERATED"},
+            {"bill_number": "EB-812001070020-SEP26", "consumer_account_no": "812001070020", "toll_plaza_id": "TP03", "bill_type": "LT", "asset_code": "SR-E-EM-EB-160-200", "consumer_scope": "HIGHWAY", "division_name": "SED SUNDARAGADA", "usage_type": "Public Light", "sanctioned_load_kw": 15.0, "location": "Garposh Toll Approach", "bill_month": "Sep 2026", "bill_basis": "AVERAGE", "is_provisional_or_average": True, "total_billed_kwh": 3200.0, "current_total": 22400.0, "total_amount_payable": 22400.0, "amount_paid": 0.0, "outstanding_balance": 22400.0, "payment_status": "UNPAID", "bill_present": "GENERATED"},
         ]
         combined_rows = demo_defaults
 
     df = pd.DataFrame(combined_rows)
+    return df
     return df
 
 

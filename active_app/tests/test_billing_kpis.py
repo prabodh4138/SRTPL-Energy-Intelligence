@@ -1,12 +1,20 @@
 import pytest
 import pandas as pd
 from unittest.mock import patch, MagicMock
+import streamlit as st
 from core.db_sync import (
     get_unified_billing_kpi_dataset,
     get_missing_bills_kpi,
     get_all_consumer_accounts,
     _clean_kpi_num,
 )
+
+
+@pytest.fixture(autouse=True)
+def clean_session_state():
+    st.session_state.clear()
+    yield
+    st.session_state.clear()
 
 
 def test_clean_kpi_num():
@@ -46,9 +54,14 @@ def test_get_unified_billing_kpi_dataset_columns_and_enrichment():
     for col in required_cols:
         assert col in kpi_df.columns, f"Missing required KPI column: {col}"
 
-    # Verify that plaza IDs are valid
+    # Verify that plaza IDs are valid and all 3 plazas are represented
     plazas = set(kpi_df["toll_plaza_id"].dropna().unique())
-    assert any(p in plazas for p in ["TP01", "TP02", "TP03"])
+    assert {"TP01", "TP02", "TP03"}.issubset(plazas), f"Expected TP01, TP02, and TP03 in plazas, found {plazas}"
+
+    # Verify TP03 specific records exist
+    tp03_records = kpi_df[kpi_df["toll_plaza_id"] == "TP03"]
+    assert not tp03_records.empty, "TP03 bills must be present in the unified KPI dataset"
+    assert any(str(r["consumer_account_no"]).startswith("81") for _, r in tp03_records.iterrows())
 
     # Verify connection types
     b_types = set(kpi_df["bill_type"].dropna().unique())
@@ -107,3 +120,28 @@ def test_payment_status_integrity():
             assert row["outstanding_balance"] <= 1.0
         elif p_stat == "UNPAID":
             assert row["amount_paid"] == 0.0
+
+
+def test_payment_receipts_correlation():
+    from core.db_sync import get_all_payment_receipts
+    rc_df = get_all_payment_receipts()
+    assert not rc_df.empty
+    assert "receipt_no" in rc_df.columns
+    assert "amount_paid" in rc_df.columns
+
+    # Verify TP03 receipt exists
+    tp03_rc = rc_df[rc_df["toll_plaza_id"] == "TP03"]
+    assert not tp03_rc.empty
+    assert any(str(a) == "812001070018" for a in tp03_rc["consumer_no"].dropna())
+
+
+def test_tp03_missing_bills_audit():
+    # Verify that get_missing_bills_kpi audits TP03 accounts when bills are absent
+    empty_bills = pd.DataFrame(columns=["consumer_account_no", "bill_month"])
+    missing_df = get_missing_bills_kpi(empty_bills, target_months=["Oct 2026"])
+    assert not missing_df.empty
+
+    tp03_missing = missing_df[missing_df["toll_plaza_id"] == "TP03"]
+    assert not tp03_missing.empty
+    assert any(str(a) == "813000000281" for a in tp03_missing["consumer_account_no"])
+    assert any(str(a) == "812001070018" for a in tp03_missing["consumer_account_no"])

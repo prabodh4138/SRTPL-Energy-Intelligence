@@ -987,9 +987,19 @@ def get_demo_bills():
                     rows = []
                     for b in res.data:
                         amt = float(b.get("total_amount_payable") or b.get("current_total") or 0.0)
+                        ac_no = str(b.get("consumer_account_no", "")).strip()
+                        plz = "TP01"
+                        if b.get("toll_plaza_id"):
+                            plz = str(b.get("toll_plaza_id")).upper()
+                        elif b.get("plaza"):
+                            plz = str(b.get("plaza")).upper()
+                        elif ac_no.startswith("812") or ac_no.startswith("813000"):
+                            plz = "TP03"
+                        elif ac_no.startswith("413") or ac_no.startswith("813001"):
+                            plz = "TP02"
                         rows.append({
                             "Document ID": str(b.get("bill_number", "")),
-                            "Plaza": "TP01",
+                            "Plaza": plz,
                             "Type": "Electricity Bill",
                             "Period / Date": str(b.get("bill_month", "")),
                             "Discom": "TPWODL",
@@ -1034,7 +1044,8 @@ def get_demo_bills():
             "Amount": 482600.0,
             "Paid": 482600.0,
             "Status": "Paid",
-            "Reference": "BILL-TP01-1042",
+            "Reference": "411001070208",
+            "consumer_account_no": "411001070208",
             "Due Date": "2026-10-15",
             "Meter Rent Count": "34/60",
             "Security Deposit": "36,360.14",
@@ -1060,7 +1071,8 @@ def get_demo_bills():
             "Amount": 526300.0,
             "Paid": 300000.0,
             "Status": "Partial",
-            "Reference": "BILL-TP02-1048",
+            "Reference": "413001070099",
+            "consumer_account_no": "413001070099",
             "Due Date": "2026-10-15",
             "Meter Rent Count": "47/60",
             "Security Deposit": "64,391.05",
@@ -1086,22 +1098,23 @@ def get_demo_bills():
             "Amount": 398500.0,
             "Paid": 0.0,
             "Status": "Unpaid",
-            "Reference": "BILL-TP03-1053",
+            "Reference": "812001070018",
+            "consumer_account_no": "812001070018",
             "Due Date": "2026-10-20",
             "Meter Rent Count": "34/60",
             "Security Deposit": "1,79,770.00",
             "Bill Period": "02/08/2026 - 01/09/2026",
             "Bill Days/Months": "30/1.0000",
-            "Meter Sl. No.": "TWSL12001179",
+            "Meter Sl. No.": "10006888",
             "a. Energy Charges": "45,820.50",
             "Slab Normal - KWH": "5420",
             "Slab Peak - KWH": "2424",
             "Slab Solar - KWH": "4",
             "DPS(Rs.)": "54.17",
             "Tariff Category": "PUBLIC LIGHT",
-            "Division": "JED JHARSUGUDA",
-            "Sub-Division": "SDO-I JHARSUGUDA",
-            "Section": "ESO SAHAPADA",
+            "Division": "SED SUNDARAGADA",
+            "Sub-Division": "SDO SUNDARAGADA",
+            "Section": "ESO NO-I",
         },
         {
             "Document ID": "RC-26-0841",

@@ -539,18 +539,24 @@ INSERT INTO energy_master.asset (asset_id, asset_code, asset_name, plaza_id, sou
 
     -- Additional Corridor EB Meters
     ('AST-EB-04', 'SR-E-EM-EB-5-200', 'Corridor Lighting Meter 05.200 (Ainthapalli)', 'TP01', 'EB', 50.0),
-    ('AST-EB-05', 'SR-E-EM-EB-62-600', 'Corridor Lighting Meter 62.600 (Tangarpali)', 'TP02', 'EB', 50.0)
+    ('AST-EB-05', 'SR-E-EM-EB-62-600', 'Corridor Lighting Meter 62.600 (Tangarpali)', 'TP02', 'EB', 50.0),
+    ('AST-EB-06', 'SR-E-EM-EB-148-500', 'Corridor Lighting Meter 148.500 (Garposh)', 'TP03', 'EB', 50.0),
+    ('AST-EB-07', 'SR-E-EM-EB-000TP03', 'Main EB Substation TP03', 'TP03', 'EB', 500.0),
+    ('AST-EB-08', 'SR-E-EM-EB-160-200', 'Garposh Toll Approach Meter', 'TP03', 'EB', 50.0)
 ON CONFLICT (asset_id) DO UPDATE
 SET asset_code = EXCLUDED.asset_code,
     asset_name = EXCLUDED.asset_name,
     plaza_id = EXCLUDED.plaza_id;
 
--- Seed Energy Consumer Accounts Master Data
+-- Seed Energy Consumer Accounts Master Data (Across All Toll Plazas TP01, TP02, TP03)
 INSERT INTO energy_master.consumer_account (
     consumer_account_no, toll_plaza_id, bill_type, asset_code, consumer_scope, division_name, usage_type, sanctioned_load_kw, location, is_active
 ) VALUES
     ('411001070208', 'TP01', 'HT', 'SR-E-EM-EB-5-200', 'HIGHWAY', 'SED', 'Street Light', 10.0, 'Ainthapalli', true),
     ('413001070099', 'TP02', 'HT', 'SR-E-EM-EB-62-600', 'HIGHWAY', 'JED', 'Street Light', 18.0, 'TANGARPALI', true),
+    ('813000000281', 'TP03', 'HT', 'SR-E-EM-EB-000TP03', 'TOLL_PLAZA', 'SED SUNDARAGADA', 'General Purpose', 120.0, 'TP-03 EB Meter (Garposh)', true),
+    ('812001070018', 'TP03', 'LT', 'SR-E-EM-EB-148-500', 'HIGHWAY', 'SED SUNDARAGADA', 'Public Light', 28.0, 'Bhawanipur / Garposh Corridor', true),
+    ('812001070020', 'TP03', 'LT', 'SR-E-EM-EB-160-200', 'HIGHWAY', 'SED SUNDARAGADA', 'Public Light', 15.0, 'Garposh Toll Approach', true),
     ('416000000110', 'TP01', 'HT', 'SR-E-EM-EB-000TP01', 'TOLL_PLAZA', 'SEED SAMBALPUR', 'General Purpose', 120.0, 'TP-01 EB Meter', true),
     ('813001070057', 'TP02', 'LT', 'SR-E-EM-EB-130-000', 'HIGHWAY', 'KUTRA', 'Public Light', 15.0, 'Kutra EB METER', true),
     ('413001070102', 'TP02', 'HT', 'SR-E-EM-EB-112-800', 'HIGHWAY', 'JED JHARSUGUDA', 'Street Light', 14.0, 'Jharsuguda Bypass', true),
@@ -558,7 +564,8 @@ INSERT INTO energy_master.consumer_account (
     ('416001070082', 'TP01', 'HT', 'SR-E-EM-EB-12-300', 'HIGHWAY', 'SEED SAMBALPUR', 'Public Light', 10.0, 'Rengali', true),
     ('416001070084', 'TP01', 'HT', 'SR-E-EM-EB-24-500', 'HIGHWAY', 'SEED SAMBALPUR', 'Public Light', 10.0, 'Lapanga', true),
     ('416001070086', 'TP01', 'HT', 'SR-E-EM-EB-36-800', 'HIGHWAY', 'SEED SAMBALPUR', 'Public Light', 10.0, 'Bhojpur', true),
-    ('416001070090', 'TP01', 'HT', 'SR-E-EM-EB-48-200', 'HIGHWAY', 'SEED SAMBALPUR', 'Public Light', 10.0, 'Kuchinda Road', true)
+    ('416001070090', 'TP01', 'HT', 'SR-E-EM-EB-48-200', 'HIGHWAY', 'SEED SAMBALPUR', 'Public Light', 10.0, 'Kuchinda Road', true),
+    ('416001111004', 'TP01', 'LT', 'SR-E-EM-EB-24-500-LT', 'HIGHWAY', 'SEED SAMBALPUR', 'General Purpose', 4.0, 'Sambalpur Toll Admin', true)
 ON CONFLICT (consumer_account_no) DO UPDATE
 SET toll_plaza_id = EXCLUDED.toll_plaza_id,
     bill_type = EXCLUDED.bill_type,
@@ -570,6 +577,117 @@ SET toll_plaza_id = EXCLUDED.toll_plaza_id,
     location = EXCLUDED.location,
     is_active = EXCLUDED.is_active,
     updated_at = NOW();
+
+-- Create unified cross-table reconciliation view
+CREATE OR REPLACE VIEW public.v_energy_consumer_reconciliation AS
+WITH bills_actual_agg AS (
+    SELECT 
+        consumer_account_no,
+        COUNT(bill_number) AS actual_bills_count,
+        MAX(bill_month) AS latest_actual_bill_month,
+        SUM(COALESCE(slab_normal_kwh, 0) + COALESCE(slab_peak_kwh, 0) + COALESCE(slab_solar_kwh, 0)) AS actual_billed_kwh,
+        SUM(COALESCE(current_total, 0)) AS actual_billed_amount,
+        SUM(COALESCE(total_amount_payable, 0)) AS actual_amount_payable
+    FROM public.energy_bills
+    GROUP BY consumer_account_no
+),
+bills_prov_agg AS (
+    SELECT 
+        consumer_account_no,
+        COUNT(bill_number) AS prov_bills_count,
+        MAX(bill_month) AS latest_prov_bill_month,
+        SUM(COALESCE(slab_normal_kwh, 0) + COALESCE(slab_peak_kwh, 0) + COALESCE(slab_solar_kwh, 0)) AS prov_billed_kwh,
+        SUM(COALESCE(current_total, 0)) AS prov_billed_amount,
+        SUM(COALESCE(total_amount_payable, 0)) AS prov_amount_payable
+    FROM public.energy_bills_provisional
+    GROUP BY consumer_account_no
+),
+readings_agg AS (
+    SELECT 
+        COALESCE(consumer_number, asset_code) AS account_or_asset,
+        asset_code,
+        COUNT(reading_id) AS total_meter_readings,
+        MAX(reading_datetime) AS latest_reading_datetime,
+        MAX(COALESCE(cumulative_kwh, 0)) AS latest_cumulative_kwh,
+        SUM(COALESCE(interval_kwh, 0)) AS total_meter_interval_kwh,
+        MAX(COALESCE(maximum_demand, 0)) AS max_recorded_demand_kw,
+        AVG(COALESCE(pf, 1.0)) AS avg_recorded_pf
+    FROM energy_readings.eb
+    GROUP BY COALESCE(consumer_number, asset_code), asset_code
+),
+receipts_agg AS (
+    SELECT 
+        COALESCE(account_no, consumer_no) AS account_key,
+        COUNT(receipt_no) AS total_receipts_count,
+        SUM(COALESCE(amount_paid, 0)) AS total_amount_paid,
+        MAX(collections_date) AS latest_payment_date
+    FROM public.payment_receipts
+    GROUP BY COALESCE(account_no, consumer_no)
+)
+SELECT 
+    m.consumer_account_no,
+    m.toll_plaza_id,
+    p.plaza_name,
+    m.bill_type,
+    m.asset_code,
+    a.asset_name,
+    m.consumer_scope,
+    m.division_name,
+    m.usage_type,
+    m.sanctioned_load_kw,
+    m.location,
+    m.is_active,
+
+    -- DISCOM Actual vs. Provisional Bill Counts & Units
+    COALESCE(ba.actual_bills_count, 0) AS actual_bills_count,
+    COALESCE(bp.prov_bills_count, 0) AS provisional_bills_count,
+    (COALESCE(ba.actual_bills_count, 0) + COALESCE(bp.prov_bills_count, 0)) AS total_bills_count,
+    COALESCE(ba.latest_actual_bill_month, bp.latest_prov_bill_month, '—') AS latest_bill_month,
+    COALESCE(ba.actual_billed_kwh, 0.0) AS actual_billed_kwh,
+    COALESCE(bp.prov_billed_kwh, 0.0) AS provisional_billed_kwh,
+    (COALESCE(ba.actual_billed_kwh, 0.0) + COALESCE(bp.prov_billed_kwh, 0.0)) AS discom_billed_kwh,
+
+    -- Invoiced Amounts & Provisional Risk Exposure
+    COALESCE(ba.actual_billed_amount, 0.0) AS actual_billed_amount,
+    COALESCE(bp.prov_billed_amount, 0.0) AS provisional_exposure_amount,
+    (COALESCE(ba.actual_billed_amount, 0.0) + COALESCE(bp.prov_billed_amount, 0.0)) AS discom_billed_amount,
+    (COALESCE(ba.actual_amount_payable, 0.0) + COALESCE(bp.prov_amount_payable, 0.0)) AS discom_amount_payable,
+
+    -- Payment Receipts & Balance Clearance Correlation
+    COALESCE(r.total_receipts_count, 0) AS total_receipts_count,
+    COALESCE(r.total_amount_paid, 0.0) AS total_amount_paid,
+    COALESCE(r.latest_payment_date, '—') AS latest_payment_date,
+    ((COALESCE(ba.actual_amount_payable, 0.0) + COALESCE(bp.prov_amount_payable, 0.0)) - COALESCE(r.total_amount_paid, 0.0)) AS outstanding_balance,
+
+    -- JUNO Physical Meter Telemetry Correlation
+    COALESCE(rd.total_meter_readings, 0) AS total_meter_readings,
+    COALESCE(rd.total_meter_interval_kwh, 0.0) AS juno_meter_kwh,
+    COALESCE(rd.latest_cumulative_kwh, 0.0) AS latest_cumulative_kwh,
+    COALESCE(rd.max_recorded_demand_kw, 0.0) AS max_recorded_demand_kw,
+    COALESCE(rd.avg_recorded_pf, 1.0) AS avg_recorded_pf,
+    rd.latest_reading_datetime,
+
+    -- Automated Reconciliation Variance (Metered kWh vs DISCOM Billed kWh)
+    ((COALESCE(ba.actual_billed_kwh, 0.0) + COALESCE(bp.prov_billed_kwh, 0.0)) - COALESCE(rd.total_meter_interval_kwh, 0.0)) AS kwh_variance,
+    CASE 
+        WHEN (COALESCE(ba.actual_billed_kwh, 0.0) + COALESCE(bp.prov_billed_kwh, 0.0)) > 0 AND COALESCE(rd.total_meter_interval_kwh, 0.0) > 0 THEN
+            ROUND(
+                ABS((COALESCE(ba.actual_billed_kwh, 0.0) + COALESCE(bp.prov_billed_kwh, 0.0)) - COALESCE(rd.total_meter_interval_kwh, 0.0)) 
+                / (COALESCE(ba.actual_billed_kwh, 0.0) + COALESCE(bp.prov_billed_kwh, 0.0)) * 100.0, 
+                2
+            )
+        ELSE 0.0
+    END AS variance_percentage,
+
+    m.created_at,
+    m.updated_at
+FROM energy_master.consumer_account m
+LEFT JOIN energy_master.plaza p ON m.toll_plaza_id = p.plaza_id
+LEFT JOIN energy_master.asset a ON m.asset_code = a.asset_code
+LEFT JOIN bills_actual_agg ba ON m.consumer_account_no = ba.consumer_account_no
+LEFT JOIN bills_prov_agg bp ON m.consumer_account_no = bp.consumer_account_no
+LEFT JOIN receipts_agg r ON m.consumer_account_no = r.account_key
+LEFT JOIN readings_agg rd ON (m.asset_code = rd.asset_code OR m.consumer_account_no = rd.account_or_asset);
 
 -- STEP 15: RELOAD POSTGREST SCHEMA CACHE (Fixes PGRST002)
 NOTIFY pgrst, 'reload schema';

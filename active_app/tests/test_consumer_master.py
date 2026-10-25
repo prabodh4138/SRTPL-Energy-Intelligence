@@ -1,6 +1,7 @@
 import pytest
 import pandas as pd
 from unittest.mock import patch, MagicMock
+import streamlit as st
 from core.db_sync import (
     get_all_consumer_accounts,
     get_consumer_mapping_dict,
@@ -11,6 +12,13 @@ from core.db_sync import (
 )
 
 
+@pytest.fixture(autouse=True)
+def clean_session_state():
+    st.session_state.clear()
+    yield
+    st.session_state.clear()
+
+
 def test_default_consumer_accounts_contain_user_master_rows():
     df = get_all_consumer_accounts()
     assert not df.empty
@@ -19,6 +27,8 @@ def test_default_consumer_accounts_contain_user_master_rows():
     # User specified accounts
     assert "411001070208" in ac_list
     assert "413001070099" in ac_list
+    assert "813000000281" in ac_list
+    assert "812001070018" in ac_list
 
     row_tp01 = df[df["consumer_account_no"] == "411001070208"].iloc[0]
     assert row_tp01["toll_plaza_id"] == "TP01"
@@ -39,6 +49,18 @@ def test_default_consumer_accounts_contain_user_master_rows():
     assert row_tp02["usage_type"] == "Street Light"
     assert float(row_tp02["sanctioned_load_kw"]) == 18.0
     assert row_tp02["location"] == "TANGARPALI"
+
+    row_tp03_main = df[df["consumer_account_no"] == "813000000281"].iloc[0]
+    assert row_tp03_main["toll_plaza_id"] == "TP03"
+    assert row_tp03_main["bill_type"] == "HT"
+    assert row_tp03_main["division_name"] == "SED SUNDARAGADA"
+    assert float(row_tp03_main["sanctioned_load_kw"]) == 120.0
+
+    row_tp03_corridor = df[df["consumer_account_no"] == "812001070018"].iloc[0]
+    assert row_tp03_corridor["toll_plaza_id"] == "TP03"
+    assert row_tp03_corridor["bill_type"] == "LT"
+    assert row_tp03_corridor["division_name"] == "SED SUNDARAGADA"
+    assert float(row_tp03_corridor["sanctioned_load_kw"]) == 28.0
 
 
 def test_consumer_mapping_dict():

@@ -209,13 +209,22 @@ def render():
                     "total_amount_payable": "sum",
                     "amount_paid": "sum",
                     "outstanding_balance": "sum",
+                    "consumer_account_no": "nunique",
                 }).reset_index().rename(columns={
                     "toll_plaza_id": "Plaza",
+                    "consumer_account_no": "Active Connections",
                     "total_billed_kwh": "Billed Units (kWh)",
                     "total_amount_payable": "Invoiced (₹)",
                     "amount_paid": "Paid (₹)",
                     "outstanding_balance": "Outstanding (₹)",
                 })
+                # Add calculated analytical columns
+                plz_chart["Realization %"] = plz_chart.apply(
+                    lambda r: round((r["Paid (₹)"] / max(1.0, r["Invoiced (₹)"])) * 100, 1), axis=1
+                )
+                plz_chart["Avg Cost/kWh (₹)"] = plz_chart.apply(
+                    lambda r: round((r["Invoiced (₹)"] / max(1.0, r["Billed Units (kWh)"])), 2), axis=1
+                )
 
                 ch_c1, ch_c2 = st.columns(2)
                 with ch_c1:
@@ -226,8 +235,31 @@ def render():
                     st.caption("💳 Invoiced vs. Cleared Amount by Toll Plaza (₹)")
                     st.bar_chart(plz_chart.set_index("Plaza")[["Invoiced (₹)", "Paid (₹)"]])
 
-                st.markdown("###### Plaza Financial Summary Table")
+                st.markdown("###### Plaza Financial & Operational Summary Table")
                 st.dataframe(plz_chart, width="stretch", hide_index=True)
+
+                # Strategic Plaza Comparison Insights Box
+                with st.container(border=True):
+                    st.markdown("###### 💡 Cross-Plaza Operational & Risk Observations")
+                    p_cols = st.columns(3)
+                    with p_cols[0]:
+                        tp01_sub = filtered_kpi[filtered_kpi["toll_plaza_id"] == "TP01"]
+                        tp01_kwh = tp01_sub["total_billed_kwh"].sum() if not tp01_sub.empty else 0
+                        tp01_inv = tp01_sub["total_amount_payable"].sum() if not tp01_sub.empty else 0
+                        st.markdown(f"**TP01 (Sambalpur Hub)**")
+                        st.caption(f"• **Billed:** {tp01_kwh:,.0f} kWh (₹{tp01_inv:,.0f})\n• **Key Scope:** Toll Plaza Substation, Ainthapalli, Rengali, Lapanga\n• **Status:** Baseline operations running on HT/LT supplies")
+                    with p_cols[1]:
+                        tp02_sub = filtered_kpi[filtered_kpi["toll_plaza_id"] == "TP02"]
+                        tp02_kwh = tp02_sub["total_billed_kwh"].sum() if not tp02_sub.empty else 0
+                        tp02_inv = tp02_sub["total_amount_payable"].sum() if not tp02_sub.empty else 0
+                        st.markdown(f"**TP02 (Jharsuguda Hub)**")
+                        st.caption(f"• **Billed:** {tp02_kwh:,.0f} kWh (₹{tp02_inv:,.0f})\n• **Key Scope:** Tangarpali, Badmal, Kutra corridor lighting\n• **Status:** Contains provisional/average estimates requiring audit")
+                    with p_cols[2]:
+                        tp03_sub = filtered_kpi[filtered_kpi["toll_plaza_id"] == "TP03"]
+                        tp03_kwh = tp03_sub["total_billed_kwh"].sum() if not tp03_sub.empty else 0
+                        tp03_inv = tp03_sub["total_amount_payable"].sum() if not tp03_sub.empty else 0
+                        st.markdown(f"**TP03 (Garposh Hub)**")
+                        st.caption(f"• **Billed:** {tp03_kwh:,.0f} kWh (₹{tp03_inv:,.0f})\n• **Key Scope:** Main EB Incomer (SED SUNDARAGADA), Bhawanipur & Approach\n• **Status:** Complete metering & prompt rebate realization applied")
 
                 st.divider()
                 st.markdown("##### ⚡ High Tension (HT) vs. Low Tension (LT) Breakdown")
@@ -1689,10 +1721,18 @@ def render():
                 sel_corr_row = corr_df[corr_df["consumer_account_no"].astype(str) == sel_corr_ac].iloc[0].to_dict()
 
                 cr1, cr2, cr3, cr4 = st.columns(4)
-                cr1.metric("DISCOM Billed Units", f"{sel_corr_row.get('discom_billed_kwh', 0):,.0f} kWh")
-                cr2.metric("JUNO Meter Units", f"{sel_corr_row.get('juno_meter_kwh', 0):,.0f} kWh")
-                cr3.metric("Variance", f"{sel_corr_row.get('kwh_variance', 0):+,.0f} kWh ({sel_corr_row.get('variance_percentage', 0):.2f}%)")
-                cr4.metric("Billed Amount", f"₹{sel_corr_row.get('discom_billed_amount', 0):,.2f}")
+                act_kwh = sel_corr_row.get('actual_billed_kwh', 0)
+                prv_kwh = sel_corr_row.get('provisional_billed_kwh', 0)
+                cr1.metric("DISCOM Total Units", f"{sel_corr_row.get('discom_billed_kwh', 0):,.0f} kWh", f"{act_kwh:,.0f} Actual | {prv_kwh:,.0f} Prov")
+                cr2.metric("JUNO Meter Units", f"{sel_corr_row.get('juno_meter_kwh', 0):,.0f} kWh", "Physical Telemetry")
+                cr3.metric("Reconciliation Variance", f"{sel_corr_row.get('kwh_variance', 0):+,.0f} kWh", f"{sel_corr_row.get('variance_percentage', 0):.2f}% diff")
+                cr4.metric("Total Billed Amount", f"₹{sel_corr_row.get('discom_billed_amount', 0):,.2f}", f"Payable: ₹{sel_corr_row.get('discom_amount_payable', sel_corr_row.get('discom_billed_amount', 0)):,.0f}")
+
+                cr5, cr6, cr7, cr8 = st.columns(4)
+                cr5.metric("🟢 Receipts Paid", f"₹{sel_corr_row.get('total_amount_paid', 0):,.2f}", f"Cleared via Bank UTR")
+                cr6.metric("🟡 Outstanding Balance", f"₹{sel_corr_row.get('outstanding_balance', 0):,.2f}", f"Status: {sel_corr_row.get('payment_status', 'UNPAID')}")
+                cr7.metric("🛡️ Provisional Risk", f"₹{sel_corr_row.get('provisional_exposure_amount', 0):,.2f}", f"{sel_corr_row.get('provisional_bills_count', 0)} Prov/Avg Bills")
+                cr8.metric("📅 Last Payment Date", str(sel_corr_row.get('latest_payment_date', '—')), f"{sel_corr_row.get('total_bills_count', 0)} Total Invoices")
 
                 st.markdown(
                     f"""
