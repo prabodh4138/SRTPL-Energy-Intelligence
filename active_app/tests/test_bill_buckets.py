@@ -94,3 +94,40 @@ def test_bucket_segregation_logic():
 
     assert len(dup_rows) == 1
     assert dup_rows[0]["Bill Number"] == "BILL-EXISTS-01"
+
+
+def test_auto_healing_missing_column():
+    """Simulates PostgREST error PGRST204 when bill_issue_date is missing from Supabase schema."""
+    sample_bills = [
+        {"Bill Number": "BILL-TEST-001", "Bill Issue Date": "2026-08-15", "Current Total (o)": "12500"}
+    ]
+
+    with patch("core.db_sync.get_supabase_client") as mock_client:
+        mock_instance = MagicMock()
+        mock_client.return_value = mock_instance
+        mock_table = MagicMock()
+        mock_instance.table.return_value = mock_table
+        
+        # Select for duplicates returns empty
+        mock_table.select.return_value.execute.return_value = MagicMock(data=[])
+
+        call_count = [0]
+        def mock_upsert_side_effect(chunk, on_conflict=None):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                # First call fails with exact error the user encountered
+                raise Exception("{'message': \"Could not find the 'bill_issue_date' column of 'energy_bills' in the schema cache\", 'code': 'PGRST204', 'hint': None, 'details': None}")
+            # Second call (after auto-healing removed bill_issue_date) succeeds
+            # Verify bill_issue_date was indeed stripped
+            assert "bill_issue_date" not in chunk[0]
+            m_res = MagicMock()
+            m_res.execute.return_value = MagicMock(data=[])
+            return m_res
+
+        mock_table.upsert.side_effect = mock_upsert_side_effect
+
+        res = batch_save_energy_bills(sample_bills)
+        assert res["status"] == "SUCCESS"
+        assert res["saved_count"] == 1
+        assert call_count[0] == 2
+

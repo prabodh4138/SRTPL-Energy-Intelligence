@@ -330,25 +330,118 @@ def format_bill_for_db(raw_bill: dict[str, Any], verifier_result: dict[str, Any]
     }
 
 
+import re
+
+_UNAVAILABLE_ENERGY_BILLS_COLUMNS: set[str] = set()
+
+BASE_ENERGY_BILLS_COLUMNS = {
+    "source_filename",
+    "consumer_account_no",
+    "consumer_id",
+    "old_consumer_no",
+    "bill_number",
+    "bill_month",
+    "bill_period",
+    "bill_days",
+    "meter_sl_no",
+    "meter_rent_count",
+    "security_deposit",
+    "tariff_category",
+    "division",
+    "sub_division",
+    "section",
+    "slab_normal_kwh",
+    "slab_peak_kwh",
+    "slab_solar_kwh",
+    "energy_charges",
+    "dps_rs",
+    "current_total",
+    "total_amount_payable",
+    "cal_energy_charges",
+    "diff_energy_charges",
+    "cal_electricity_charges",
+    "diff_electricity_charges",
+    "cal_current_total",
+    "diff_current_total",
+    "verification_status",
+}
+
+
+def _sanitize_bill_dict(record: dict[str, Any]) -> dict[str, Any]:
+    """Removes columns known to be missing in the remote Supabase energy_bills table."""
+    if not _UNAVAILABLE_ENERGY_BILLS_COLUMNS:
+        return dict(record)
+    return {k: v for k, v in record.items() if k not in _UNAVAILABLE_ENERGY_BILLS_COLUMNS}
+
+
+def _extract_missing_column(error_msg: str) -> str | None:
+    """Extracts missing column name from PostgREST PGRST204 error message."""
+    m = re.search(r"Could not find the '([^']+)' column", str(error_msg))
+    if m:
+        return m.group(1).strip()
+    return None
+
+
+def _execute_bill_upsert_with_auto_healing(
+    chunk: list[dict[str, Any]], client
+) -> tuple[bool, str | None, list[dict[str, Any]]]:
+    """
+    Attempts to upsert a chunk of bills into public.energy_bills.
+    If Supabase rejects with PGRST204 (column missing in schema cache),
+    it dynamically detects and removes the missing column(s) from the chunk and retries.
+    Falls back to BASE_ENERGY_BILLS_COLUMNS if multiple columns fail.
+    Returns: (success_bool, error_message_or_None, final_sanitized_chunk)
+    """
+    cleaned_chunk = [_sanitize_bill_dict(rec) for rec in chunk]
+
+    for attempt in range(25):
+        try:
+            client.table("energy_bills").upsert(cleaned_chunk, on_conflict="bill_number").execute()
+            return True, None, cleaned_chunk
+        except Exception as e:
+            err_str = str(e)
+            missing_col = _extract_missing_column(err_str)
+            if missing_col:
+                _UNAVAILABLE_ENERGY_BILLS_COLUMNS.add(missing_col)
+                cleaned_chunk = [{k: v for k, v in rec.items() if k != missing_col} for rec in cleaned_chunk]
+                continue
+
+            # Try plain insert if upsert fails
+            try:
+                client.table("energy_bills").insert(cleaned_chunk).execute()
+                return True, None, cleaned_chunk
+            except Exception as e2:
+                err_str2 = str(e2)
+                missing_col2 = _extract_missing_column(err_str2)
+                if missing_col2:
+                    _UNAVAILABLE_ENERGY_BILLS_COLUMNS.add(missing_col2)
+                    cleaned_chunk = [{k: v for k, v in rec.items() if k != missing_col2} for rec in cleaned_chunk]
+                    continue
+
+                # Fallback: prune strictly to verified base columns
+                if attempt == 0:
+                    cleaned_chunk = [
+                        {k: v for k, v in rec.items() if k in BASE_ENERGY_BILLS_COLUMNS}
+                        for rec in cleaned_chunk
+                    ]
+                    continue
+
+                return False, err_str2, cleaned_chunk
+
+    return False, "Exceeded retry attempts adapting to table columns", cleaned_chunk
+
+
 def save_energy_bill(raw_bill: dict[str, Any], verifier_result: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Saves or upserts an extracted energy bill into public.energy_bills."""
+    """Saves or upserts an extracted energy bill into public.energy_bills with auto-healing schema adaptation."""
     payload = format_bill_for_db(raw_bill, verifier_result)
     client = get_supabase_client()
     cloud_saved = False
     cloud_error = None
 
     if client:
-        try:
-            client.table("energy_bills").upsert(payload, on_conflict="bill_number").execute()
-            cloud_saved = True
-        except Exception as e:
-            cloud_error = str(e)
-            try:
-                client.table("energy_bills").insert(payload).execute()
-                cloud_saved = True
-                cloud_error = None
-            except Exception as e2:
-                cloud_error = str(e2)
+        cloud_saved, cloud_error, cleaned = _execute_bill_upsert_with_auto_healing([payload], client)
+        if cleaned:
+            payload = cleaned[0]
 
     # Cache in session state
     if "saved_energy_bills" not in st.session_state:
@@ -396,6 +489,7 @@ def batch_save_energy_bills(
     Batch saves extracted energy bills into Supabase.
     If prevent_duplicates is True, any bill whose bill_number already exists in Supabase
     or within the batch itself is strictly skipped and returned in skipped_duplicates.
+    Dynamically auto-heals and prunes missing schema columns if table hasn't been migrated.
     """
     formatted_list = [format_bill_for_db(b) for b in bills if b]
     skipped_duplicates = []
@@ -422,19 +516,12 @@ def batch_save_energy_bills(
         chunk_size = 50
         for i in range(0, len(formatted_list), chunk_size):
             chunk = formatted_list[i : i + chunk_size]
-            try:
-                client.table("energy_bills").upsert(chunk, on_conflict="bill_number").execute()
+            ok, err, _ = _execute_bill_upsert_with_auto_healing(chunk, client)
+            if ok:
                 saved_count += len(chunk)
                 cloud_saved = True
-            except Exception as e:
-                cloud_error = str(e)
-                try:
-                    client.table("energy_bills").insert(chunk).execute()
-                    saved_count += len(chunk)
-                    cloud_saved = True
-                    cloud_error = None
-                except Exception as e2:
-                    cloud_error = str(e2)
+            else:
+                cloud_error = err
     else:
         saved_count = len(formatted_list)
 
@@ -463,6 +550,7 @@ def update_energy_bill(
     """
     Updates mismatched or disputed fields of an energy bill in Supabase.
     Recalculates mathematical variances and marks the bill as CORRECTED / MANUALLY_VERIFIED.
+    Auto-heals missing columns in case table hasn't been migrated.
     """
     from datetime import datetime, timezone
     from bill_extractor.verifier import verify_bill_calculations
@@ -499,17 +587,34 @@ def update_energy_bill(
     cloud_updated = False
     cloud_error = None
     if client:
-        try:
-            client.table("energy_bills").update(formatted).eq("bill_number", bill_number).execute()
-            cloud_updated = True
-        except Exception as e:
-            cloud_error = str(e)
+        cleaned_up = _sanitize_bill_dict(formatted)
+        for attempt in range(25):
             try:
-                client.table("energy_bills").upsert(formatted, on_conflict="bill_number").execute()
+                client.table("energy_bills").update(cleaned_up).eq("bill_number", bill_number).execute()
                 cloud_updated = True
                 cloud_error = None
-            except Exception as e2:
-                cloud_error = str(e2)
+                break
+            except Exception as e:
+                err_str = str(e)
+                missing_col = _extract_missing_column(err_str)
+                if missing_col:
+                    _UNAVAILABLE_ENERGY_BILLS_COLUMNS.add(missing_col)
+                    cleaned_up = {k: v for k, v in cleaned_up.items() if k != missing_col}
+                    continue
+                try:
+                    client.table("energy_bills").upsert(cleaned_up, on_conflict="bill_number").execute()
+                    cloud_updated = True
+                    cloud_error = None
+                    break
+                except Exception as e2:
+                    err_str2 = str(e2)
+                    missing_col2 = _extract_missing_column(err_str2)
+                    if missing_col2:
+                        _UNAVAILABLE_ENERGY_BILLS_COLUMNS.add(missing_col2)
+                        cleaned_up = {k: v for k, v in cleaned_up.items() if k != missing_col2}
+                        continue
+                    cloud_error = err_str2
+                    break
 
     if "saved_energy_bills" not in st.session_state:
         st.session_state["saved_energy_bills"] = {}
