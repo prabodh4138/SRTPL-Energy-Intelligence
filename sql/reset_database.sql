@@ -3,7 +3,7 @@
 -- Run this in Supabase SQL Editor to wipe all operational data from the database
 -- ============================================================================
 
--- Truncate all telemetry readings, exceptions, bills, and receipts
+-- 1. Truncate all telemetry readings, exceptions, import files, bills, and receipts
 TRUNCATE TABLE 
     energy_readings.eb,
     energy_readings.dg,
@@ -11,9 +11,10 @@ TRUNCATE TABLE
     energy_readings.transformer,
     energy_readings.ups,
     energy_validation.exception_record,
+    energy_import.import_file,
     public.energy_bills,
     public.payment_receipts
 CASCADE;
 
--- Optional: To also wipe Plazas and Assets (completely empty fresh start):
+-- 2. Optional: To ALSO wipe Toll Plazas and Assets (100% empty master catalog):
 -- TRUNCATE TABLE energy_master.asset, energy_master.plaza CASCADE;

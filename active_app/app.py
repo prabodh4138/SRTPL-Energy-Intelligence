@@ -25,7 +25,8 @@ def run_app():
     st.session_state.setdefault("authenticated", True)
     st.session_state.setdefault("user", "admin@srtpl.com")
     st.session_state.setdefault("role", "SUPER_ADMIN")
-    st.session_state.setdefault("demo_mode_active", True)
+    has_supabase = bool(settings.supabase_url and settings.supabase_key)
+    st.session_state.setdefault("demo_mode_active", not has_supabase)
 
     auth = AuthService()
     if not auth.is_authenticated():

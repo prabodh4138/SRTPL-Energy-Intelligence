@@ -12,12 +12,9 @@ if str(ACTIVE_APP) not in sys.path:
 import streamlit as st
 import pandas as pd
 
-from analytics.eb_phase5_4 import calculate_eb_kpis
-from energy_validation.persistence import NormalizationPersistence
-from import_center.simulation import list_sample_files, run_local_ingestion_simulation
+from import_center.simulation import list_sample_files
 from import_engine.service import ImportService
-from supabase_import.config import load_settings
-from supabase_import.pipeline import ImportPipeline
+from core.live_pipeline import execute_live_juno_ingestion
 
 
 def _save_uploaded(uploaded) -> Path:
@@ -39,8 +36,9 @@ def _safe_unlink(path: Path | None) -> None:
 def render():
     st.title("EB — JUNO Import → Validation → KPI")
     st.caption(
-        "EB-first milestone. Upload the original JUNO CSV without editing it. "
-        "The application preserves the original file, validates readings, excludes exceptions from KPI, and keeps traceability."
+        "Upload raw JUNO EB CSV without modifications. "
+        "Strict Level 1 (SHA-256) and Level 2 (asset_id, datetime) deduplication enforced. "
+        "Clean valid records inject directly into Supabase while exceptions are logged to energy_validation.exception_record."
     )
 
     sample_files = list_sample_files("EB")
@@ -101,7 +99,7 @@ def render():
             _safe_unlink(path)
         return
 
-    st.success("EB JUNO structure detected. Ready for controlled Supabase import.")
+    st.success("EB JUNO structure detected. Ready for controlled ingestion.")
 
     with st.expander("Detected metadata"):
         st.json({
@@ -117,47 +115,48 @@ def render():
     with st.expander("Detected column mapping"):
         st.write(inspection["headers"])
 
-    if st.button("Import EB → Supabase → Validate → Calculate KPI", type="primary", width="stretch"):
-        settings = load_settings()
-        has_supabase = bool(settings.supabase_url and settings.supabase_key)
-        demo_mode = st.session_state.get("demo_mode_active", True)
+    if st.button("🚀 Ingest EB → Supabase → Validate → Calculate KPI", type="primary", width="stretch"):
+        with st.spinner("Processing pipeline: Deduplication → Validation → Supabase Injection → Master KPIs..."):
+            res = execute_live_juno_ingestion(
+                path,
+                expected_type="EB",
+                uploaded_by=st.session_state.get("user", "admin@srtpl.com"),
+            )
 
-        if has_supabase and not demo_mode:
-            try:
-                from supabase import create_client
-                db = create_client(settings.supabase_url, settings.supabase_key)
-                result = ImportPipeline(db, settings, service).run(
-                    str(path), uploaded_by=st.session_state.get("user", "admin@srtpl.com")
-                )
-                if result.get("status") != "IMPORTED":
-                    st.warning(result)
-                    return
-                batch_id = result["import_batch_id"]
-                norm_res = NormalizationPersistence(db, calculation_version="5.4.0").process_batch(batch_id, "EB")
-                kpis = calculate_eb_kpis(db, batch_id, "5.4.0")
+        if res.get("status") == "DUPLICATE_FILE":
+            st.error(res["message"])
+            if is_temp:
+                _safe_unlink(path)
+            return
 
-                st.success(f"EB production pipeline completed. Batch: {batch_id}")
-                st.subheader("EB KPI Results")
-                for row in kpis.get("results", []):
-                    val = row["value"]
-                    st.metric(row["kpi_code"], "NULL" if val is None else f"{float(val):,.4f}", row.get("unit", ""))
-            except Exception as exc:
-                st.error(f"Production database ingestion failed: {exc}")
+        if not res.get("success"):
+            st.error(res.get("message", "Pipeline execution failed."))
+            if is_temp:
+                _safe_unlink(path)
+            return
+
+        if res.get("cloud_injected"):
+            st.success(
+                f"✅ **EB Pipeline Complete!** Clean readings successfully injected into Supabase "
+                f"(`energy_readings.eb`). Linked Asset: `{res['asset_id']}`"
+            )
         else:
-            with st.spinner("Processing local validation rules and KPI calculation..."):
-                sim_res = run_local_ingestion_simulation(path, expected_type="EB")
+            st.info(
+                f"⚡ **EB Pipeline Verified!** Running in local mode (Asset: `{res['asset_id']}`). "
+                "Supabase cloud persistence active when credentials are provided in secrets or .env."
+            )
 
-            st.success("⚡ Ingestion and calculation verified locally (Supabase bypass / demo mode active).")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Batch ID", f"LIVE-{res['sha256'][:8]}")
+        m2.metric("Total Records", f"{res['total_records']:,}")
+        m3.metric("Valid Readings Injected", f"{res['valid_rows']:,}")
+        m4.metric("Exceptions Excluded", f"{res['exception_rows']:,}")
 
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Batch ID", f"LOCAL-{sim_res['sha256'][:8]}")
-            m2.metric("Total Records", f"{sim_res['record_count']:,}")
-            m3.metric("Valid Readings", f"{sim_res['valid_rows']:,}")
-            m4.metric("Exceptions Excluded", f"{sim_res['exception_rows']:,}")
-
-            st.subheader("EB KPI Results")
-            kpi_cols = st.columns(len(sim_res["kpis"]))
-            for idx, kpi in enumerate(sim_res["kpis"]):
+        st.subheader("EB KPI Results")
+        kpis = res.get("kpis", [])
+        if kpis:
+            kpi_cols = st.columns(len(kpis))
+            for idx, kpi in enumerate(kpis):
                 val = kpi["value"]
                 kpi_cols[idx].metric(
                     kpi["kpi_code"],
@@ -165,38 +164,45 @@ def render():
                     kpi.get("unit", ""),
                 )
 
-            if sim_res.get("exception_details"):
-                st.error(f"⚠️ {sim_res['exception_rows']} raw record(s) flagged with validation errors. Offending raw rows below:")
-                exc_table = pd.DataFrame([
-                    {
-                        "Row #": d["row_number"],
-                        "Timestamp": d["timestamp"],
-                        "Rule": d["rule_code"],
-                        "Severity": d["severity"],
-                        "Offending Value": d["offending_value"],
-                        "Expected": d["expected_value"],
-                        "Message": d["message"],
-                    }
-                    for d in sim_res["exception_details"]
-                ])
-                st.dataframe(exc_table, width="stretch", hide_index=True)
-                with st.expander("🔍 Inspect Exact Raw Data of Offending Rows"):
-                    for d in sim_res["exception_details"]:
-                        st.markdown(f"**Row #{d['row_number']}** ({d['timestamp']}) — `{d['rule_code']}`: {d['message']}")
-                        st.json(d["raw_values"])
+        if res.get("exception_details"):
+            st.warning(f"⚠️ {res['exception_rows']} raw record(s) flagged with validation errors and excluded from KPI calculations. Offending rows:")
+            exc_table = pd.DataFrame([
+                {
+                    "Row #": d["row_number"],
+                    "Timestamp": d["timestamp"],
+                    "Rule": d["rule_code"],
+                    "Severity": d["severity"],
+                    "Offending Value": d["offending_value"],
+                    "Expected": d["expected_value"],
+                    "Message": d["message"],
+                }
+                for d in res["exception_details"]
+            ])
+            st.dataframe(exc_table, width="stretch", hide_index=True)
+            with st.expander("🔍 Inspect Exact Raw Data of Offending Rows"):
+                for d in res["exception_details"]:
+                    st.markdown(f"**Row #{d['row_number']}** ({d['timestamp']}) — `{d['rule_code']}`: {d['message']}")
+                    st.json(d["raw_values"])
 
-            st.subheader("Validated Data Preview (First 50 Rows)")
-            st.dataframe(sim_res["preview_df"].head(50), width="stretch", hide_index=True)
+        st.subheader("Validated Data Preview (First 50 Rows)")
+        st.dataframe(res["preview_df"].head(50), width="stretch", hide_index=True)
 
-            with st.expander("Full Traceability & Audit Trail"):
-                st.json({
-                    "batch_id": f"LOCAL-{sim_res['sha256'][:8]}",
-                    "source_type": "EB",
-                    "calculation_version": sim_res["calculation_version"],
-                    "source_reading_count": sim_res["valid_rows"],
-                    "exception_count": sim_res["exception_rows"],
-                    "sha256": sim_res["sha256"],
-                })
+        with st.expander("Full Traceability & Audit Trail"):
+            st.json({
+                "batch_id": f"LIVE-{res['sha256'][:8]}",
+                "source_type": "EB",
+                "asset_id": res["asset_id"],
+                "asset_code": res["asset_code"],
+                "calculation_version": res["calculation_version"],
+                "total_records": res["total_records"],
+                "valid_rows": res["valid_rows"],
+                "exception_rows": res["exception_rows"],
+                "sha256": res["sha256"],
+                "cloud_injected": res.get("cloud_injected", False),
+            })
+
+    if is_temp:
+        _safe_unlink(path)
 
 
 if __name__ == "__main__":

@@ -361,24 +361,40 @@ def remove_all_database_data() -> dict[str, Any]:
     """
     Completely removes / wipes all operational energy data from the database.
     - If Supabase is connected: Truncates/deletes records from all telemetry, bills, and receipt tables.
-    - Resets local offline cache and session data.
+    - Clears in-memory duplicate file hashes.
+    - Resets local offline cache and session data (setting demo_mode_active = False).
     - Leaves tables pristine and ready for live production uploads.
     """
+    try:
+        from core.live_pipeline import clear_local_ingestion_hashes
+        clear_local_ingestion_hashes()
+    except Exception:
+        pass
+
+    try:
+        import streamlit as st
+        st.session_state["demo_mode_active"] = False
+        if "imported_file_hashes" in st.session_state:
+            st.session_state["imported_file_hashes"].clear()
+    except Exception:
+        pass
+
     client = get_supabase_client()
     summary = {
         "status": "SUCCESS",
         "cleared_tables": [
-            "energy_readings.eb / reading_eb",
-            "energy_readings.dg / reading_dg",
-            "energy_readings.solar / reading_solar",
-            "energy_readings.transformer / reading_transformer",
-            "energy_readings.ups / reading_ups",
+            "energy_readings.eb",
+            "energy_readings.dg",
+            "energy_readings.solar",
+            "energy_readings.transformer",
+            "energy_readings.ups",
             "energy_validation.exception_record",
+            "energy_import.import_file",
             "energy_bills",
             "payment_receipts",
         ],
         "cloud_wiped": False,
-        "message": "All operational data, telemetry logs, bills, and receipts have been completely wiped. System is in pristine production state ready for fresh live uploads.",
+        "message": "All operational data, telemetry logs, bills, receipts, and import history have been completely wiped. System is in pristine production state ready for fresh live uploads.",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -388,13 +404,25 @@ def remove_all_database_data() -> dict[str, Any]:
             client.rpc("reset_all_energy_data").execute()
             summary["cloud_wiped"] = True
         except Exception:
-            # 2. Fallback table-by-table delete
-            tables_to_clear = [
-                "reading_eb", "reading_dg", "reading_solar",
-                "reading_transformer", "reading_ups",
-                "energy_bills", "payment_receipts", "exception_record"
+            # 2. Schema-qualified deletes
+            schema_tables = [
+                ("energy_readings", "eb"),
+                ("energy_readings", "dg"),
+                ("energy_readings", "solar"),
+                ("energy_readings", "transformer"),
+                ("energy_readings", "ups"),
+                ("energy_validation", "exception_record"),
+                ("energy_import", "import_file"),
             ]
-            for t in tables_to_clear:
+            for s, t in schema_tables:
+                try:
+                    client.schema(s).table(t).delete().neq("created_at", "1970-01-01").execute()
+                except Exception:
+                    pass
+
+            # 3. Public tables deletes
+            public_tables = ["energy_bills", "payment_receipts"]
+            for t in public_tables:
                 try:
                     client.table(t).delete().neq("created_at", "1970-01-01").execute()
                 except Exception:

@@ -11,25 +11,10 @@ if str(ACTIVE_APP) not in sys.path:
 
 import streamlit as st
 
-from analytics.dg_phase5_3 import calculate_dg_kpis
-from analytics.eb_phase5_4 import calculate_eb_kpis
-from analytics.solar_phase5_5 import calculate_solar_kpis
-from analytics.transformer_phase5_6 import calculate_transformer_kpis
-from analytics.ups_phase5_7 import calculate_ups_kpis
-from energy_validation.persistence import NormalizationPersistence
 from import_center.service import JunoImportService
-from import_center.simulation import list_sample_files, run_local_ingestion_simulation
+from import_center.simulation import list_sample_files
 from import_engine.service import ImportService
-from supabase_import.config import load_settings
-from supabase_import.pipeline import ImportPipeline
-
-KPI_CALCULATORS = {
-    "EB": (calculate_eb_kpis, "5.4.0"),
-    "DG": (calculate_dg_kpis, "5.3.1"),
-    "SOLAR": (calculate_solar_kpis, "5.5.0"),
-    "TRANSFORMER": (calculate_transformer_kpis, "5.6.0"),
-    "UPS": (calculate_ups_kpis, "5.7.0"),
-}
+from core.live_pipeline import execute_live_juno_ingestion
 
 
 def _save_temp(data: bytes, filename: str) -> Path:
@@ -44,7 +29,8 @@ def render():
     st.title("JUNO Import Center — Unified Master Ingestion")
     st.caption(
         "Single ingestion portal supporting all 5 energy sources: EB, DG, Solar, Transformer, and UPS. "
-        "The original file is preserved; duplicate SHA-256 detection is enforced; NULL remains NULL."
+        "Strict Level 1 (SHA-256) and Level 2 (asset_id, datetime) deduplication enforced. "
+        "Clean valid records inject directly into Supabase while exceptions are logged to energy_validation.exception_record."
     )
 
     all_samples = list_sample_files()
@@ -128,81 +114,49 @@ def render():
         st.code(data.decode("utf-8-sig", errors="replace")[:3000])
 
     rtype = inspection["report_type"]
-    if rtype not in KPI_CALCULATORS:
-        st.error(f"Detected report type '{rtype}' is not registered for automated KPI calculation.")
-        if is_temp:
-            temp_path.unlink(missing_ok=True)
-        return
 
-    calc_func, calc_version = KPI_CALCULATORS[rtype]
+    if st.button(f"🚀 Ingest {rtype} → Supabase → Validate Rules → Calculate Master KPIs", type="primary", width="stretch"):
+        with st.spinner(f"Processing unified master pipeline for {rtype}: Deduplication → Validation → Supabase Injection..."):
+            res = execute_live_juno_ingestion(
+                temp_path,
+                expected_type=rtype,
+                uploaded_by=st.session_state.get("user", "admin@srtpl.com"),
+            )
 
-    if st.button(f"🚀 Ingest {rtype} → Validate Rules → Calculate Master KPIs", type="primary", width="stretch"):
-        settings = load_settings()
-        has_supabase = bool(settings.supabase_url and settings.supabase_key)
-        demo_mode = st.session_state.get("demo_mode_active", True)
+        if res.get("status") == "DUPLICATE_FILE":
+            st.error(res["message"])
+            if is_temp:
+                temp_path.unlink(missing_ok=True)
+            return
 
-        if has_supabase and not demo_mode:
-            try:
-                from supabase import create_client
-                db = create_client(settings.supabase_url, settings.supabase_key)
+        if not res.get("success"):
+            st.error(res.get("message", "Master pipeline execution failed."))
+            if is_temp:
+                temp_path.unlink(missing_ok=True)
+            return
 
-                pipeline_result = ImportPipeline(db, settings, import_service).run(
-                    str(temp_path), uploaded_by=st.session_state.get("user", "admin@srtpl.com")
-                )
-
-                if pipeline_result.get("status") == "DUPLICATE_FILE":
-                    st.warning(f"Duplicate file detected: {pipeline_result.get('message')}")
-                    st.json(pipeline_result)
-                    return
-
-                if pipeline_result.get("status") != "IMPORTED":
-                    st.warning(pipeline_result)
-                    return
-
-                batch_id = pipeline_result["import_batch_id"]
-                norm_persistence = NormalizationPersistence(
-                    db, calculation_version=calc_version
-                ).process_batch(batch_id, rtype)
-
-                kpis = calc_func(db, batch_id, calc_version)
-
-                st.success(f"Unified master pipeline completed for {rtype}. Batch: {batch_id}")
-
-                st.subheader("Import Result")
-                st.json({
-                    "status": pipeline_result["status"],
-                    "batch_id": batch_id,
-                    "report_type": rtype,
-                    "rows_imported": pipeline_result["rows"],
-                    "sha256": pipeline_result["sha256"],
-                })
-
-                st.subheader(f"{rtype} Production KPI Results")
-                k_cols = st.columns(len(kpis.get("results", [])))
-                for idx, row in enumerate(kpis.get("results", [])):
-                    val = row["value"]
-                    k_cols[idx].metric(
-                        row["kpi_code"],
-                        "NULL" if val is None else f"{float(val):,.4f}",
-                        row.get("unit", ""),
-                    )
-            except Exception as exc:
-                st.error(f"Unified production pipeline execution failed: {exc}")
+        if res.get("cloud_injected"):
+            st.success(
+                f"✅ **Master Ingestion Complete!** {res['valid_rows']} clean readings injected into Supabase "
+                f"(`energy_readings.{rtype.lower()}`). Linked Asset: `{res['asset_id']}`"
+            )
         else:
-            with st.spinner(f"Executing master {rtype} validation rules and KPI calculation locally..."):
-                sim_res = run_local_ingestion_simulation(temp_path, expected_type=rtype)
+            st.info(
+                f"⚡ **Master Ingestion Verified!** Running in local mode (Asset: `{res['asset_id']}`). "
+                "Supabase cloud persistence active when credentials are provided in secrets or .env."
+            )
 
-            st.success(f"⚡ Ingestion and calculation verified locally for {rtype} (Supabase bypass / demo mode active).")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Batch ID", f"LIVE-{res['sha256'][:8]}")
+        m2.metric("Total Records", f"{res['total_records']:,}")
+        m3.metric("Valid Readings Injected", f"{res['valid_rows']:,}")
+        m4.metric("Exceptions Excluded", f"{res['exception_rows']:,}")
 
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Batch ID", f"LOCAL-{sim_res['sha256'][:8]}")
-            m2.metric("Total Records", f"{sim_res['record_count']:,}")
-            m3.metric("Valid Readings", f"{sim_res['valid_rows']:,}")
-            m4.metric("Exceptions Excluded", f"{sim_res['exception_rows']:,}")
-
-            st.subheader(f"{rtype} KPI Results")
-            kpi_cols = st.columns(min(len(sim_res["kpis"]), 4))
-            for idx, kpi in enumerate(sim_res["kpis"]):
+        st.subheader(f"{rtype} Master KPI Results")
+        kpis = res.get("kpis", [])
+        if kpis:
+            kpi_cols = st.columns(min(len(kpis), 4))
+            for idx, kpi in enumerate(kpis):
                 col = kpi_cols[idx % len(kpi_cols)]
                 val = kpi["value"]
                 col.metric(
@@ -211,38 +165,42 @@ def render():
                     kpi.get("unit", ""),
                 )
 
-            if sim_res.get("exception_details"):
-                st.error(f"⚠️ {sim_res['exception_rows']} raw record(s) flagged with validation errors. Offending raw rows below:")
-                exc_table = pd.DataFrame([
-                    {
-                        "Row #": d["row_number"],
-                        "Timestamp": d["timestamp"],
-                        "Rule": d["rule_code"],
-                        "Severity": d["severity"],
-                        "Offending Value": d["offending_value"],
-                        "Expected": d["expected_value"],
-                        "Message": d["message"],
-                    }
-                    for d in sim_res["exception_details"]
-                ])
-                st.dataframe(exc_table, width="stretch", hide_index=True)
-                with st.expander("🔍 Inspect Exact Raw Data of Offending Rows"):
-                    for d in sim_res["exception_details"]:
-                        st.markdown(f"**Row #{d['row_number']}** ({d['timestamp']}) — `{d['rule_code']}`: {d['message']}")
-                        st.json(d["raw_values"])
+        if res.get("exception_details"):
+            st.warning(f"⚠️ {res['exception_rows']} raw record(s) flagged with validation errors and excluded from KPI calculations. Offending rows:")
+            exc_table = pd.DataFrame([
+                {
+                    "Row #": d["row_number"],
+                    "Timestamp": d["timestamp"],
+                    "Rule": d["rule_code"],
+                    "Severity": d["severity"],
+                    "Offending Value": d["offending_value"],
+                    "Expected": d["expected_value"],
+                    "Message": d["message"],
+                }
+                for d in res["exception_details"]
+            ])
+            st.dataframe(exc_table, width="stretch", hide_index=True)
+            with st.expander("🔍 Inspect Exact Raw Data of Offending Rows"):
+                for d in res["exception_details"]:
+                    st.markdown(f"**Row #{d['row_number']}** ({d['timestamp']}) — `{d['rule_code']}`: {d['message']}")
+                    st.json(d["raw_values"])
 
-            st.subheader("Validated Data Preview (First 50 Rows)")
-            st.dataframe(sim_res["preview_df"].head(50), width="stretch", hide_index=True)
+        st.subheader("Validated Data Preview (First 50 Rows)")
+        st.dataframe(res["preview_df"].head(50), width="stretch", hide_index=True)
 
-            with st.expander("Full Traceability & Audit Trail"):
-                st.json({
-                    "batch_id": f"LOCAL-{sim_res['sha256'][:8]}",
-                    "source_type": rtype,
-                    "calculation_version": sim_res["calculation_version"],
-                    "source_reading_count": sim_res["valid_rows"],
-                    "exception_count": sim_res["exception_rows"],
-                    "sha256": sim_res["sha256"],
-                })
+        with st.expander("Full Traceability & Audit Trail"):
+            st.json({
+                "batch_id": f"LIVE-{res['sha256'][:8]}",
+                "source_type": rtype,
+                "asset_id": res["asset_id"],
+                "asset_code": res["asset_code"],
+                "calculation_version": res["calculation_version"],
+                "total_records": res["total_records"],
+                "valid_rows": res["valid_rows"],
+                "exception_rows": res["exception_rows"],
+                "sha256": res["sha256"],
+                "cloud_injected": res.get("cloud_injected", False),
+            })
 
     if is_temp:
         temp_path.unlink(missing_ok=True)

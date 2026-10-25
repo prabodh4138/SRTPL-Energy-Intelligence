@@ -105,17 +105,27 @@ def render_navigation():
         pass
 
     # Demo Data Toggle Banner
-    demo_active = st.session_state.get("demo_mode_active", True)
+    demo_active = st.session_state.get("demo_mode_active", False)
     if demo_active:
-        st.sidebar.success("🟢 Demo Data Active (Preloaded from 21 CSVs)")
+        st.sidebar.success("🟢 Demo Data Active (Preloaded Samples)")
         if st.sidebar.button("🗑️ Clear Demo Data (Switch to Live)", width="stretch"):
+            from core.supabase_manager import remove_all_database_data
+            remove_all_database_data()
             st.session_state["demo_mode_active"] = False
             st.rerun()
     else:
-        st.sidebar.warning("⚪ Live Database Mode (Empty/Production)")
-        if st.sidebar.button("🔄 Reload Demo Data", width="stretch"):
-            st.session_state["demo_mode_active"] = True
-            st.rerun()
+        st.sidebar.warning("⚪ Live Database Mode (Production)")
+        col_wipe, col_demo = st.sidebar.columns(2)
+        with col_wipe:
+            if st.button("🗑️ Wipe All", width="stretch", help="Wipes all operational telemetry and resets to empty"):
+                from core.supabase_manager import remove_all_database_data
+                remove_all_database_data()
+                st.session_state["demo_mode_active"] = False
+                st.rerun()
+        with col_demo:
+            if st.button("🔄 Samples", width="stretch", help="Load sample demonstration data"):
+                st.session_state["demo_mode_active"] = True
+                st.rerun()
 
     st.sidebar.divider()
     if st.sidebar.button("🚪 Logout", width="stretch"):
