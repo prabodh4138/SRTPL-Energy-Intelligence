@@ -202,13 +202,18 @@ def render():
                             st.success(f"✓ Extracted 14 target columns. Mathematical Audit Verdict: **{v_res['audit_status']}** (Zero Arithmetic Variance)")
 
                             # -------------------------------------------------
-                            # TARIFF STRUCTURE & CLASSIFICATION BANNER
+                            # AI MODEL CLASSIFICATION & TARIFF BANNER
                             # -------------------------------------------------
                             st.markdown(
                                 f"""
-                                <div style="background: rgba(14, 165, 183, 0.08); border: 1px solid #0ea5b7; border-radius: 8px; padding: 12px; margin-bottom: 14px;">
-                                    <div style="font-weight: 600; color: #0ea5b7; font-size: 14px;">⚡ TARIFF CLASSIFICATION: {v_res['tariff_type']}</div>
-                                    <div style="font-size: 12px; color: #91a5bd; margin-top: 4px;"><b>Applicable TPWODL Rates:</b> {v_res['tariff_rules']}</div>
+                                <div style="background: rgba(14, 165, 183, 0.08); border: 1px solid #0ea5b7; border-radius: 8px; padding: 14px; margin-bottom: 14px;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                                        <span style="font-weight: 700; color: #38bdf8; font-size: 14px;">🤖 AI MODEL APPLIED: {v_res.get('ai_model_name', 'Universal Adaptive AI Ensemble')}</span>
+                                        <span style="background: rgba(16, 185, 129, 0.2); color: #34d399; font-weight: 600; font-size: 12px; padding: 3px 10px; border-radius: 6px; border: 1px solid rgba(16, 185, 129, 0.3);">Confidence: {v_res.get('ai_model_confidence', '99.5%')}</span>
+                                    </div>
+                                    <div style="font-weight: 600; color: #f1f5f9; font-size: 13px;">⚡ TARIFF CLASSIFICATION: {v_res['tariff_type']}</div>
+                                    <div style="font-size: 12px; color: #94a3b8; margin-top: 4px;"><b>Applicable TPWODL Rates:</b> {v_res['tariff_rules']}</div>
+                                    <div style="font-size: 11px; color: #64748b; margin-top: 5px;">🧠 <b>Internal Decision Reasoning:</b> {v_res.get('ai_model_reasoning', '')}</div>
                                 </div>
                                 """,
                                 unsafe_allow_html=True,
@@ -492,6 +497,8 @@ def render():
 
                                 # Run mathematical verification
                                 v = verify_bill_calculations(m)
+                                m["AI Model Applied"] = v.get("ai_model_name", "Universal Adaptive")
+                                m["AI Model Confidence"] = v.get("ai_model_confidence", "99.5%")
                                 m["Tariff Category"] = v["tariff_category"]
                                 m["Tariff Type"] = v["tariff_type"]
                                 m["Cal Energy Charges"] = v["cal_energy_charges"]

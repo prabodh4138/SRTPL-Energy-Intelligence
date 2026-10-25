@@ -25,12 +25,13 @@ def extract_md_bill_data(pdf_file, source_name):
         return m.group(1).strip() if m else ""
 
     entry["Consumer A/c No."] = grab(r"Consumer A/c No\.\s*:\s*([\w\-]+)")
-    entry["Consumer ID"] = grab(r"Consumer ID\s*:\s*(\d+)")
-    entry["Bill Number"] = grab(r"Bill Number\s*:\s*(\d+)")
+    entry["Consumer ID"] = grab(r"Consumer ID\s*:\s*([A-Za-z0-9]+)")
+    entry["Bill Number"] = grab(r"Bill Number\s*:\s*([A-Za-z0-9]+)")
     entry["Bill Month"] = grab(r"Bill Month\s*:\s*(\d{4}/\d{2})")
 
-    # ---------- NET PAYABLE AMOUNT AFTER RBT DT ----------
+    # ---------- NET PAYABLE AMOUNT AFTER & BEFORE RBT DT ----------
     entry["Net Payable Amount After Rbt. Dt.(Rs.)"] = ""
+    entry["Net Payable Amount Before Rbt. Dt.(Rs.)"] = ""
 
     for i, line in enumerate(lines):
         if (
@@ -41,15 +42,16 @@ def extract_md_bill_data(pdf_file, source_name):
             for j in range(i + 1, min(i + 4, len(lines))):
                 numbers.extend(
                     re.findall(
-                        r"\b\d{1,3}(?:,\d{3})*\.\d{2}\b",
+                        r"[-+]?\d[\d,]*\.\d{2}",
                         lines[j]
                     )
                 )
             if len(numbers) >= 2:
+                entry["Net Payable Amount Before Rbt. Dt.(Rs.)"] = numbers[0].replace(",", "")
                 entry["Net Payable Amount After Rbt. Dt.(Rs.)"] = numbers[1].replace(",", "")
             break
 
-    # ---------- MD-KW (CURRENT READING) ----------
+    # ---------- MD-KW (CURRENT READING & BILLABLE FALLBACK) ----------
     entry["MD-KW"] = ""
 
     for line in lines:
@@ -59,7 +61,16 @@ def extract_md_bill_data(pdf_file, source_name):
                 entry["MD-KW"] = nums[1]
             break
 
-    # ---------- MD-KVA (CURRENT READING) ----------
+    if not entry["MD-KW"]:
+        m_bkw = re.search(r"Billable Demand-KW\s*:\s*([\d\.]+)", text)
+        if m_bkw:
+            entry["MD-KW"] = m_bkw.group(1).strip()
+        else:
+            m_ckw = re.search(r"Contract Demand\s*:\s*([\d\.]+)\s*KW", text, re.IGNORECASE)
+            if m_ckw:
+                entry["MD-KW"] = m_ckw.group(1).strip()
+
+    # ---------- MD-KVA (CURRENT READING & BILLABLE FALLBACK) ----------
     entry["MD-KVA"] = ""
 
     for line in lines:
@@ -68,6 +79,15 @@ def extract_md_bill_data(pdf_file, source_name):
             if len(nums) >= 2:
                 entry["MD-KVA"] = nums[1]
             break
+
+    if not entry["MD-KVA"]:
+        m_bkva = re.search(r"Billable Demand-KVA\s*:\s*([\d\.]+)", text)
+        if m_bkva:
+            entry["MD-KVA"] = m_bkva.group(1).strip()
+        else:
+            m_ckva = re.search(r"Contract Demand\s*:\s*([\d\.]+)\s*KVA", text, re.IGNORECASE)
+            if m_ckva:
+                entry["MD-KVA"] = m_ckva.group(1).strip()
 
     # ---------- SOURCE ----------
     entry["Source PDF"] = source_name

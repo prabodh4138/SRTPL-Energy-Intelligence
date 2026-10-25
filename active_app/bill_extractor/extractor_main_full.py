@@ -1,5 +1,6 @@
 import pdfplumber
 import re
+from bill_extractor.ai_model_router import classify_bill_format, compute_derived_sbm_slabs
 
 
 def extract_clean_number(pattern, text_blob, group_num=1, flags=0):
@@ -41,9 +42,9 @@ def extract_energy_bill_full(pdf_file, source_name):
     entry["Rebate Date"] = extract_clean_number(r"Rebate Date\s*:\s*(\d{2}/\d{2}/\d{4})", text)
     entry["Due Date"] = extract_clean_number(r"Due Date\s*:\s*(\d{2}/\d{2}/\d{4})", text)
     entry["Consumer A/c No."] = extract_clean_number(r"Consumer A/c No\.\s*:\s*([\w\-]+)", text)
-    entry["Consumer ID"] = extract_clean_number(r"Consumer ID\s*:\s*(\d+)", text)
-    entry["Old Consumer No."] = extract_clean_number(r"Old Consumer No\.\s*:\s*([\w\-]*)", text)
-    entry["Bill Number"] = extract_clean_number(r"Bill Number\s*:\s*(\d+)", text)
+    entry["Consumer ID"] = extract_clean_number(r"Consumer ID\s*:\s*([A-Za-z0-9]+)", text)
+    entry["Old Consumer No."] = extract_clean_number(r"Old Consumer No\.\s*:\s*([\w\-/]+)", text)
+    entry["Bill Number"] = extract_clean_number(r"Bill Number\s*:\s*([A-Za-z0-9]+)", text)
     entry["Bill Issue Date"] = extract_clean_number(r"Bill Issue Date\s*:\s*(\d{2}/\d{2}/\d{4})", text)
     
     raw_basis = extract_clean_number(r"Bill Basis\s*:\s*([A-Za-z]+)", text)
@@ -112,9 +113,9 @@ def extract_energy_bill_full(pdf_file, source_name):
     # a. Energy Charges
     entry["a. Energy Charges"] = extract_clean_number(r"a\.\s*Energy Charges\s*[^\d]*([\d,]+\.?\d*)", table_text)
 
-    # Dynamic Slab Extraction (handles GPS tiered slabs, TOD Normal/Peak/Solar, and Single Flat Slabs)
+    # Dynamic Slab Extraction (handles GPS tiered slabs, TOD Normal/Peak/Solar, HT Decimal Slabs, and Single Flat Slabs)
     slab_matches = re.findall(
-        r"Slab\s+([A-Za-z0-9\s]+?)\s*[-:]?\s*(?:KWH|KVAH)\s*(\d+)@\s*([\d\.]+)\s*([\d,\.]+)",
+        r"Slab\s+([A-Za-z0-9\s]+?)\s*[-:]?\s*(?:KWH|KVAH)\s*([\d\.]+)@\s*([\d\.]+)\s*([\d,\.]+)",
         table_text
     )
     has_gps_tiers = False
@@ -142,7 +143,29 @@ def extract_energy_bill_full(pdf_file, source_name):
             entry["Slab Solar Rate"] = r_str
             entry["Slab Solar Amount"] = a_str
 
-    if has_gps_tiers:
+    # Fallback for LT SBM Bills where no explicit Slab breakdown is printed in the table
+    if not slab_matches:
+        m_meter = re.search(r"(?:KWH|KVAH)\s+[\d,\.]+\s+[\d,\.]+\s+([\d,\.]+)\s+[\d,\.]+\s+([\d,\.]+)", text)
+        if m_meter:
+            tot_units_str = m_meter.group(2).replace(",", "").strip()
+            entry["Total Billed Units"] = tot_units_str
+            try:
+                tot_units = float(tot_units_str)
+                derived_slabs, _ = compute_derived_sbm_slabs(tot_units)
+                for d_s in derived_slabs:
+                    s_name = d_s["name"]
+                    entry[f"Slab {s_name} - KWH"] = str(d_s["units"])
+                    entry[f"Slab {s_name} Rate"] = str(d_s["rate"])
+                    entry[f"Slab {s_name} Amount"] = str(d_s["amount"])
+                    if s_name in ["2", "3"]:
+                        has_gps_tiers = True
+            except ValueError:
+                pass
+
+    cat_upper = entry.get("Tariff Category", "").upper()
+    if ">= 110 KVA" in cat_upper or "HT" in cat_upper or ("110 KVA" in cat_upper and "<" not in cat_upper):
+        entry["Tariff Type"] = "HT General Purpose >= 110 kVA (TOD Tariff)"
+    elif has_gps_tiers:
         entry["Tariff Type"] = "GPS (General Purpose < 110 kVA Tiered Slabs)"
         # Maintain backward compatibility with 14 target columns
         if not entry.get("Slab Normal - KWH") and entry.get("Slab 1 - KWH"):
@@ -151,8 +174,6 @@ def extract_energy_bill_full(pdf_file, source_name):
             entry["Slab Peak - KWH"] = entry["Slab 2 - KWH"]
         if not entry.get("Slab Solar - KWH") and entry.get("Slab 3 - KWH"):
             entry["Slab Solar - KWH"] = entry["Slab 3 - KWH"]
-    elif "110 KVA" in entry.get("Tariff Category", ""):
-        entry["Tariff Type"] = "HT General Purpose >= 110 kVA (TOD Tariff)"
     else:
         entry["Tariff Type"] = "Public Lighting / Commercial (TOD / Flat)"
         if not entry.get("Slab Normal - KWH") and entry.get("Slab 1 - KWH"):
@@ -197,8 +218,11 @@ def extract_energy_bill_full(pdf_file, source_name):
         r"i\.\s*Electricity Charge\s*[^\d]*(\d[\d,\.]*)", table_text
     )
     entry["Electricity Duty (j)"] = extract_clean_number(
-        r"j\.\s*Electricity Duty\s*\(\d+%\)\s*[^\d]*(\d[\d,\.]*)", table_text
+        r"j\.\s*Electricity Duty\s*(?:\(\d+%\))?\s*[^\d]*(\d[\d,\.]*)", table_text
     )
+    m_ed_pct = re.search(r"j\.\s*Electricity Duty\s*\((\d+)%\)", table_text)
+    entry["Electricity Duty Rate"] = f"{m_ed_pct.group(1)}%" if m_ed_pct else ""
+
     entry["Meter Rent (k)"] = extract_clean_number(
         r"k\.\s*Meter Rent\s*[^\d]*(\d[\d,\.]*)", table_text
     )
@@ -215,6 +239,15 @@ def extract_energy_bill_full(pdf_file, source_name):
         table_text,
         flags=re.IGNORECASE | re.DOTALL
     )
+    if not entry.get("Net Payable Amount Before Rbt. Dt.(Rs.)"):
+        for i, line in enumerate(lines):
+            if re.search(r"Before\s*Rbt\.?\s*Dt", line, re.IGNORECASE) and re.search(r"After\s*Rbt\.?\s*Dt", line, re.IGNORECASE):
+                for j in range(i + 1, min(i + 4, len(lines))):
+                    nums = re.findall(r"[-+]?\d[\d,]*\.\d{2}", lines[j])
+                    if len(nums) >= 2:
+                        entry["Net Payable Amount Before Rbt. Dt.(Rs.)"] = nums[0].replace(",", "")
+                        break
+                break
 
     # Rebate
     rebate_match = re.search(
@@ -224,6 +257,13 @@ def extract_energy_bill_full(pdf_file, source_name):
     entry["Rebate Allowable"] = (
         rebate_match.group(1).replace(",", "").strip() if rebate_match else ""
     )
+
+    # AI Model Router Classification
+    ai_meta = classify_bill_format(text)
+    entry["AI Model Applied"] = ai_meta["model_name"]
+    entry["AI Model ID"] = ai_meta["model_id"]
+    entry["AI Model Confidence"] = ai_meta["confidence_pct"]
+    entry["AI Model Reasoning"] = ai_meta["reasoning"]
 
     entry["raw_text"] = text
     entry["Source PDF"] = source_name
