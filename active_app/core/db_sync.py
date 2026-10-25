@@ -288,6 +288,7 @@ def format_bill_for_db(raw_bill: dict[str, Any], verifier_result: dict[str, Any]
         "bill_period": str(raw_bill.get("Bill Period") or raw_bill.get("bill_period") or ""),
         "bill_days": str(raw_bill.get("Bill Days/Months") or raw_bill.get("bill_days") or ""),
         "bill_basis": str(raw_bill.get("Bill Basis") or raw_bill.get("bill_basis") or "ACTUAL").strip().upper(),
+        "audit_flag": str(raw_bill.get("Audit Flag") or raw_bill.get("audit_flag") or ""),
         "bill_issue_date": str(raw_bill.get("Bill Issue Date") or raw_bill.get("bill_issue_date") or ""),
         "due_date": str(raw_bill.get("Due Date") or raw_bill.get("due_date") or ""),
         "rebate_date": str(raw_bill.get("Rebate Date") or raw_bill.get("rebate_date") or ""),
@@ -666,6 +667,234 @@ def delete_energy_bill(bill_number: str) -> dict[str, Any]:
     st.session_state["deleted_bills"].add(bill_number)
 
     return {"status": "DELETED", "cloud_synced": cloud_deleted, "bill_number": bill_number}
+
+
+# ---------------------------------------------------------------------------
+# 3B. PROVISIONAL & AVERAGE BILLS (Isolated Audit Table: energy_bills_provisional)
+# ---------------------------------------------------------------------------
+
+_UNAVAILABLE_PROVISIONAL_BILLS_COLUMNS: set[str] = set()
+
+BASE_PROVISIONAL_BILLS_COLUMNS = set(BASE_ENERGY_BILLS_COLUMNS) | {
+    "bill_basis",
+    "audit_flag",
+}
+
+
+def _sanitize_provisional_bill_dict(record: dict[str, Any]) -> dict[str, Any]:
+    """Removes columns known to be missing in the remote Supabase energy_bills_provisional table."""
+    if not _UNAVAILABLE_PROVISIONAL_BILLS_COLUMNS:
+        return dict(record)
+    return {k: v for k, v in record.items() if k not in _UNAVAILABLE_PROVISIONAL_BILLS_COLUMNS}
+
+
+def _execute_provisional_bill_upsert_with_auto_healing(
+    chunk: list[dict[str, Any]], client
+) -> tuple[bool, str | None, list[dict[str, Any]]]:
+    """
+    Attempts to upsert a chunk of provisional bills into public.energy_bills_provisional.
+    If Supabase rejects with PGRST204 (column missing in schema cache),
+    it dynamically detects and removes the missing column(s) from the chunk and retries.
+    Falls back to BASE_PROVISIONAL_BILLS_COLUMNS if multiple columns fail.
+    """
+    cleaned_chunk = [_sanitize_provisional_bill_dict(rec) for rec in chunk]
+
+    for attempt in range(25):
+        try:
+            client.table("energy_bills_provisional").upsert(cleaned_chunk, on_conflict="bill_number").execute()
+            return True, None, cleaned_chunk
+        except Exception as e:
+            err_str = str(e)
+            missing_col = _extract_missing_column(err_str)
+            if missing_col:
+                _UNAVAILABLE_PROVISIONAL_BILLS_COLUMNS.add(missing_col)
+                cleaned_chunk = [{k: v for k, v in rec.items() if k != missing_col} for rec in cleaned_chunk]
+                continue
+
+            # Try plain insert if upsert fails
+            try:
+                client.table("energy_bills_provisional").insert(cleaned_chunk).execute()
+                return True, None, cleaned_chunk
+            except Exception as e2:
+                err_str2 = str(e2)
+                missing_col2 = _extract_missing_column(err_str2)
+                if missing_col2:
+                    _UNAVAILABLE_PROVISIONAL_BILLS_COLUMNS.add(missing_col2)
+                    cleaned_chunk = [{k: v for k, v in rec.items() if k != missing_col2} for rec in cleaned_chunk]
+                    continue
+
+                # Fallback: prune strictly to verified base columns
+                if attempt == 0:
+                    cleaned_chunk = [
+                        {k: v for k, v in rec.items() if k in BASE_PROVISIONAL_BILLS_COLUMNS}
+                        for rec in cleaned_chunk
+                    ]
+                    continue
+
+                return False, err_str2, cleaned_chunk
+
+    return False, "Exceeded retry attempts adapting to table columns", cleaned_chunk
+
+
+def save_provisional_energy_bill(
+    raw_bill: dict[str, Any], verifier_result: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Saves or upserts an extracted provisional/average energy bill into public.energy_bills_provisional."""
+    payload = format_bill_for_db(raw_bill, verifier_result)
+    payload["verification_status"] = "PROVISIONAL_AVERAGE_AUDIT"
+    payload["audit_flag"] = str(raw_bill.get("Audit Flag") or f"DISCOM {payload.get('bill_basis', 'AVERAGE')} Basis (Not Actual Reading)")
+
+    client = get_supabase_client()
+    cloud_saved = False
+    cloud_error = None
+
+    if client:
+        cloud_saved, cloud_error, cleaned = _execute_provisional_bill_upsert_with_auto_healing([payload], client)
+        if cleaned:
+            payload = cleaned[0]
+
+    # Cache in session state
+    if "saved_provisional_bills" not in st.session_state:
+        st.session_state["saved_provisional_bills"] = {}
+    if payload.get("bill_number"):
+        st.session_state["saved_provisional_bills"][payload["bill_number"]] = payload
+
+    return {
+        "status": "SUCCESS" if cloud_saved or not client else "ERROR",
+        "cloud_saved": cloud_saved,
+        "cloud_error": cloud_error,
+        "bill_number": payload.get("bill_number"),
+        "payload": payload,
+    }
+
+
+def batch_save_provisional_energy_bills(
+    bills: list[dict[str, Any]],
+    prevent_duplicates: bool = False,
+) -> dict[str, Any]:
+    """
+    Batch saves extracted provisional/average energy bills into public.energy_bills_provisional.
+    Completely isolated from actual energy bills and KPIs.
+    """
+    formatted_list = []
+    for b in bills:
+        if not b:
+            continue
+        p = format_bill_for_db(b)
+        p["verification_status"] = "PROVISIONAL_AVERAGE_AUDIT"
+        p["audit_flag"] = str(b.get("Audit Flag") or f"DISCOM {p.get('bill_basis', 'AVERAGE')} Basis (Not Actual Reading)")
+        formatted_list.append(p)
+
+    skipped_duplicates = []
+    if prevent_duplicates:
+        existing = get_existing_provisional_bill_numbers()
+        deduped = []
+        for b in formatted_list:
+            bn = str(b.get("bill_number") or "").strip()
+            if bn and bn in existing:
+                skipped_duplicates.append(bn)
+            else:
+                deduped.append(b)
+                if bn:
+                    existing[bn] = b.get("bill_basis", "AVERAGE")
+        formatted_list = deduped
+
+    client = get_supabase_client()
+    saved_count = 0
+    cloud_saved = False
+    cloud_error = None
+
+    if client and formatted_list:
+        chunk_size = 50
+        for i in range(0, len(formatted_list), chunk_size):
+            chunk = formatted_list[i : i + chunk_size]
+            ok, err, _ = _execute_provisional_bill_upsert_with_auto_healing(chunk, client)
+            if ok:
+                saved_count += len(chunk)
+                cloud_saved = True
+            else:
+                cloud_error = err
+    else:
+        saved_count = len(formatted_list)
+
+    if "saved_provisional_bills" not in st.session_state:
+        st.session_state["saved_provisional_bills"] = {}
+    for p in formatted_list:
+        if p.get("bill_number"):
+            st.session_state["saved_provisional_bills"][p["bill_number"]] = p
+
+    return {
+        "status": "SUCCESS" if (cloud_saved or not client) else "ERROR",
+        "saved_count": saved_count,
+        "skipped_count": len(skipped_duplicates),
+        "skipped_duplicates": skipped_duplicates,
+        "cloud_saved": cloud_saved,
+        "cloud_error": cloud_error,
+    }
+
+
+def get_existing_provisional_bill_numbers() -> dict[str, str]:
+    """
+    Returns a dict mapping bill_number -> bill_basis for bills present in
+    public.energy_bills_provisional (or local session cache).
+    E.g. {"813090525000020": "AVERAGE", "813040525000069": "PROVISIONAL"}
+    """
+    prov_map: dict[str, str] = {}
+    client = get_supabase_client()
+    if client:
+        try:
+            res = client.table("energy_bills_provisional").select("bill_number, bill_basis").execute()
+            if res and res.data:
+                for row in res.data:
+                    bn = row.get("bill_number")
+                    basis = row.get("bill_basis") or "AVERAGE"
+                    if bn:
+                        prov_map[str(bn).strip()] = str(basis).strip().upper()
+        except Exception:
+            pass
+
+    if "saved_provisional_bills" in st.session_state and st.session_state["saved_provisional_bills"]:
+        for bn, rec in st.session_state["saved_provisional_bills"].items():
+            if bn:
+                prov_map[str(bn).strip()] = str(rec.get("bill_basis", "AVERAGE")).strip().upper()
+
+    return prov_map
+
+
+def get_all_provisional_energy_bills() -> pd.DataFrame:
+    """Fetch provisional and average bills from public.energy_bills_provisional or local session state."""
+    client = get_supabase_client()
+    if client:
+        try:
+            res = client.table("energy_bills_provisional").select("*").order("created_at", desc=True).execute()
+            if res.data:
+                return pd.DataFrame(res.data)
+        except Exception:
+            pass
+
+    if "saved_provisional_bills" in st.session_state and st.session_state["saved_provisional_bills"]:
+        return pd.DataFrame(list(st.session_state["saved_provisional_bills"].values()))
+
+    return pd.DataFrame()
+
+
+def delete_provisional_energy_bill(bill_number: str) -> dict[str, Any]:
+    """Delete a provisional bill from public.energy_bills_provisional and local state."""
+    target_no = bill_number.strip()
+    client = get_supabase_client()
+    cloud_deleted = False
+
+    if client:
+        try:
+            client.table("energy_bills_provisional").delete().eq("bill_number", target_no).execute()
+            cloud_deleted = True
+        except Exception:
+            pass
+
+    if "saved_provisional_bills" in st.session_state:
+        st.session_state["saved_provisional_bills"].pop(target_no, None)
+
+    return {"status": "DELETED", "cloud_deleted": cloud_deleted, "bill_number": target_no}
 
 
 # ---------------------------------------------------------------------------

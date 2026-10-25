@@ -23,6 +23,11 @@ def mock_columns(spec, *args, **kwargs):
     return cols
 
 
+def mock_tabs(spec, *args, **kwargs):
+    count = spec if isinstance(spec, int) else len(spec)
+    return [mock.MagicMock() for _ in range(count)]
+
+
 def test_bills_receipts_render():
     with mock.patch("streamlit.markdown"), \
          mock.patch("streamlit.title"), \
@@ -30,7 +35,7 @@ def test_bills_receipts_render():
          mock.patch("streamlit.metric"), \
          mock.patch("streamlit.divider"), \
          mock.patch("streamlit.columns", side_effect=mock_columns), \
-         mock.patch("streamlit.tabs", return_value=[mock.MagicMock() for _ in range(4)]), \
+         mock.patch("streamlit.tabs", side_effect=mock_tabs), \
          mock.patch("streamlit.selectbox", side_effect=mock_selectbox), \
          mock.patch("streamlit.radio", return_value="⚡ Single Document Inspection (Live Preview)"), \
          mock.patch("streamlit.button", return_value=False), \

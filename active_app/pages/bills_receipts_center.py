@@ -24,6 +24,11 @@ from core.db_sync import (
     get_all_energy_bills,
     delete_energy_bill,
     get_existing_bill_numbers,
+    save_provisional_energy_bill,
+    batch_save_provisional_energy_bills,
+    get_existing_provisional_bill_numbers,
+    get_all_provisional_energy_bills,
+    delete_provisional_energy_bill,
 )
 
 SAMPLE_DIR = "source_data/user_uploaded_bills/extractor"
@@ -344,12 +349,33 @@ def render():
 
                             col_sb_save, col_sb_dl = st.columns([1.2, 1])
                             with col_sb_save:
-                                if st.button("💾 Save Bill to Supabase (public.energy_bills)", type="primary", width="stretch", key="btn_save_single_bill"):
-                                    save_res = save_energy_bill(bill_export, v_res)
-                                    if save_res["status"] == "SUCCESS":
-                                        st.success(f"✅ Bill **{save_res['bill_number']}** saved successfully to Supabase (`public.energy_bills`)!")
-                                    else:
-                                        st.error(f"Failed to save bill to Supabase: {save_res.get('cloud_error')}")
+                                is_single_prov_or_avg = any(
+                                    k in str(bill_export.get("Bill Basis", "")).upper()
+                                    for k in ["PROV", "AVG", "AVERAGE", "DEFECT", "ESTIMAT"]
+                                )
+                                if is_single_prov_or_avg:
+                                    st.markdown(
+                                        """
+                                        <div style="background: rgba(245, 158, 11, 0.12); border-left: 4px solid #f59e0b; border-radius: 6px; padding: 10px; margin-bottom: 8px;">
+                                            <div style="font-weight: 600; color: #fbbf24; font-size: 13px;">⚠️ Non-Actual Bill Detected (Bill Basis: AVERAGE / PROVISIONAL)</div>
+                                            <div style="font-size: 11px; color: #94a3b8; margin-top: 3px;">Maintained separately in <code>public.energy_bills_provisional</code> for audit hints. Excluded from actual energy data and KPIs.</div>
+                                        </div>
+                                        """,
+                                        unsafe_allow_html=True,
+                                    )
+                                    if st.button("💾 Archive to Audit Table (public.energy_bills_provisional)", type="primary", width="stretch", key="btn_save_single_prov_bill"):
+                                        save_prov_res = save_provisional_energy_bill(bill_export, v_res)
+                                        if save_prov_res["status"] == "SUCCESS":
+                                            st.success(f"✅ Bill **{save_prov_res['bill_number']}** archived in Supabase (`public.energy_bills_provisional`)! Isolated from KPIs.")
+                                        else:
+                                            st.error(f"Failed to archive provisional bill: {save_prov_res.get('cloud_error')}")
+                                else:
+                                    if st.button("💾 Save Actual Bill to Supabase (public.energy_bills)", type="primary", width="stretch", key="btn_save_single_bill"):
+                                        save_res = save_energy_bill(bill_export, v_res)
+                                        if save_res["status"] == "SUCCESS":
+                                            st.success(f"✅ Bill **{save_res['bill_number']}** saved successfully to Supabase (`public.energy_bills`)!")
+                                        else:
+                                            st.error(f"Failed to save bill to Supabase: {save_res.get('cloud_error')}")
 
                             with col_sb_dl:
                                 out_single = io.BytesIO()
@@ -594,6 +620,7 @@ def render():
                         # 4. Duplicate Records (Already in Supabase)
                         if not is_batch_receipt and not batch_df.empty:
                             existing_db_bills = get_existing_bill_numbers()
+                            existing_prov_bills = get_existing_provisional_bill_numbers()
                             bill_col = "Bill Number" if "Bill Number" in batch_df.columns else batch_df.columns[0]
 
                             match_rows = []
@@ -608,12 +635,22 @@ def render():
 
                                 is_dup = False
                                 dup_reason = ""
+
+                                # Check if previously uploaded as provisional/average
+                                if bn and bn in existing_prov_bills:
+                                    prev_basis_tag = existing_prov_bills[bn]
+                                    row_dict["Prior Upload Hint"] = f"💡 Hint: Previously recorded with bill basis '{prev_basis_tag}' in public.energy_bills_provisional"
+
                                 if bn and bn in existing_db_bills:
                                     is_dup = True
-                                    dup_reason = "Already exists in Supabase public.energy_bills"
+                                    dup_reason = "Already exists in Supabase public.energy_bills (Actual)"
                                 elif bn and bn in seen_in_batch:
                                     is_dup = True
                                     dup_reason = "Duplicate record within uploaded batch"
+                                elif bn and bn in existing_prov_bills:
+                                    prev_b = existing_prov_bills[bn]
+                                    is_dup = True
+                                    dup_reason = f"Already archived as {prev_b} in public.energy_bills_provisional"
 
                                 if bn:
                                     seen_in_batch.add(bn)
@@ -630,7 +667,7 @@ def render():
                                     dup_rows.append(row_dict)
                                 elif is_prov_or_avg:
                                     row_dict["Bucket"] = "PROVISIONAL_AVERAGE"
-                                    row_dict["Audit Flag"] = f"DISCOM {raw_basis or 'PROVISIONAL'} Basis (Not Actual Reading) — Meter Audit Required"
+                                    row_dict["Audit Flag"] = f"DISCOM {raw_basis or 'PROVISIONAL'} Basis (Not Actual Reading) — Maintained in public.energy_bills_provisional"
                                     prov_avg_rows.append(row_dict)
                                 elif is_mis:
                                     row_dict["Bucket"] = "MISMATCH"
@@ -638,6 +675,10 @@ def render():
                                 else:
                                     row_dict["Bucket"] = "VERIFIED_ACTUAL_MATCH"
                                     match_rows.append(row_dict)
+
+                            # Auto-inject all Average & Provisional bills into public.energy_bills_provisional
+                            if prov_avg_rows:
+                                batch_save_provisional_energy_bills(prov_avg_rows, prevent_duplicates=True)
 
                             st.session_state["match_df"] = pd.DataFrame(match_rows)
                             st.session_state["prov_avg_df"] = pd.DataFrame(prov_avg_rows)
@@ -743,8 +784,48 @@ def render():
                             if prov_avg_df.empty:
                                 st.success("🎉 All bills in this batch were billed on an ACTUAL physical meter reading basis! Zero provisional/average bills found.")
                             else:
-                                st.warning(f"⚠️ **{len(prov_avg_df)} Provisional / Average Bills Found.** Requires manual audit against physical JUNO meter intervals:")
+                                st.markdown(
+                                    """
+                                    <div style="background: rgba(59, 130, 246, 0.12); border-left: 5px solid #3b82f6; border-radius: 6px; padding: 12px; margin-bottom: 12px;">
+                                        <div style="font-weight: 700; color: #60a5fa; font-size: 14px;">ℹ️ Isolated Audit Archive: Maintained in <code>public.energy_bills_provisional</code></div>
+                                        <div style="font-size: 12px; color: #cbd5e1; margin-top: 4px;">
+                                            • All provisional/average bills in this batch are recorded in <b><code>public.energy_bills_provisional</code></b> for historical tracking and future upload hints.<br/>
+                                            • <b>Zero KPI Distortion:</b> These bills are strictly isolated from actual power analytics, consumption aggregates, and official reports.<br/>
+                                            • <b>Physical Meter Audit:</b> Compare against physical JUNO intervals before approving promotion to <code>public.energy_bills</code>.
+                                        </div>
+                                    </div>
+                                    """,
+                                    unsafe_allow_html=True,
+                                )
+
                                 st.dataframe(prov_avg_df, width="stretch", hide_index=True)
+
+                                col_pa_sync, col_pa_dl = st.columns([1.2, 1])
+                                with col_pa_sync:
+                                    if st.button(
+                                        f"🚀 Re-sync {len(prov_avg_df)} Bills → Supabase Audit Archive (public.energy_bills_provisional)",
+                                        type="secondary",
+                                        width="stretch",
+                                        key="btn_rearchive_prov_bills",
+                                    ):
+                                        with st.spinner("Archiving provisional bills into public.energy_bills_provisional..."):
+                                            p_res = batch_save_provisional_energy_bills(prov_avg_df.to_dict(orient="records"), prevent_duplicates=False)
+                                            if p_res["status"] == "SUCCESS":
+                                                st.success(f"✅ Successfully archived **{p_res['saved_count']}** provisional bills to `public.energy_bills_provisional`!")
+                                            else:
+                                                st.error(f"Error archiving bills: {p_res.get('cloud_error')}")
+
+                                with col_pa_dl:
+                                    out_prov = io.BytesIO()
+                                    with pd.ExcelWriter(out_prov, engine="openpyxl") as writer:
+                                        prov_avg_df.to_excel(writer, index=False, sheet_name="Provisional_Bills")
+                                    st.download_button(
+                                        label=f"📥 Download Provisional Audit Report ({len(prov_avg_df)} rows)",
+                                        data=out_prov.getvalue(),
+                                        file_name=f"Provisional_Bills_Report_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                        width="stretch",
+                                    )
 
                                 st.markdown("---")
                                 st.markdown("#### 🔍 Provisional / Average Bill Audit (Dropdown: Consumer A/C No. wise)")
@@ -773,7 +854,7 @@ def render():
                                             • <b>Billed Basis:</b> <span style="color: #fbbf24; font-weight: bold;">{p_basis}</span> (Estimated Units Billed)<br/>
                                             • <b>Billed Current Total:</b> ₹{p_tot:,.2f}<br/>
                                             • <b>Audit Recommendation:</b> Compare DISCOM billed units with physical JUNO interval sum before authorizing financial clearance.<br/>
-                                            • <b>Action Required:</b> If verified with DISCOM / physical meter, you can override and approve below.
+                                            • <b>Action Required:</b> If verified with DISCOM / physical meter, you can override and approve below to promote this bill to Actual status.
                                         </div>
                                     </div>
                                     """,
@@ -786,7 +867,7 @@ def render():
                                     audit_note = pa_c1.text_input("Auditor Approval Notes", value=f"Audited provisional bill against physical JUNO meter intervals on {pd.Timestamp.now().strftime('%Y-%m-%d')}")
                                     audit_status_sel = pa_c2.selectbox("Override Audit Verdict", ["MANUALLY_VERIFIED", "CORRECTED", "DISPUTED_WITH_DISCOM"], index=0)
 
-                                    if st.form_submit_button("✅ Approve & Ingest Audited Bill to Supabase", type="primary", width="stretch"):
+                                    if st.form_submit_button("✅ Approve & Ingest Audited Bill to Supabase (Actual)", type="primary", width="stretch"):
                                         approved_rec = dict(chosen_p)
                                         approved_rec["verification_status"] = audit_status_sel
                                         approved_rec["edit_notes"] = audit_note
@@ -796,25 +877,15 @@ def render():
 
                                         save_p_res = batch_save_energy_bills([approved_rec], prevent_duplicates=False)
                                         if save_p_res["status"] == "SUCCESS":
-                                            st.success(f"✅ Bill **{p_bn}** for Consumer A/C **{p_ac}** successfully approved and saved into Supabase!")
+                                            # Clean up from provisional table now that it's promoted to actual
+                                            delete_provisional_energy_bill(p_bn)
+                                            st.success(f"✅ Bill **{p_bn}** for Consumer A/C **{p_ac}** successfully approved and promoted to Supabase `public.energy_bills`!")
                                             # Remove from prov_avg_df
                                             prov_avg_df = prov_avg_df[prov_avg_df[b_col_p].astype(str) != p_bn]
                                             st.session_state["prov_avg_df"] = prov_avg_df
                                             st.rerun()
                                         else:
                                             st.error(f"Approval failed: {save_p_res.get('cloud_error')}")
-
-                                # Download provisional bills Excel
-                                out_prov = io.BytesIO()
-                                with pd.ExcelWriter(out_prov, engine="openpyxl") as writer:
-                                    prov_avg_df.to_excel(writer, index=False, sheet_name="Provisional_Bills")
-                                st.download_button(
-                                    label=f"📥 Download Provisional Bills Audit Report ({len(prov_avg_df)} rows)",
-                                    data=out_prov.getvalue(),
-                                    file_name=f"Provisional_Bills_Report_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                    width="stretch",
-                                )
 
                         # -----------------------------------------------------
                         # SUBTAB 3: CALCULATION MISMATCHES (CONSUMER A/C NO. DROPDOWN)
@@ -1112,92 +1183,147 @@ def render():
     # TAB 4: Bill & Receipt Register
     # -------------------------------------------------------------------------
     with tab_register:
-        st.subheader("Financial Document Register (Supabase public.energy_bills & Receipts)")
+        st.subheader("Financial Document Register (Supabase & Local Database)")
         st.caption("Live financial register displaying all extracted, verified, and audited DISCOM electricity bills with human-in-the-loop discrepancy resolution.")
 
-        live_bills_df = get_all_energy_bills()
-        if not live_bills_df.empty and "deleted_bills" in st.session_state:
-            bill_col = "bill_number" if "bill_number" in live_bills_df.columns else ("Document ID" if "Document ID" in live_bills_df.columns else live_bills_df.columns[0])
-            live_bills_df = live_bills_df[~live_bills_df[bill_col].astype(str).isin(st.session_state["deleted_bills"])]
+        tab_reg_actual, tab_reg_prov = st.tabs([
+            "📗 Official Actual Energy Bills (public.energy_bills)",
+            "📙 Provisional & Average Bills Audit Archive (public.energy_bills_provisional)",
+        ])
 
-        display_df = live_bills_df if not live_bills_df.empty else bills_df
-        st.dataframe(display_df, width="stretch", hide_index=True)
+        with tab_reg_actual:
+            st.markdown("##### 📗 Official Energy Bills Register (`public.energy_bills`)")
+            st.caption("Contains only verified Actual physical meter bills used for power analytics, KPI calculations, and financial accounting.")
 
-        col_reg_dl, col_reg_del = st.columns([1, 1])
-        with col_reg_dl:
-            out_reg = io.BytesIO()
-            with pd.ExcelWriter(out_reg, engine="openpyxl") as writer:
-                display_df.to_excel(writer, index=False, sheet_name="Bills_Register")
+            live_bills_df = get_all_energy_bills()
+            if not live_bills_df.empty and "deleted_bills" in st.session_state:
+                bill_col = "bill_number" if "bill_number" in live_bills_df.columns else ("Document ID" if "Document ID" in live_bills_df.columns else live_bills_df.columns[0])
+                live_bills_df = live_bills_df[~live_bills_df[bill_col].astype(str).isin(st.session_state["deleted_bills"])]
 
-            st.download_button(
-                label=f"📥 Download Complete Register (.xlsx) [{len(display_df)} records]",
-                data=out_reg.getvalue(),
-                file_name="SRTPL_Financial_Register.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                width="stretch",
+            display_df = live_bills_df if not live_bills_df.empty else bills_df
+            st.dataframe(display_df, width="stretch", hide_index=True)
+
+            col_reg_dl, _ = st.columns([1, 1])
+            with col_reg_dl:
+                out_reg = io.BytesIO()
+                with pd.ExcelWriter(out_reg, engine="openpyxl") as writer:
+                    display_df.to_excel(writer, index=False, sheet_name="Actual_Bills_Register")
+
+                st.download_button(
+                    label=f"📥 Download Actual Bills Register (.xlsx) [{len(display_df)} records]",
+                    data=out_reg.getvalue(),
+                    file_name="SRTPL_Actual_Bills_Register.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    width="stretch",
+                )
+
+            # Quick Edit for any Bill in the Actual Register
+            with st.expander("✏️ Quick Edit / Resolve Discrepancy for any Registered Bill"):
+                if display_df.empty:
+                    st.info("No bills available to edit.")
+                else:
+                    id_col = "bill_number" if "bill_number" in display_df.columns else ("Document ID" if "Document ID" in display_df.columns else display_df.columns[0])
+                    reg_bill_ids = [str(x) for x in display_df[id_col].dropna().unique()]
+                    sel_edit_id = st.selectbox("Select Bill to Edit / Resolve:", reg_bill_ids, key="sel_edit_reg_bill")
+                    curr_row_s = display_df[display_df[id_col].astype(str) == sel_edit_id]
+
+                    if not curr_row_s.empty:
+                        c_row = curr_row_s.iloc[0].to_dict()
+                        with st.form(key=f"reg_edit_form_{sel_edit_id}"):
+                            re_c1, re_c2, re_c3 = st.columns(3)
+                            r_cat = str(c_row.get("tariff_category") or c_row.get("Tariff Category") or "")
+                            r_cat_idx = 0 if "GPS" in r_cat.upper() else (1 if "LIGHT" in r_cat.upper() else 2)
+                            r_tariff = re_c1.selectbox("Tariff Category", ["GPS (< 110 kVA)", "Public Lighting", "HT (>= 110 kVA)"], index=r_cat_idx)
+                            r_ec = re_c2.number_input("Energy Charges (₹)", value=float(_parse_num(c_row.get("energy_charges") or c_row.get("a. Energy Charges"))), step=10.0)
+                            r_tot = re_c3.number_input("Current Total (₹)", value=float(_parse_num(c_row.get("current_total") or c_row.get("Current Total (o)"))), step=10.0)
+
+                            re_c4, re_c5, re_c6 = st.columns(3)
+                            r_norm = re_c4.number_input("Slab Normal - KWH", value=float(_parse_num(c_row.get("slab_normal_kwh") or c_row.get("Slab Normal - KWH"))), step=1.0)
+                            r_peak = re_c5.number_input("Slab Peak - KWH", value=float(_parse_num(c_row.get("slab_peak_kwh") or c_row.get("Slab Peak - KWH"))), step=1.0)
+                            r_solar = re_c6.number_input("Slab Solar - KWH", value=float(_parse_num(c_row.get("slab_solar_kwh") or c_row.get("Slab Solar - KWH"))), step=1.0)
+
+                            r_notes = st.text_input("Reason for Adjustment / Audit Notes", value=f"Reconciled from Register on {pd.Timestamp.now().strftime('%Y-%m-%d')}")
+
+                            if st.form_submit_button("💾 Save Changes to Supabase", type="primary", width="stretch"):
+                                up_data = dict(c_row)
+                                up_data["Tariff Category"] = r_tariff
+                                up_data["a. Energy Charges"] = r_ec
+                                up_data["Current Total (o)"] = r_tot
+                                up_data["Slab Normal - KWH"] = r_norm
+                                up_data["Slab Peak - KWH"] = r_peak
+                                up_data["Slab Solar - KWH"] = r_solar
+
+                                u_res = update_energy_bill(
+                                    bill_number=sel_edit_id,
+                                    updates=up_data,
+                                    edited_by=st.session_state.get("user", "admin@srtpl.com"),
+                                    edit_notes=r_notes,
+                                )
+                                if u_res["status"] == "SUCCESS":
+                                    st.success(f"✅ Bill **{sel_edit_id}** updated in Supabase! Status: `{u_res['updated_record']['verification_status']}`")
+                                    st.rerun()
+                                else:
+                                    st.error(f"Failed to update bill: {u_res.get('cloud_error')}")
+
+            with st.expander("🗑️ Delete Bill Record (Simultaneous App & Supabase Database Removal)"):
+                if display_df.empty:
+                    st.info("No bills available to delete.")
+                else:
+                    id_col_del = "bill_number" if "bill_number" in display_df.columns else ("Document ID" if "Document ID" in display_df.columns else display_df.columns[0])
+                    bill_ids = [str(x) for x in display_df[id_col_del].dropna().unique()]
+                    sel_del_bill = st.selectbox("Select Bill Number to Delete", bill_ids, key="sel_del_bill_reg")
+                    confirm_del_bill = st.checkbox(f"Confirm permanent deletion of bill {sel_del_bill}", key="chk_del_bill")
+                    if st.button("🗑️ Delete Bill from Database", type="primary", disabled=not confirm_del_bill, key="btn_exec_del_bill"):
+                        res = delete_energy_bill(sel_del_bill)
+                        sync_msg = "and removed from Supabase" if res["cloud_synced"] else "from local store"
+                        st.success(f"🧹 Bill **{sel_del_bill}** deleted successfully {sync_msg}!")
+                        st.rerun()
+
+        with tab_reg_prov:
+            st.markdown("##### 📙 Provisional & Average Bills Audit Archive (`public.energy_bills_provisional`)")
+            st.markdown(
+                """
+                <div style="background: rgba(245, 158, 11, 0.1); border-left: 4px solid #f59e0b; border-radius: 6px; padding: 10px; margin-bottom: 12px;">
+                    <div style="font-weight: 600; color: #fbbf24; font-size: 13px;">🛡️ Audit Trail & Prior Upload Hints Only</div>
+                    <div style="font-size: 11px; color: #94a3b8; margin-top: 3px;">
+                        Bills recorded here are strictly isolated from all KPI metrics, power analytics, and consumption charts.
+                        They provide users with hints on re-upload and retain a permanent record of non-actual DISCOM billing events.
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
 
-        # Tab 4: Quick Edit for any Bill in the Register
-        with st.expander("✏️ Quick Edit / Resolve Discrepancy for any Registered Bill"):
-            if display_df.empty:
-                st.info("No bills available to edit.")
+            prov_bills_df = get_all_provisional_energy_bills()
+            if prov_bills_df.empty:
+                st.info("No provisional or average bills currently in the audit archive.")
             else:
-                id_col = "bill_number" if "bill_number" in display_df.columns else ("Document ID" if "Document ID" in display_df.columns else display_df.columns[0])
-                reg_bill_ids = [str(x) for x in display_df[id_col].dropna().unique()]
-                sel_edit_id = st.selectbox("Select Bill to Edit / Resolve:", reg_bill_ids, key="sel_edit_reg_bill")
-                curr_row_s = display_df[display_df[id_col].astype(str) == sel_edit_id]
+                st.dataframe(prov_bills_df, width="stretch", hide_index=True)
 
-                if not curr_row_s.empty:
-                    c_row = curr_row_s.iloc[0].to_dict()
-                    with st.form(key=f"reg_edit_form_{sel_edit_id}"):
-                        re_c1, re_c2, re_c3 = st.columns(3)
-                        r_cat = str(c_row.get("tariff_category") or c_row.get("Tariff Category") or "")
-                        r_cat_idx = 0 if "GPS" in r_cat.upper() else (1 if "LIGHT" in r_cat.upper() else 2)
-                        r_tariff = re_c1.selectbox("Tariff Category", ["GPS (< 110 kVA)", "Public Lighting", "HT (>= 110 kVA)"], index=r_cat_idx)
-                        r_ec = re_c2.number_input("Energy Charges (₹)", value=float(_parse_num(c_row.get("energy_charges") or c_row.get("a. Energy Charges"))), step=10.0)
-                        r_tot = re_c3.number_input("Current Total (₹)", value=float(_parse_num(c_row.get("current_total") or c_row.get("Current Total (o)"))), step=10.0)
+                col_prov_dl, _ = st.columns([1, 1])
+                with col_prov_dl:
+                    out_prov_reg = io.BytesIO()
+                    with pd.ExcelWriter(out_prov_reg, engine="openpyxl") as writer:
+                        prov_bills_df.to_excel(writer, index=False, sheet_name="Provisional_Audit_Archive")
 
-                        re_c4, re_c5, re_c6 = st.columns(3)
-                        r_norm = re_c4.number_input("Slab Normal - KWH", value=float(_parse_num(c_row.get("slab_normal_kwh") or c_row.get("Slab Normal - KWH"))), step=1.0)
-                        r_peak = re_c5.number_input("Slab Peak - KWH", value=float(_parse_num(c_row.get("slab_peak_kwh") or c_row.get("Slab Peak - KWH"))), step=1.0)
-                        r_solar = re_c6.number_input("Slab Solar - KWH", value=float(_parse_num(c_row.get("slab_solar_kwh") or c_row.get("Slab Solar - KWH"))), step=1.0)
+                    st.download_button(
+                        label=f"📥 Download Provisional Archive (.xlsx) [{len(prov_bills_df)} records]",
+                        data=out_prov_reg.getvalue(),
+                        file_name="SRTPL_Provisional_Bills_Archive.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        width="stretch",
+                    )
 
-                        r_notes = st.text_input("Reason for Adjustment / Audit Notes", value=f"Reconciled from Register on {pd.Timestamp.now().strftime('%Y-%m-%d')}")
-
-                        if st.form_submit_button("💾 Save Changes to Supabase", type="primary", width="stretch"):
-                            up_data = dict(c_row)
-                            up_data["Tariff Category"] = r_tariff
-                            up_data["a. Energy Charges"] = r_ec
-                            up_data["Current Total (o)"] = r_tot
-                            up_data["Slab Normal - KWH"] = r_norm
-                            up_data["Slab Peak - KWH"] = r_peak
-                            up_data["Slab Solar - KWH"] = r_solar
-
-                            u_res = update_energy_bill(
-                                bill_number=sel_edit_id,
-                                updates=up_data,
-                                edited_by=st.session_state.get("user", "admin@srtpl.com"),
-                                edit_notes=r_notes,
-                            )
-                            if u_res["status"] == "SUCCESS":
-                                st.success(f"✅ Bill **{sel_edit_id}** updated in Supabase! Status: `{u_res['updated_record']['verification_status']}`")
-                                st.rerun()
-                            else:
-                                st.error(f"Failed to update bill: {u_res.get('cloud_error')}")
-
-        with st.expander("🗑️ Delete Bill Record (Simultaneous App & Supabase Database Removal)"):
-            if display_df.empty:
-                st.info("No bills available to delete.")
-            else:
-                id_col_del = "bill_number" if "bill_number" in display_df.columns else ("Document ID" if "Document ID" in display_df.columns else display_df.columns[0])
-                bill_ids = [str(x) for x in display_df[id_col_del].dropna().unique()]
-                sel_del_bill = st.selectbox("Select Bill Number to Delete", bill_ids, key="sel_del_bill_reg")
-                confirm_del_bill = st.checkbox(f"Confirm permanent deletion of bill {sel_del_bill}", key="chk_del_bill")
-                if st.button("🗑️ Delete Bill from Database", type="primary", disabled=not confirm_del_bill, key="btn_exec_del_bill"):
-                    res = delete_energy_bill(sel_del_bill)
-                    sync_msg = "and removed from Supabase" if res["cloud_synced"] else "from local store"
-                    st.success(f"🧹 Bill **{sel_del_bill}** deleted successfully {sync_msg}!")
-                    st.rerun()
+                with st.expander("🗑️ Delete Entry from Provisional Audit Archive"):
+                    prov_id_col = "bill_number" if "bill_number" in prov_bills_df.columns else prov_bills_df.columns[0]
+                    prov_bill_ids = [str(x) for x in prov_bills_df[prov_id_col].dropna().unique()]
+                    sel_del_prov = st.selectbox("Select Provisional Bill Number to Delete", prov_bill_ids, key="sel_del_prov_bill_reg")
+                    confirm_del_prov = st.checkbox(f"Confirm permanent deletion of provisional bill {sel_del_prov}", key="chk_del_prov_bill")
+                    if st.button("🗑️ Delete Provisional Bill from Archive", type="primary", disabled=not confirm_del_prov, key="btn_exec_del_prov_bill"):
+                        res_p = delete_provisional_energy_bill(sel_del_prov)
+                        sync_msg = "and removed from Supabase" if res_p.get("cloud_deleted") else "from local store"
+                        st.success(f"🧹 Provisional Bill **{sel_del_prov}** deleted successfully {sync_msg}!")
+                        st.rerun()
 
 
 if __name__ == "__main__":

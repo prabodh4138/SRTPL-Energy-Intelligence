@@ -421,7 +421,7 @@ def remove_all_database_data() -> dict[str, Any]:
                     pass
 
             # 3. Public tables deletes
-            public_tables = ["energy_bills", "payment_receipts"]
+            public_tables = ["energy_bills", "energy_bills_provisional", "payment_receipts"]
             for t in public_tables:
                 try:
                     client.table(t).delete().neq("created_at", "1970-01-01").execute()
