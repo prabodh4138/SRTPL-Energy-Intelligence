@@ -101,13 +101,15 @@ def render():
 
     st.success("EB JUNO structure detected. Ready for controlled ingestion.")
 
-    with st.expander("Detected metadata"):
+    with st.expander("Detected metadata & meter details"):
         st.json({
+            "eb_meter_id (asset_code)": inspection["metadata"].asset_code,
+            "consumer_number": getattr(inspection["metadata"], "consumer_number", None) or "—",
+            "location": inspection["metadata"].location or "—",
+            "category": getattr(inspection["metadata"], "category", None) or "—",
             "report_title": inspection["metadata"].report_title,
             "downloaded_by": inspection["metadata"].downloaded_by,
             "organization": inspection["metadata"].organization,
-            "asset_code": inspection["metadata"].asset_code,
-            "location": inspection["metadata"].location,
             "sha256": inspection["sha256"],
             "parser_version": inspection["parser_version"],
         })
@@ -180,11 +182,13 @@ def render():
                 )
 
         if res.get("exception_details"):
-            st.warning(f"⚠️ {res['exception_rows']} raw record(s) flagged with validation errors and excluded from KPI calculations. Offending rows:")
+            st.warning(f"⚠️ {res['exception_rows']} raw record(s) flagged with validation errors and excluded from KPI calculations. Offending rows with responsible technician:")
             exc_table = pd.DataFrame([
                 {
                     "Row #": d["row_number"],
                     "Timestamp": d["timestamp"],
+                    "Technician (Created By)": d.get("technician_name", "—"),
+                    "Logged At (Created On)": d.get("created_on", "—"),
                     "Rule": d["rule_code"],
                     "Severity": d["severity"],
                     "Offending Value": d["offending_value"],

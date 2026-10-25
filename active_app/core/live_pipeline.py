@@ -166,7 +166,13 @@ def _resolve_or_create_asset(client: Any, asset_code: str, report_type: str) -> 
     return new_asset_id
 
 
-def _map_row_for_database(report_type: str, asset_id: str, norm_values: dict[str, Any], raw_values: dict[str, Any]) -> dict[str, Any] | None:
+def _map_row_for_database(
+    report_type: str,
+    asset_id: str,
+    norm_values: dict[str, Any],
+    raw_values: dict[str, Any],
+    metadata: Any = None,
+) -> dict[str, Any] | None:
     dt = (
         _format_datetime(norm_values.get("reading_datetime"))
         or _format_datetime(f"{norm_values.get('date')} {norm_values.get('time', '')}".strip())
@@ -178,9 +184,47 @@ def _map_row_for_database(report_type: str, asset_id: str, norm_values: dict[str
 
     status = norm_values.get("data_quality_status", "VALID")
 
+    # Extract technician audit information
+    technician_name = (
+        norm_values.get("created_by")
+        or raw_values.get("created_by")
+        or raw_values.get("Created By")
+        or raw_values.get("Created by")
+        or (getattr(metadata, "downloaded_by", None) if metadata else None)
+    )
+    technician_name = str(technician_name).strip() if technician_name and str(technician_name).lower() not in {"none", "null", "nan", "-"} else None
+
+    technician_created_on = (
+        _format_datetime(norm_values.get("created_on"))
+        or _format_datetime(raw_values.get("created_on"))
+        or _format_datetime(raw_values.get("Created On"))
+        or _format_datetime(raw_values.get("Created on ( Date and Time)"))
+        or _format_datetime(raw_values.get("Created on"))
+    )
+
+    remarks = raw_values.get("remarks") or raw_values.get("Remarks") or norm_values.get("remarks")
+    remarks = str(remarks).strip() if remarks and str(remarks).lower() not in {"none", "null", "nan", "-"} else None
+
+    asset_code = (
+        (getattr(metadata, "asset_code", None) if metadata else None)
+        or norm_values.get("eb_meter_id")
+        or norm_values.get("generator_no")
+        or norm_values.get("solar_plant_id")
+        or norm_values.get("transformer_id")
+        or norm_values.get("ups_id")
+        or asset_id
+    )
+
+    location = (
+        (getattr(metadata, "location", None) if metadata else None)
+        or raw_values.get("Location")
+        or raw_values.get("location")
+    )
+
     if report_type == "EB":
         return {
             "asset_id": asset_id,
+            "asset_code": asset_code,
             "reading_datetime": dt,
             "cumulative_kwh": _flt(norm_values.get("kwh") if norm_values.get("__source_mode") != "INTERVAL_CONSUMPTION" else None),
             "cumulative_kvah": _flt(norm_values.get("kvah") if norm_values.get("__source_mode") != "INTERVAL_CONSUMPTION" else None),
@@ -189,30 +233,48 @@ def _map_row_for_database(report_type: str, asset_id: str, norm_values: dict[str
             "interval_kvah": _flt(norm_values.get("interval_kvah")),
             "interval_kvarh": _flt(norm_values.get("interval_kvarh")),
             "pf": _flt(norm_values.get("pf")),
+            "maximum_demand": _flt(norm_values.get("md") or raw_values.get("MD") or raw_values.get("md")),
+            "created_by": technician_name,
+            "created_on": technician_created_on,
+            "remarks": remarks,
+            "consumer_number": getattr(metadata, "consumer_number", None) or raw_values.get("Consumer Number"),
+            "location": location,
+            "category": getattr(metadata, "category", None) or raw_values.get("Category"),
             "data_quality_status": status,
         }
     elif report_type == "DG":
         return {
             "asset_id": asset_id,
+            "asset_code": asset_code,
             "reading_datetime": dt,
             "cumulative_kwh": _flt(norm_values.get("kwh")),
             "cumulative_running_hours": _flt(norm_values.get("running_hours")),
             "interval_kwh": _flt(norm_values.get("interval_kwh")),
             "interval_running_hours": _flt(norm_values.get("interval_running_hours")),
             "pf": _flt(norm_values.get("pf")),
+            "created_by": technician_name,
+            "created_on": technician_created_on,
+            "remarks": remarks,
+            "location": location,
             "data_quality_status": status,
         }
     elif report_type == "SOLAR":
         return {
             "asset_id": asset_id,
+            "asset_code": asset_code,
             "reading_datetime": dt,
             "cumulative_kwh": _flt(norm_values.get("unit_generated_in_kwh") or norm_values.get("kwh")),
             "interval_kwh": _flt(norm_values.get("interval_kwh")),
+            "created_by": technician_name,
+            "created_on": technician_created_on,
+            "remarks": remarks,
+            "location": location,
             "data_quality_status": status,
         }
     elif report_type == "TRANSFORMER":
         return {
             "asset_id": asset_id,
+            "asset_code": asset_code,
             "reading_datetime": dt,
             "primary_v_ry": _flt(norm_values.get("primary_side___voltage___ry") or norm_values.get("primary_v_ry")),
             "primary_v_yb": _flt(norm_values.get("yb") or norm_values.get("primary_v_yb")),
@@ -229,11 +291,16 @@ def _map_row_for_database(report_type: str, asset_id: str, norm_values: dict[str
             "oil_temperature": _flt(norm_values.get("oti") or norm_values.get("oil_temperature")),
             "winding_temperature": _flt(norm_values.get("temperature___wti") or norm_values.get("wti") or norm_values.get("winding_temperature")),
             "pf": _flt(norm_values.get("pf")),
+            "created_by": technician_name,
+            "created_on": technician_created_on,
+            "remarks": remarks,
+            "location": location,
             "data_quality_status": status,
         }
     elif report_type == "UPS":
         return {
             "asset_id": asset_id,
+            "asset_code": asset_code,
             "reading_datetime": dt,
             "output_voltage": _flt(norm_values.get("output___voltage") or norm_values.get("output_voltage")),
             "output_current": _flt(norm_values.get("current_[2]") or norm_values.get("output_current")),
@@ -241,6 +308,10 @@ def _map_row_for_database(report_type: str, asset_id: str, norm_values: dict[str
             "battery_vdc": _flt(norm_values.get("battery___vdc") or norm_values.get("battery_vdc")),
             "battery_temperature": _flt(norm_values.get("tem") or norm_values.get("battery_temperature")),
             "rectifier_voltage": _flt(norm_values.get("main_input_rectifier_voltage") or norm_values.get("rectifier_voltage")),
+            "created_by": technician_name,
+            "created_on": technician_created_on,
+            "remarks": remarks,
+            "location": location,
             "data_quality_status": status,
         }
     return None
@@ -373,6 +444,8 @@ def execute_live_juno_ingestion(
                 exception_details.append({
                     "row_number": rec.source_row_number,
                     "timestamp": cur.get("reading_datetime") or cur.get("date") or "—",
+                    "technician_name": cur.get("created_by") or cur.get("Created By") or cur.get("Created by") or "—",
+                    "created_on": cur.get("created_on") or cur.get("Created On") or cur.get("Created on ( Date and Time)") or "—",
                     "rule_code": issue.rule_code,
                     "severity": issue.severity,
                     "message": issue.message,
@@ -388,23 +461,28 @@ def execute_live_juno_ingestion(
     db_exceptions = []
 
     for idx, (rec, norm) in enumerate(zip(inspection["records"], norm_records)):
-        mapped = _map_row_for_database(rtype, asset_id, norm, rec.values)
+        mapped = _map_row_for_database(rtype, asset_id, norm, rec.values, metadata=inspection["metadata"])
         if not mapped:
             continue
 
-        row_key = (mapped["asset_id"], mapped["reading_datetime"])
+        row_key = (mapped.get("asset_code") or mapped["asset_id"], mapped["reading_datetime"])
         if row_key in seen_row_keys:
             # Internal row duplicate within file: skip duplicate
             continue
         seen_row_keys.add(row_key)
         db_rows.append(mapped)
 
-    # Format exceptions for database
+    # Format exceptions for database (audit who made the entry and when)
     for exc in exception_details:
         dt = _format_datetime(exc["timestamp"])
         val = _flt(exc["offending_value"])
+        tech = exc.get("technician_name") if exc.get("technician_name") != "—" else None
+        tech_time = _format_datetime(exc.get("created_on"))
         db_exceptions.append({
             "asset_id": asset_id,
+            "asset_code": raw_asset_code,
+            "created_by": tech,
+            "created_on": tech_time,
             "rule_code": exc["rule_code"],
             "severity": exc["severity"],
             "status": "OPEN",

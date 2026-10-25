@@ -116,7 +116,8 @@ CREATE TABLE IF NOT EXISTS energy_import.import_row (
 -- STEP 5: TELEMETRY READINGS TABLES (Level 2 Duplicate Prevention: asset_id + reading_datetime)
 CREATE TABLE IF NOT EXISTS energy_readings.eb (
     reading_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    asset_id VARCHAR(64) NOT NULL REFERENCES energy_master.asset(asset_id) ON DELETE CASCADE,
+    asset_id VARCHAR(64) REFERENCES energy_master.asset(asset_id) ON DELETE CASCADE,
+    asset_code VARCHAR(64),
     reading_datetime TIMESTAMPTZ NOT NULL,
     cumulative_kwh NUMERIC(14, 4),
     cumulative_kvah NUMERIC(14, 4),
@@ -125,6 +126,13 @@ CREATE TABLE IF NOT EXISTS energy_readings.eb (
     interval_kvah NUMERIC(14, 4),
     interval_kvarh NUMERIC(14, 4),
     pf NUMERIC(5, 4),
+    maximum_demand NUMERIC(10, 2),
+    created_by VARCHAR(128),
+    created_on TIMESTAMPTZ,
+    remarks TEXT,
+    consumer_number VARCHAR(64),
+    location VARCHAR(256),
+    category VARCHAR(64),
     data_quality_status VARCHAR(32) NOT NULL DEFAULT 'VALID',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT uq_eb_asset_datetime UNIQUE (asset_id, reading_datetime)
@@ -132,13 +140,18 @@ CREATE TABLE IF NOT EXISTS energy_readings.eb (
 
 CREATE TABLE IF NOT EXISTS energy_readings.dg (
     reading_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    asset_id VARCHAR(64) NOT NULL REFERENCES energy_master.asset(asset_id) ON DELETE CASCADE,
+    asset_id VARCHAR(64) REFERENCES energy_master.asset(asset_id) ON DELETE CASCADE,
+    asset_code VARCHAR(64),
     reading_datetime TIMESTAMPTZ NOT NULL,
     cumulative_kwh NUMERIC(14, 4),
     cumulative_running_hours NUMERIC(10, 4),
     interval_kwh NUMERIC(14, 4),
     interval_running_hours NUMERIC(10, 4),
     pf NUMERIC(5, 4),
+    created_by VARCHAR(128),
+    created_on TIMESTAMPTZ,
+    remarks TEXT,
+    location VARCHAR(256),
     data_quality_status VARCHAR(32) NOT NULL DEFAULT 'VALID',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT uq_dg_asset_datetime UNIQUE (asset_id, reading_datetime)
@@ -146,10 +159,15 @@ CREATE TABLE IF NOT EXISTS energy_readings.dg (
 
 CREATE TABLE IF NOT EXISTS energy_readings.solar (
     reading_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    asset_id VARCHAR(64) NOT NULL REFERENCES energy_master.asset(asset_id) ON DELETE CASCADE,
+    asset_id VARCHAR(64) REFERENCES energy_master.asset(asset_id) ON DELETE CASCADE,
+    asset_code VARCHAR(64),
     reading_datetime TIMESTAMPTZ NOT NULL,
     cumulative_kwh NUMERIC(14, 4),
     interval_kwh NUMERIC(14, 4),
+    created_by VARCHAR(128),
+    created_on TIMESTAMPTZ,
+    remarks TEXT,
+    location VARCHAR(256),
     data_quality_status VARCHAR(32) NOT NULL DEFAULT 'VALID',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT uq_solar_asset_datetime UNIQUE (asset_id, reading_datetime)
@@ -157,7 +175,8 @@ CREATE TABLE IF NOT EXISTS energy_readings.solar (
 
 CREATE TABLE IF NOT EXISTS energy_readings.transformer (
     reading_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    asset_id VARCHAR(64) NOT NULL REFERENCES energy_master.asset(asset_id) ON DELETE CASCADE,
+    asset_id VARCHAR(64) REFERENCES energy_master.asset(asset_id) ON DELETE CASCADE,
+    asset_code VARCHAR(64),
     reading_datetime TIMESTAMPTZ NOT NULL,
     primary_v_ry NUMERIC(10, 2), primary_v_yb NUMERIC(10, 2), primary_v_br NUMERIC(10, 2),
     secondary_v_ry NUMERIC(10, 2), secondary_v_yb NUMERIC(10, 2), secondary_v_br NUMERIC(10, 2),
@@ -166,6 +185,10 @@ CREATE TABLE IF NOT EXISTS energy_readings.transformer (
     oil_temperature NUMERIC(6, 2),
     winding_temperature NUMERIC(6, 2),
     pf NUMERIC(5, 4),
+    created_by VARCHAR(128),
+    created_on TIMESTAMPTZ,
+    remarks TEXT,
+    location VARCHAR(256),
     data_quality_status VARCHAR(32) NOT NULL DEFAULT 'VALID',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT uq_transformer_asset_datetime UNIQUE (asset_id, reading_datetime)
@@ -173,7 +196,8 @@ CREATE TABLE IF NOT EXISTS energy_readings.transformer (
 
 CREATE TABLE IF NOT EXISTS energy_readings.ups (
     reading_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    asset_id VARCHAR(64) NOT NULL REFERENCES energy_master.asset(asset_id) ON DELETE CASCADE,
+    asset_id VARCHAR(64) REFERENCES energy_master.asset(asset_id) ON DELETE CASCADE,
+    asset_code VARCHAR(64),
     reading_datetime TIMESTAMPTZ NOT NULL,
     output_voltage NUMERIC(10, 2),
     output_current NUMERIC(10, 2),
@@ -181,6 +205,10 @@ CREATE TABLE IF NOT EXISTS energy_readings.ups (
     battery_vdc NUMERIC(10, 2),
     battery_temperature NUMERIC(6, 2),
     rectifier_voltage NUMERIC(10, 2),
+    created_by VARCHAR(128),
+    created_on TIMESTAMPTZ,
+    remarks TEXT,
+    location VARCHAR(256),
     data_quality_status VARCHAR(32) NOT NULL DEFAULT 'VALID',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT uq_ups_asset_datetime UNIQUE (asset_id, reading_datetime)
@@ -212,6 +240,9 @@ END $$;
 CREATE TABLE IF NOT EXISTS energy_validation.exception_record (
     exception_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     asset_id VARCHAR(64) REFERENCES energy_master.asset(asset_id) ON DELETE CASCADE,
+    asset_code VARCHAR(64),
+    created_by VARCHAR(128),
+    created_on TIMESTAMPTZ,
     rule_code VARCHAR(32) NOT NULL,
     severity VARCHAR(16) NOT NULL,
     status VARCHAR(32) NOT NULL DEFAULT 'OPEN',

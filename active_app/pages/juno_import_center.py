@@ -181,11 +181,13 @@ def render():
                 )
 
         if res.get("exception_details"):
-            st.warning(f"⚠️ {res['exception_rows']} raw record(s) flagged with validation errors and excluded from KPI calculations. Offending rows:")
+            st.warning(f"⚠️ {res['exception_rows']} raw record(s) flagged with validation errors and excluded from KPI calculations. Offending rows with responsible technician:")
             exc_table = pd.DataFrame([
                 {
                     "Row #": d["row_number"],
                     "Timestamp": d["timestamp"],
+                    "Technician (Created By)": d.get("technician_name", "—"),
+                    "Logged At (Created On)": d.get("created_on", "—"),
                     "Rule": d["rule_code"],
                     "Severity": d["severity"],
                     "Offending Value": d["offending_value"],

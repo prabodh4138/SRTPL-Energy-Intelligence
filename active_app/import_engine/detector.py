@@ -44,6 +44,8 @@ def detect_metadata(rows, report_type):
 
     md.downloaded_by = _find_value(rows, ["downloaded by"])
     md.organization = _find_value(rows, ["srtl", "organization"])
+    md.consumer_number = _find_value(rows, ["consumer number", "consumer no"])
+    md.category = _find_value(rows, ["category"])
     md.asset_code = _find_value(rows, [
         "solar plant id", "solarplantid", "dg id", "generator no", "eb meter id",
         "transformer id", "ups id"

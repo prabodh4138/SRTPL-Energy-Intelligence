@@ -11,6 +11,8 @@ class ReportMetadata:
     organization: Optional[str] = None
     asset_code: Optional[str] = None
     location: Optional[str] = None
+    consumer_number: Optional[str] = None
+    category: Optional[str] = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 @dataclass
