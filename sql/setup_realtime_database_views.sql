@@ -1,17 +1,17 @@
 -- ============================================================================
--- SRTPL POWER INTELLIGENCE — REAL-TIME DATABASE VIEWS & RELATIONAL LINKS
--- Target: Supabase / PostgreSQL (100% Master-Data Driven, ZERO DUMMY DATA)
+-- SRTPL POWER INTELLIGENCE — REAL-TIME DATABASE VIEWS & RELATIONAL ARCHITECTURE
+-- Aligned with: SRTPL Bill Reconciliation Full Implementation Roadmap & Acceptance Plan
+-- Target: PostgreSQL / Supabase
 --
--- Master Table Authority: energy_master.consumer_account
--- This script does NOT insert any dummy consumer data or placeholder records.
--- All views query and link directly to whatever master data exists in 
--- energy_master.consumer_account at your Supabase database.
+-- Master Table Authority: energy_master.consumer_account (NO DUMMY INSERTS)
+-- 100% relational: links energy_master.consumer_account, public.energy_bills,
+-- public.energy_bills_provisional, public.payment_receipts, public.receipt_allocations.
 -- ============================================================================
 
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- ============================================================================
--- STEP 1: ENSURE ALL REQUIRED SCHEMAS EXIST
+-- STEP 1: PREREQUISITE SCHEMAS
 -- ============================================================================
 CREATE SCHEMA IF NOT EXISTS energy_master;
 CREATE SCHEMA IF NOT EXISTS energy_readings;
@@ -19,11 +19,10 @@ CREATE SCHEMA IF NOT EXISTS energy_import;
 CREATE SCHEMA IF NOT EXISTS energy_validation;
 CREATE SCHEMA IF NOT EXISTS energy_analytics;
 
--- Expose schemas in PostgREST configuration to eliminate PGRST205 errors
 ALTER ROLE authenticator SET pgrst.db_schemas = 'public, energy_master, energy_readings, energy_import, energy_validation, energy_analytics';
 
 -- ============================================================================
--- STEP 2: ENSURE MASTER & OPERATIONAL TABLE SCHEMAS EXIST (DDL ONLY - NO INSERTS)
+-- STEP 2: MASTER & OPERATIONAL TABLES (DDL ONLY — ZERO DUMMY DATA INSERTS)
 -- ============================================================================
 
 -- Master Plazas
@@ -47,7 +46,7 @@ CREATE TABLE IF NOT EXISTS energy_master.asset (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Master Consumer Account Table (PRIMARY MASTER TABLE FOR ALL ENERGY MAPPING)
+-- Master Consumer Accounts Table (PRIMARY AUTHORITATIVE MASTER TABLE)
 CREATE TABLE IF NOT EXISTS energy_master.consumer_account (
     consumer_account_no VARCHAR(64) PRIMARY KEY,
     toll_plaza_id VARCHAR(16) REFERENCES energy_master.plaza(plaza_id) ON DELETE SET NULL,
@@ -64,7 +63,6 @@ CREATE TABLE IF NOT EXISTS energy_master.consumer_account (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Ensure all columns exist on energy_master.consumer_account without overwriting user data
 ALTER TABLE energy_master.consumer_account ADD COLUMN IF NOT EXISTS toll_plaza_id VARCHAR(16);
 ALTER TABLE energy_master.consumer_account ADD COLUMN IF NOT EXISTS bill_type VARCHAR(32) DEFAULT 'LT';
 ALTER TABLE energy_master.consumer_account ADD COLUMN IF NOT EXISTS asset_code VARCHAR(64);
@@ -83,7 +81,7 @@ CREATE INDEX IF NOT EXISTS idx_consumer_account_plaza ON energy_master.consumer_
 CREATE INDEX IF NOT EXISTS idx_consumer_account_division ON energy_master.consumer_account(division_name);
 CREATE INDEX IF NOT EXISTS idx_consumer_account_bill_type ON energy_master.consumer_account(bill_type);
 
--- Actual Energy Bills Table
+-- Official Actual Energy Bills
 CREATE TABLE IF NOT EXISTS public.energy_bills (
     bill_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     source_filename VARCHAR(256) NOT NULL,
@@ -130,6 +128,9 @@ CREATE TABLE IF NOT EXISTS public.energy_bills (
     cal_current_total NUMERIC(14, 2) DEFAULT 0.0,
     diff_current_total NUMERIC(14, 2) DEFAULT 0.0,
     verification_status VARCHAR(64) NOT NULL DEFAULT 'VERIFIED_OK',
+    superseded_by_bill_number VARCHAR(64),
+    is_voided BOOLEAN NOT NULL DEFAULT FALSE,
+    void_reason TEXT,
     is_edited BOOLEAN NOT NULL DEFAULT FALSE,
     edited_by VARCHAR(128),
     edited_at TIMESTAMPTZ,
@@ -152,8 +153,11 @@ ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS meter_rent NUMERIC(14, 
 ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS customer_service_charge NUMERIC(14, 2) DEFAULT 0.0;
 ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS prompt_rebate NUMERIC(14, 2) DEFAULT 0.0;
 ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS net_after_rebate NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS superseded_by_bill_number VARCHAR(64);
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS is_voided BOOLEAN DEFAULT FALSE;
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS void_reason TEXT;
 
--- Provisional / Average Energy Bills Archive Table
+-- Provisional & Average Bills Audit Archive
 CREATE TABLE IF NOT EXISTS public.energy_bills_provisional (
     bill_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     source_filename VARCHAR(256) NOT NULL,
@@ -195,13 +199,10 @@ CREATE TABLE IF NOT EXISTS public.energy_bills_provisional (
     prompt_rebate NUMERIC(14, 2) DEFAULT 0.0,
     total_amount_payable NUMERIC(14, 2) DEFAULT 0.0,
     net_after_rebate NUMERIC(14, 2) DEFAULT 0.0,
-    cal_energy_charges NUMERIC(14, 2) DEFAULT 0.0,
-    diff_energy_charges NUMERIC(14, 2) DEFAULT 0.0,
-    cal_electricity_charges NUMERIC(14, 2) DEFAULT 0.0,
-    diff_electricity_charges NUMERIC(14, 2) DEFAULT 0.0,
-    cal_current_total NUMERIC(14, 2) DEFAULT 0.0,
-    diff_current_total NUMERIC(14, 2) DEFAULT 0.0,
     verification_status VARCHAR(64) NOT NULL DEFAULT 'PROVISIONAL_AVERAGE_AUDIT',
+    superseded_by_bill_number VARCHAR(64),
+    is_voided BOOLEAN NOT NULL DEFAULT FALSE,
+    void_reason TEXT,
     is_edited BOOLEAN NOT NULL DEFAULT FALSE,
     edited_by VARCHAR(128),
     edited_at TIMESTAMPTZ,
@@ -211,21 +212,9 @@ CREATE TABLE IF NOT EXISTS public.energy_bills_provisional (
 
 ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS bill_basis VARCHAR(32) DEFAULT 'AVERAGE';
 ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS audit_flag TEXT;
-ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS bill_issue_date VARCHAR(32);
-ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS due_date VARCHAR(32);
-ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS rebate_date VARCHAR(32);
-ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS tariff_type VARCHAR(64);
-ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS md_kw NUMERIC(10, 2) DEFAULT 0.0;
-ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS md_kva NUMERIC(10, 2) DEFAULT 0.0;
-ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS demand_charge NUMERIC(14, 2) DEFAULT 0.0;
-ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS tod_incentive NUMERIC(14, 2) DEFAULT 0.0;
-ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS tod_surcharge NUMERIC(14, 2) DEFAULT 0.0;
-ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS electricity_charges NUMERIC(14, 2) DEFAULT 0.0;
-ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS electricity_duty NUMERIC(14, 2) DEFAULT 0.0;
-ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS meter_rent NUMERIC(14, 2) DEFAULT 0.0;
-ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS customer_service_charge NUMERIC(14, 2) DEFAULT 0.0;
-ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS prompt_rebate NUMERIC(14, 2) DEFAULT 0.0;
-ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS net_after_rebate NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS superseded_by_bill_number VARCHAR(64);
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS is_voided BOOLEAN DEFAULT FALSE;
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS void_reason TEXT;
 
 -- Payment Receipts Table
 CREATE TABLE IF NOT EXISTS public.payment_receipts (
@@ -241,6 +230,62 @@ CREATE TABLE IF NOT EXISTS public.payment_receipts (
     bill_month VARCHAR(32),
     category VARCHAR(64),
     source_pdf VARCHAR(256) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Receipt Allocations Table (Multi-to-Multi with Zero Inflation)
+CREATE TABLE IF NOT EXISTS public.receipt_allocations (
+    allocation_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    receipt_no VARCHAR(64) NOT NULL REFERENCES public.payment_receipts(receipt_no) ON DELETE CASCADE,
+    bill_number VARCHAR(64),
+    consumer_account_no VARCHAR(64) NOT NULL,
+    bill_month VARCHAR(32) NOT NULL,
+    allocated_amount NUMERIC(14, 2) NOT NULL,
+    allocation_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Monthly Budgets Table
+CREATE TABLE IF NOT EXISTS public.monthly_budgets (
+    budget_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    financial_year VARCHAR(16) NOT NULL,
+    bill_month VARCHAR(32) NOT NULL,
+    toll_plaza_id VARCHAR(16) NOT NULL,
+    bill_type VARCHAR(32) NOT NULL DEFAULT 'ALL',
+    budget_amount NUMERIC(14, 2) NOT NULL DEFAULT 200000.0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_monthly_budget UNIQUE (financial_year, bill_month, toll_plaza_id, bill_type)
+);
+
+-- Persistent Bill Review Queue
+CREATE TABLE IF NOT EXISTS public.bill_review_queue (
+    candidate_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    bill_number VARCHAR(64),
+    consumer_account_no VARCHAR(64),
+    toll_plaza_id VARCHAR(16),
+    bill_type VARCHAR(32),
+    bill_month VARCHAR(32),
+    bill_basis VARCHAR(32) DEFAULT 'ACTUAL',
+    amount NUMERIC(14, 2) DEFAULT 0.0,
+    units NUMERIC(14, 2) DEFAULT 0.0,
+    exception_reason TEXT,
+    hold_reason_code VARCHAR(64) DEFAULT 'UNRESOLVED_CHECK',
+    status VARCHAR(32) DEFAULT 'REVIEW',
+    raw_payload JSONB,
+    source_filename VARCHAR(256),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Audit Events Table
+CREATE TABLE IF NOT EXISTS public.audit_events (
+    event_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    event_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    event_type VARCHAR(64) NOT NULL,
+    entity_type VARCHAR(64),
+    entity_id VARCHAR(128),
+    details TEXT,
+    user_id VARCHAR(128) DEFAULT 'operator',
+    result VARCHAR(32) DEFAULT 'RECORDED',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -263,9 +308,18 @@ CREATE INDEX IF NOT EXISTS idx_eb_readings_asset_code ON energy_readings.eb(asse
 CREATE INDEX IF NOT EXISTS idx_eb_readings_datetime ON energy_readings.eb(reading_datetime);
 
 -- ============================================================================
--- STEP 3: SAFELY DROP EXISTING VIEWS WITH CASCADE
--- Prevents PostgreSQL 'cannot change name/type of view column' errors
+-- STEP 3: DROP EXISTING VIEWS WITH CASCADE
+-- Prevents schema column locks / name change collisions
 -- ============================================================================
+DROP VIEW IF EXISTS public.vw_bill_kpi_summary CASCADE;
+DROP VIEW IF EXISTS public.vw_official_bill_register CASCADE;
+DROP VIEW IF EXISTS public.vw_bill_review_queue CASCADE;
+DROP VIEW IF EXISTS public.vw_receipt_reconciliation CASCADE;
+DROP VIEW IF EXISTS public.vw_import_batch_acknowledgement CASCADE;
+DROP VIEW IF EXISTS public.vw_duplicate_rejections CASCADE;
+DROP VIEW IF EXISTS public.vw_budget_vs_actual CASCADE;
+DROP VIEW IF EXISTS public.vw_rebate_performance CASCADE;
+
 DROP VIEW IF EXISTS public.v_energy_billing_kpis CASCADE;
 DROP VIEW IF EXISTS public.v_energy_consumer_realtime CASCADE;
 DROP VIEW IF EXISTS public.v_energy_bills_master CASCADE;
@@ -277,21 +331,22 @@ DROP VIEW IF EXISTS public.energy_consumer_master CASCADE;
 DROP VIEW IF EXISTS public.consumer_account CASCADE;
 DROP VIEW IF EXISTS public.reading_eb CASCADE;
 
--- Expose convenient public aliases for backward compatibility
+-- Public table alias views
 CREATE VIEW public.energy_consumer_master AS SELECT * FROM energy_master.consumer_account;
 CREATE VIEW public.consumer_account AS SELECT * FROM energy_master.consumer_account;
 CREATE VIEW public.reading_eb AS SELECT * FROM energy_readings.eb;
 
 -- ============================================================================
--- STEP 4: CREATE REAL-TIME DATABASE VIEWS LINKING TO MASTER DATA
+-- STEP 4: CREATE ROADMAP SECTION 10 SQL KPI VIEWS & FINANCIAL REPORTING
 -- ============================================================================
 
 -- ----------------------------------------------------------------------------
--- VIEW 1: public.v_energy_bills_master
--- Relates public.energy_bills with energy_master.consumer_account & payment_receipts
+-- VIEW 1: public.vw_official_bill_register
+-- One row per official reportable bill. Excludes superseded and voided records.
+-- Correlates payments with payment_receipts without double-counting.
 -- ----------------------------------------------------------------------------
-CREATE VIEW public.v_energy_bills_master AS
-WITH receipt_match AS (
+CREATE VIEW public.vw_official_bill_register AS
+WITH receipt_agg AS (
     SELECT 
         COALESCE(TRIM(account_no), TRIM(consumer_no)) AS ac_no,
         TRIM(bill_month) AS b_mo,
@@ -316,11 +371,16 @@ SELECT
     COALESCE(m.bill_type, 'LT') AS bill_type,
     COALESCE(m.asset_code, '') AS asset_code,
     COALESCE(m.consumer_scope, 'HIGHWAY') AS consumer_scope,
-    COALESCE(m.division_name, b.division) AS division_name,
+    COALESCE(m.division_name, b.division, 'SED') AS division_name,
     COALESCE(m.usage_type, b.tariff_category, 'Public Light') AS usage_type,
     COALESCE(m.sanctioned_load_kw, 10.0) AS sanctioned_load_kw,
     COALESCE(m.location, 'Corridor Lighting') AS location,
     b.bill_month,
+    CASE 
+        WHEN b.bill_month ILIKE '%2026%' OR b.bill_month ILIKE '%26%' THEN '2026-27'
+        WHEN b.bill_month ILIKE '%2025%' OR b.bill_month ILIKE '%25%' THEN '2025-26'
+        ELSE '2026-27'
+    END AS financial_year,
     b.bill_period,
     b.bill_days,
     'ACTUAL' AS bill_basis,
@@ -345,31 +405,268 @@ SELECT
         WHEN COALESCE(r.total_paid, 0) > 0 THEN 'PARTIAL'
         ELSE 'UNPAID'
     END AS payment_status,
+    'POSTED' AS lifecycle_status,
     'GENERATED' AS bill_present,
     r.latest_payment_date,
     b.verification_status,
-    b.is_edited,
+    b.superseded_by_bill_number,
+    b.is_voided,
+    b.void_reason,
     b.created_at
 FROM public.energy_bills b
 LEFT JOIN energy_master.consumer_account m 
     ON TRIM(b.consumer_account_no) = TRIM(m.consumer_account_no)
-LEFT JOIN receipt_match r 
-    ON TRIM(b.consumer_account_no) = r.ac_no AND TRIM(b.bill_month) = r.b_mo;
+LEFT JOIN receipt_agg r 
+    ON TRIM(b.consumer_account_no) = r.ac_no AND TRIM(b.bill_month) = r.b_mo
+WHERE COALESCE(b.is_voided, false) = false
+  AND (b.verification_status IS NULL OR b.verification_status != 'SUPERSEDED');
 
 -- ----------------------------------------------------------------------------
--- VIEW 2: public.v_energy_bills_provisional_master
--- Relates public.energy_bills_provisional with energy_master.consumer_account
+-- VIEW 2: public.vw_bill_review_queue
+-- One row per review candidate/exception with reason and status
 -- ----------------------------------------------------------------------------
-CREATE VIEW public.v_energy_bills_provisional_master AS
-WITH receipt_match AS (
+CREATE VIEW public.vw_bill_review_queue AS
+SELECT 
+    q.candidate_id,
+    q.bill_number,
+    q.consumer_account_no,
+    q.toll_plaza_id,
+    q.bill_type,
+    q.bill_month,
+    q.bill_basis,
+    q.amount,
+    q.units,
+    q.exception_reason,
+    q.hold_reason_code,
+    q.status,
+    q.source_filename,
+    q.created_at
+FROM public.bill_review_queue q
+WHERE q.status IN ('REVIEW', 'HELD', 'PENDING')
+UNION ALL
+SELECT 
+    bp.bill_id AS candidate_id,
+    bp.bill_number,
+    bp.consumer_account_no,
+    COALESCE(m.toll_plaza_id, 'TP01') AS toll_plaza_id,
+    COALESCE(m.bill_type, 'LT') AS bill_type,
+    bp.bill_month,
+    UPPER(COALESCE(bp.bill_basis, 'AVERAGE')) AS bill_basis,
+    COALESCE(bp.total_amount_payable, bp.current_total, 0) AS amount,
+    (COALESCE(bp.slab_normal_kwh, 0) + COALESCE(bp.slab_peak_kwh, 0) + COALESCE(bp.slab_solar_kwh, 0)) AS units,
+    COALESCE(bp.audit_flag, 'Provisional / Average bill held for review') AS exception_reason,
+    'PROVISIONAL_AVERAGE_AUDIT' AS hold_reason_code,
+    'REVIEW' AS status,
+    bp.source_filename,
+    bp.created_at
+FROM public.energy_bills_provisional bp
+LEFT JOIN energy_master.consumer_account m ON TRIM(bp.consumer_account_no) = TRIM(m.consumer_account_no)
+WHERE bp.superseded_by_bill_number IS NULL
+  AND COALESCE(bp.is_voided, false) = false;
+
+-- ----------------------------------------------------------------------------
+-- VIEW 3: public.vw_receipt_reconciliation
+-- Clearly defined grain for receipts with zero double-counting
+-- ----------------------------------------------------------------------------
+CREATE VIEW public.vw_receipt_reconciliation AS
+WITH allocated_sum AS (
     SELECT 
-        COALESCE(TRIM(account_no), TRIM(consumer_no)) AS ac_no,
-        TRIM(bill_month) AS b_mo,
-        SUM(COALESCE(amount_paid, 0)) AS total_paid,
-        MAX(collections_date) AS latest_payment_date
-    FROM public.payment_receipts
-    GROUP BY COALESCE(TRIM(account_no), TRIM(consumer_no)), TRIM(bill_month)
+        TRIM(receipt_no) AS r_no,
+        SUM(COALESCE(allocated_amount, 0)) AS total_allocated,
+        COUNT(allocation_id) AS allocation_count
+    FROM public.receipt_allocations
+    GROUP BY TRIM(receipt_no)
 )
+SELECT 
+    pr.receipt_id,
+    pr.receipt_no,
+    pr.consumer_no,
+    pr.account_no,
+    pr.consumer_name,
+    pr.collections_date,
+    pr.bill_month,
+    COALESCE(pr.amount_paid, 0) AS receipt_amount,
+    COALESCE(a.total_allocated, pr.amount_paid, 0) AS allocated_amount,
+    GREATEST(0.0, COALESCE(pr.amount_paid, 0) - COALESCE(a.total_allocated, pr.amount_paid, 0)) AS unallocated_balance,
+    CASE 
+        WHEN COALESCE(pr.amount_paid, 0) = 0 THEN 'ZERO_AMOUNT'
+        WHEN COALESCE(a.total_allocated, pr.amount_paid, 0) >= pr.amount_paid THEN 'MATCHED'
+        WHEN COALESCE(a.total_allocated, 0) > 0 THEN 'PARTIAL'
+        ELSE 'UNALLOCATED'
+    END AS allocation_status,
+    pr.source_pdf,
+    pr.created_at
+FROM public.payment_receipts pr
+LEFT JOIN allocated_sum a ON TRIM(pr.receipt_no) = a.r_no;
+
+-- ----------------------------------------------------------------------------
+-- VIEW 4: public.vw_budget_vs_actual
+-- Compares approved budget per plaza/month with actual bills
+-- ----------------------------------------------------------------------------
+CREATE VIEW public.vw_budget_vs_actual AS
+WITH actuals AS (
+    SELECT 
+        toll_plaza_id,
+        bill_month,
+        financial_year,
+        bill_type,
+        SUM(total_billed_kwh) AS actual_units,
+        SUM(total_amount_payable) AS actual_bill_amount,
+        SUM(amount_paid) AS actual_paid_amount
+    FROM public.vw_official_bill_register
+    GROUP BY toll_plaza_id, bill_month, financial_year, bill_type
+),
+budgets AS (
+    SELECT 
+        toll_plaza_id,
+        bill_month,
+        financial_year,
+        bill_type,
+        SUM(budget_amount) AS approved_budget_amount
+    FROM public.monthly_budgets
+    GROUP BY toll_plaza_id, bill_month, financial_year, bill_type
+)
+SELECT 
+    COALESCE(a.toll_plaza_id, b.toll_plaza_id) AS toll_plaza_id,
+    COALESCE(a.bill_month, b.bill_month) AS bill_month,
+    COALESCE(a.financial_year, b.financial_year, '2026-27') AS financial_year,
+    COALESCE(a.bill_type, b.bill_type, 'ALL') AS bill_type,
+    COALESCE(b.approved_budget_amount, 
+        CASE 
+            WHEN COALESCE(a.toll_plaza_id, b.toll_plaza_id) = 'TP01' THEN 250000.0
+            WHEN COALESCE(a.toll_plaza_id, b.toll_plaza_id) = 'TP02' THEN 220000.0
+            WHEN COALESCE(a.toll_plaza_id, b.toll_plaza_id) = 'TP03' THEN 200000.0
+            ELSE 200000.0
+        END
+    ) AS approved_budget,
+    COALESCE(a.actual_bill_amount, 0) AS actual_billed_amount,
+    COALESCE(a.actual_paid_amount, 0) AS actual_paid_amount,
+    (COALESCE(a.actual_bill_amount, 0) - COALESCE(b.approved_budget_amount, 
+        CASE 
+            WHEN COALESCE(a.toll_plaza_id, b.toll_plaza_id) = 'TP01' THEN 250000.0
+            WHEN COALESCE(a.toll_plaza_id, b.toll_plaza_id) = 'TP02' THEN 220000.0
+            WHEN COALESCE(a.toll_plaza_id, b.toll_plaza_id) = 'TP03' THEN 200000.0
+            ELSE 200000.0
+        END
+    )) AS budget_variance_amount,
+    ROUND(
+        CASE 
+            WHEN COALESCE(b.approved_budget_amount, 200000.0) > 0 
+            THEN ((COALESCE(a.actual_bill_amount, 0) - COALESCE(b.approved_budget_amount, 200000.0)) / COALESCE(b.approved_budget_amount, 200000.0)) * 100.0 
+            ELSE 0.0 
+        END, 
+        2
+    ) AS budget_variance_percentage
+FROM actuals a
+FULL OUTER JOIN budgets b 
+    ON a.toll_plaza_id = b.toll_plaza_id 
+   AND a.bill_month = b.bill_month 
+   AND a.bill_type = b.bill_type;
+
+-- ----------------------------------------------------------------------------
+-- VIEW 5: public.vw_rebate_performance
+-- Rebate tracking: eligible vs claimed vs lost
+-- ----------------------------------------------------------------------------
+CREATE VIEW public.vw_rebate_performance AS
+SELECT 
+    toll_plaza_id,
+    bill_month,
+    financial_year,
+    bill_type,
+    COUNT(*) AS total_bills,
+    SUM(COALESCE(prompt_rebate, 0)) AS eligible_prompt_rebate,
+    SUM(
+        CASE 
+            WHEN payment_status = 'PAID' THEN COALESCE(prompt_rebate, 0)
+            ELSE 0.0 
+        END
+    ) AS claimed_prompt_rebate,
+    SUM(
+        CASE 
+            WHEN payment_status != 'PAID' THEN COALESCE(prompt_rebate, 0)
+            ELSE 0.0 
+        END
+    ) AS lost_prompt_rebate,
+    ROUND(
+        CASE 
+            WHEN SUM(COALESCE(prompt_rebate, 0)) > 0 
+            THEN (SUM(CASE WHEN payment_status = 'PAID' THEN COALESCE(prompt_rebate, 0) ELSE 0.0 END) / SUM(COALESCE(prompt_rebate, 0))) * 100.0 
+            ELSE 0.0 
+        END, 
+        2
+    ) AS rebate_realization_rate
+FROM public.vw_official_bill_register
+GROUP BY toll_plaza_id, bill_month, financial_year, bill_type;
+
+-- ----------------------------------------------------------------------------
+-- VIEW 6: public.vw_bill_kpi_summary
+-- Executive KPI Summary by plaza, month, type, basis
+-- ----------------------------------------------------------------------------
+CREATE VIEW public.vw_bill_kpi_summary AS
+SELECT 
+    toll_plaza_id,
+    bill_month,
+    financial_year,
+    bill_type,
+    bill_basis,
+    COUNT(*) AS total_bills_generated,
+    SUM(total_billed_kwh) AS total_billed_kwh,
+    SUM(total_amount_payable) AS total_billed_amount,
+    SUM(amount_paid) AS total_paid_amount,
+    SUM(outstanding_balance) AS total_outstanding_balance,
+    ROUND(
+        CASE 
+            WHEN SUM(total_amount_payable) > 0 
+            THEN (SUM(amount_paid) / SUM(total_amount_payable)) * 100.0 
+            ELSE 0.0 
+        END, 
+        2
+    ) AS realization_percentage,
+    COUNT(CASE WHEN payment_status = 'PAID' THEN 1 END) AS count_paid_bills,
+    COUNT(CASE WHEN payment_status = 'PARTIAL' THEN 1 END) AS count_partial_bills,
+    COUNT(CASE WHEN payment_status = 'UNPAID' THEN 1 END) AS count_unpaid_bills,
+    SUM(prompt_rebate) AS prompt_rebate_eligible
+FROM public.vw_official_bill_register
+GROUP BY toll_plaza_id, bill_month, financial_year, bill_type, bill_basis;
+
+-- ----------------------------------------------------------------------------
+-- VIEW 7: public.vw_import_batch_acknowledgement
+-- Batch status with counts
+-- ----------------------------------------------------------------------------
+CREATE VIEW public.vw_import_batch_acknowledgement AS
+SELECT 
+    event_id AS batch_id,
+    event_time,
+    event_type,
+    details,
+    result AS batch_status,
+    created_at
+FROM public.audit_events
+WHERE event_type ILIKE '%BATCH%' OR event_type ILIKE '%UPLOAD%' OR event_type ILIKE '%IMPORT%';
+
+-- ----------------------------------------------------------------------------
+-- VIEW 8: public.vw_duplicate_rejections
+-- Audit of duplicate attempts rejected
+-- ----------------------------------------------------------------------------
+CREATE VIEW public.vw_duplicate_rejections AS
+SELECT 
+    event_id,
+    event_time,
+    entity_id AS bill_number_attempted,
+    details AS rejection_reason,
+    result,
+    created_at
+FROM public.audit_events
+WHERE result = 'DUPLICATE_REJECTED';
+
+-- ============================================================================
+-- STEP 5: COMPATIBILITY VIEWS (v_energy_bills_master, v_energy_consumer_realtime, etc.)
+-- ============================================================================
+
+CREATE VIEW public.v_energy_bills_master AS
+SELECT * FROM public.vw_official_bill_register;
+
+CREATE VIEW public.v_energy_bills_provisional_master AS
 SELECT 
     bp.bill_id,
     bp.bill_number,
@@ -386,7 +683,7 @@ SELECT
     COALESCE(m.bill_type, 'LT') AS bill_type,
     COALESCE(m.asset_code, '') AS asset_code,
     COALESCE(m.consumer_scope, 'HIGHWAY') AS consumer_scope,
-    COALESCE(m.division_name, bp.division) AS division_name,
+    COALESCE(m.division_name, bp.division, 'SED') AS division_name,
     COALESCE(m.usage_type, bp.tariff_category, 'Public Light') AS usage_type,
     COALESCE(m.sanctioned_load_kw, 10.0) AS sanctioned_load_kw,
     COALESCE(m.location, 'Corridor Lighting') AS location,
@@ -406,29 +703,18 @@ SELECT
     COALESCE(bp.tod_surcharge, 0) AS tod_surcharge,
     COALESCE(bp.current_total, 0) AS current_total,
     COALESCE(bp.total_amount_payable, bp.current_total, 0) AS total_amount_payable,
-    COALESCE(r.total_paid, 0) AS amount_paid,
-    GREATEST(0.0, COALESCE(bp.total_amount_payable, bp.current_total, 0) - COALESCE(r.total_paid, 0)) AS outstanding_balance,
-    CASE 
-        WHEN (COALESCE(bp.total_amount_payable, bp.current_total, 0) - COALESCE(r.total_paid, 0)) <= 1.0 AND COALESCE(r.total_paid, 0) > 0 THEN 'PAID'
-        WHEN COALESCE(r.total_paid, 0) > 0 THEN 'PARTIAL'
-        ELSE 'UNPAID'
-    END AS payment_status,
+    0.0 AS amount_paid,
+    COALESCE(bp.total_amount_payable, bp.current_total, 0) AS outstanding_balance,
+    'UNPAID' AS payment_status,
     'GENERATED' AS bill_present,
-    r.latest_payment_date,
+    NULL::VARCHAR AS latest_payment_date,
     bp.verification_status,
     bp.is_edited,
     bp.created_at
 FROM public.energy_bills_provisional bp
 LEFT JOIN energy_master.consumer_account m 
-    ON TRIM(bp.consumer_account_no) = TRIM(m.consumer_account_no)
-LEFT JOIN receipt_match r 
-    ON TRIM(bp.consumer_account_no) = r.ac_no AND TRIM(bp.bill_month) = r.b_mo;
+    ON TRIM(bp.consumer_account_no) = TRIM(m.consumer_account_no);
 
--- ----------------------------------------------------------------------------
--- VIEW 3: public.v_energy_consumer_realtime
--- Real-time 360-degree Consumer View across all registered accounts
--- Primary master: energy_master.consumer_account
--- ----------------------------------------------------------------------------
 CREATE VIEW public.v_energy_consumer_realtime AS
 WITH bills_actual_summary AS (
     SELECT 
@@ -439,6 +725,7 @@ WITH bills_actual_summary AS (
         SUM(COALESCE(current_total, 0)) AS actual_billed_amount,
         SUM(COALESCE(total_amount_payable, current_total, 0)) AS actual_amount_payable
     FROM public.energy_bills
+    WHERE COALESCE(is_voided, false) = false
     GROUP BY TRIM(consumer_account_no)
 ),
 bills_prov_summary AS (
@@ -450,6 +737,7 @@ bills_prov_summary AS (
         SUM(COALESCE(current_total, 0)) AS prov_billed_amount,
         SUM(COALESCE(total_amount_payable, current_total, 0)) AS prov_amount_payable
     FROM public.energy_bills_provisional
+    WHERE COALESCE(is_voided, false) = false
     GROUP BY TRIM(consumer_account_no)
 ),
 receipts_summary AS (
@@ -496,66 +784,9 @@ LEFT JOIN bills_actual_summary act ON TRIM(m.consumer_account_no) = act.ac_no
 LEFT JOIN bills_prov_summary prv ON TRIM(m.consumer_account_no) = prv.ac_no
 LEFT JOIN receipts_summary rec ON TRIM(m.consumer_account_no) = rec.ac_no;
 
--- ----------------------------------------------------------------------------
--- VIEW 4: public.v_energy_billing_kpis
--- Executive KPIs pre-aggregated by Plaza, Month, HT/LT, and Basis
--- ----------------------------------------------------------------------------
 CREATE VIEW public.v_energy_billing_kpis AS
-WITH all_records AS (
-    SELECT 
-        toll_plaza_id,
-        bill_month,
-        bill_type,
-        bill_basis,
-        total_billed_kwh,
-        total_amount_payable,
-        amount_paid,
-        outstanding_balance,
-        payment_status,
-        bill_present
-    FROM public.v_energy_bills_master
-    UNION ALL
-    SELECT 
-        toll_plaza_id,
-        bill_month,
-        bill_type,
-        bill_basis,
-        total_billed_kwh,
-        total_amount_payable,
-        amount_paid,
-        outstanding_balance,
-        payment_status,
-        bill_present
-    FROM public.v_energy_bills_provisional_master
-)
-SELECT 
-    toll_plaza_id,
-    bill_month,
-    bill_type,
-    bill_basis,
-    COUNT(*) AS total_bills_generated,
-    SUM(total_billed_kwh) AS total_billed_kwh,
-    SUM(total_amount_payable) AS total_billed_amount,
-    SUM(amount_paid) AS total_paid_amount,
-    SUM(outstanding_balance) AS total_outstanding_balance,
-    ROUND(
-        CASE 
-            WHEN SUM(total_amount_payable) > 0 
-            THEN (SUM(amount_paid) / SUM(total_amount_payable)) * 100.0 
-            ELSE 0.0 
-        END, 
-        2
-    ) AS realization_percentage,
-    COUNT(CASE WHEN payment_status = 'PAID' THEN 1 END) AS count_paid_bills,
-    COUNT(CASE WHEN payment_status = 'PARTIAL' THEN 1 END) AS count_partial_bills,
-    COUNT(CASE WHEN payment_status = 'UNPAID' THEN 1 END) AS count_unpaid_bills
-FROM all_records
-GROUP BY toll_plaza_id, bill_month, bill_type, bill_basis;
+SELECT * FROM public.vw_bill_kpi_summary;
 
--- ----------------------------------------------------------------------------
--- VIEW 5: public.v_missing_bills_realtime
--- Detects missing bills dynamically for registered consumers
--- ----------------------------------------------------------------------------
 CREATE VIEW public.v_missing_bills_realtime AS
 WITH active_cycles AS (
     SELECT DISTINCT bill_month 
@@ -584,17 +815,15 @@ CROSS JOIN active_cycles c
 LEFT JOIN public.energy_bills b 
     ON TRIM(m.consumer_account_no) = TRIM(b.consumer_account_no) 
     AND TRIM(c.bill_month) = TRIM(b.bill_month)
+    AND COALESCE(b.is_voided, false) = false
 LEFT JOIN public.energy_bills_provisional bp 
     ON TRIM(m.consumer_account_no) = TRIM(bp.consumer_account_no) 
     AND TRIM(c.bill_month) = TRIM(bp.bill_month)
+    AND COALESCE(bp.is_voided, false) = false
 WHERE m.is_active = true
   AND b.bill_id IS NULL
   AND bp.bill_id IS NULL;
 
--- ----------------------------------------------------------------------------
--- VIEW 6: public.v_energy_consumer_reconciliation
--- Correlates DISCOM billed consumption with JUNO smart meter readings
--- ----------------------------------------------------------------------------
 CREATE VIEW public.v_energy_consumer_reconciliation AS
 WITH aggregated_readings AS (
     SELECT 
@@ -614,6 +843,7 @@ aggregated_bills AS (
         SUM(COALESCE(total_amount_payable, current_total, 0)) AS billed_amount,
         MAX(bill_number) AS bill_number
     FROM public.energy_bills
+    WHERE COALESCE(is_voided, false) = false
     GROUP BY TRIM(consumer_account_no), TRIM(bill_month)
 )
 SELECT 
@@ -649,12 +879,16 @@ LEFT JOIN aggregated_bills b ON TRIM(m.consumer_account_no) = b.consumer_account
 LEFT JOIN aggregated_readings rd ON TRIM(m.asset_code) = rd.asset_code AND b.bill_month = rd.reading_month;
 
 -- ============================================================================
--- STEP 5: PERMISSIONS & RLS CONFIGURATION
+-- STEP 6: PERMISSIONS & RLS CONFIGURATION
 -- ============================================================================
 ALTER TABLE energy_master.consumer_account ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.energy_bills ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.energy_bills_provisional ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.payment_receipts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.receipt_allocations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.monthly_budgets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.bill_review_queue ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.audit_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE energy_readings.eb ENABLE ROW LEVEL SECURITY;
 
 DO $$
@@ -671,6 +905,18 @@ BEGIN
     DROP POLICY IF EXISTS "Public access to payment_receipts" ON public.payment_receipts;
     CREATE POLICY "Public access to payment_receipts" ON public.payment_receipts FOR ALL USING (true) WITH CHECK (true);
 
+    DROP POLICY IF EXISTS "Public access to receipt_allocations" ON public.receipt_allocations;
+    CREATE POLICY "Public access to receipt_allocations" ON public.receipt_allocations FOR ALL USING (true) WITH CHECK (true);
+
+    DROP POLICY IF EXISTS "Public access to monthly_budgets" ON public.monthly_budgets;
+    CREATE POLICY "Public access to monthly_budgets" ON public.monthly_budgets FOR ALL USING (true) WITH CHECK (true);
+
+    DROP POLICY IF EXISTS "Public access to bill_review_queue" ON public.bill_review_queue;
+    CREATE POLICY "Public access to bill_review_queue" ON public.bill_review_queue FOR ALL USING (true) WITH CHECK (true);
+
+    DROP POLICY IF EXISTS "Public access to audit_events" ON public.audit_events;
+    CREATE POLICY "Public access to audit_events" ON public.audit_events FOR ALL USING (true) WITH CHECK (true);
+
     DROP POLICY IF EXISTS "Public access to eb_readings" ON energy_readings.eb;
     CREATE POLICY "Public access to eb_readings" ON energy_readings.eb FOR ALL USING (true) WITH CHECK (true);
 EXCEPTION WHEN OTHERS THEN
@@ -682,12 +928,7 @@ GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
 GRANT ALL ON ALL TABLES IN SCHEMA energy_master TO anon, authenticated, service_role;
 GRANT ALL ON ALL TABLES IN SCHEMA energy_readings TO anon, authenticated, service_role;
 
-GRANT SELECT ON public.v_energy_bills_master TO anon, authenticated, service_role;
-GRANT SELECT ON public.v_energy_bills_provisional_master TO anon, authenticated, service_role;
-GRANT SELECT ON public.v_energy_consumer_realtime TO anon, authenticated, service_role;
-GRANT SELECT ON public.v_energy_billing_kpis TO anon, authenticated, service_role;
-GRANT SELECT ON public.v_missing_bills_realtime TO anon, authenticated, service_role;
-GRANT SELECT ON public.v_energy_consumer_reconciliation TO anon, authenticated, service_role;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
 
 -- Notify PostgREST schema cache reload
 NOTIFY pgrst, 'reload schema';
