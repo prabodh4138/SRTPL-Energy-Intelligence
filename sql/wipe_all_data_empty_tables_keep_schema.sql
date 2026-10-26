@@ -4,12 +4,13 @@
 -- 
 -- PURPOSE:
 -- 1. Drops all unnecessary, obsolete, temporary, or experimental tables & views.
--- 2. Empties EVERY table (TRUNCATE TABLE ... RESTART IDENTITY CASCADE).
+-- 2. Ensures all project schemas, tables, and missing columns exist (self-healing DDL).
+-- 3. Empties EVERY table (TRUNCATE TABLE ... RESTART IDENTITY CASCADE).
 --    * 100% CLEAN SLATE — ZERO PRESET DATA, ZERO DUMMY DATA.
 --    * Every table will have exactly 0 rows.
--- 3. Preserves all official project schemas, table structures, columns,
---    constraints, indexes, RLS policies, and approved Section 10 SQL views.
--- 4. Provides a verification query at the end reporting the row count (0) of each table.
+-- 4. Recreates all official Section 10 SQL views with 100% column safety.
+-- 5. Configures RLS, permissions, and reloads PostgREST schema cache.
+-- 6. Provides a verification query confirming 0 rows in every table.
 -- ============================================================================
 
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
@@ -18,7 +19,24 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 -- STEP 1: DROP ALL UNNECESSARY, OBSOLETE, TEMPORARY TABLES & VIEWS
 -- ============================================================================
 
--- 1a. Drop legacy / obsolete views
+-- 1a. Drop all views FIRST with CASCADE to avoid dependency locks
+DROP VIEW IF EXISTS public.vw_bill_kpi_summary CASCADE;
+DROP VIEW IF EXISTS public.vw_official_bill_register CASCADE;
+DROP VIEW IF EXISTS public.vw_bill_review_queue CASCADE;
+DROP VIEW IF EXISTS public.vw_receipt_reconciliation CASCADE;
+DROP VIEW IF EXISTS public.vw_import_batch_acknowledgement CASCADE;
+DROP VIEW IF EXISTS public.vw_duplicate_rejections CASCADE;
+DROP VIEW IF EXISTS public.vw_budget_vs_actual CASCADE;
+DROP VIEW IF EXISTS public.vw_rebate_performance CASCADE;
+
+DROP VIEW IF EXISTS public.v_energy_consumer_realtime CASCADE;
+DROP VIEW IF EXISTS public.v_missing_bills_realtime CASCADE;
+DROP VIEW IF EXISTS public.v_energy_consumer_reconciliation CASCADE;
+DROP VIEW IF EXISTS public.energy_consumer_master CASCADE;
+DROP VIEW IF EXISTS public.consumer_account CASCADE;
+DROP VIEW IF EXISTS public.reading_eb CASCADE;
+
+-- Legacy views
 DROP VIEW IF EXISTS public.v_energy_billing_kpis CASCADE;
 DROP VIEW IF EXISTS public.v_energy_bills_master CASCADE;
 DROP VIEW IF EXISTS public.v_energy_bills_provisional_master CASCADE;
@@ -98,12 +116,26 @@ CREATE TABLE IF NOT EXISTS energy_master.consumer_account (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Self-healing schema upgrade for energy_master.consumer_account
+ALTER TABLE energy_master.consumer_account ADD COLUMN IF NOT EXISTS toll_plaza_id VARCHAR(16);
+ALTER TABLE energy_master.consumer_account ADD COLUMN IF NOT EXISTS bill_type VARCHAR(32) DEFAULT 'LT';
+ALTER TABLE energy_master.consumer_account ADD COLUMN IF NOT EXISTS asset_code VARCHAR(64);
+ALTER TABLE energy_master.consumer_account ADD COLUMN IF NOT EXISTS consumer_scope VARCHAR(64) DEFAULT 'HIGHWAY';
+ALTER TABLE energy_master.consumer_account ADD COLUMN IF NOT EXISTS division_name VARCHAR(128);
+ALTER TABLE energy_master.consumer_account ADD COLUMN IF NOT EXISTS usage_type VARCHAR(128) DEFAULT 'Public Light';
+ALTER TABLE energy_master.consumer_account ADD COLUMN IF NOT EXISTS sanctioned_load_kw NUMERIC(10, 2) DEFAULT 10.0;
+ALTER TABLE energy_master.consumer_account ADD COLUMN IF NOT EXISTS location VARCHAR(256);
+ALTER TABLE energy_master.consumer_account ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;
+ALTER TABLE energy_master.consumer_account ADD COLUMN IF NOT EXISTS remarks TEXT;
+ALTER TABLE energy_master.consumer_account ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE energy_master.consumer_account ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
 CREATE INDEX IF NOT EXISTS idx_consumer_account_asset ON energy_master.consumer_account(asset_code);
 CREATE INDEX IF NOT EXISTS idx_consumer_account_plaza ON energy_master.consumer_account(toll_plaza_id);
 CREATE INDEX IF NOT EXISTS idx_consumer_account_division ON energy_master.consumer_account(division_name);
 CREATE INDEX IF NOT EXISTS idx_consumer_account_bill_type ON energy_master.consumer_account(bill_type);
 
--- Official Actual Energy Bills
+-- Official Actual Energy Bills Table
 CREATE TABLE IF NOT EXISTS public.energy_bills (
     bill_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     source_filename VARCHAR(256) NOT NULL,
@@ -154,7 +186,54 @@ CREATE TABLE IF NOT EXISTS public.energy_bills (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Provisional & Average Bills Audit Archive
+-- Self-healing schema upgrade for public.energy_bills (Ensures ALL columns exist on pre-existing tables)
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS consumer_account_no VARCHAR(64);
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS consumer_id VARCHAR(64);
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS old_consumer_no VARCHAR(64);
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS bill_number VARCHAR(64);
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS bill_month VARCHAR(32);
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS bill_period VARCHAR(64);
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS bill_days VARCHAR(16);
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS bill_issue_date VARCHAR(32);
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS due_date VARCHAR(32);
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS rebate_date VARCHAR(32);
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS tariff_category VARCHAR(64);
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS tariff_type VARCHAR(64);
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS division VARCHAR(128);
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS sub_division VARCHAR(128);
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS section VARCHAR(128);
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS meter_sl_no VARCHAR(64);
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS meter_rent_count VARCHAR(32);
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS security_deposit NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS md_kw NUMERIC(10, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS md_kva NUMERIC(10, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS slab_normal_kwh NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS slab_peak_kwh NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS slab_solar_kwh NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS energy_charges NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS demand_charge NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS tod_incentive NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS tod_surcharge NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS electricity_charges NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS electricity_duty NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS meter_rent NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS customer_service_charge NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS dps_rs NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS current_total NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS prompt_rebate NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS total_amount_payable NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS net_after_rebate NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS verification_status VARCHAR(64) DEFAULT 'VERIFIED_OK';
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS superseded_by_bill_number VARCHAR(64);
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS is_voided BOOLEAN DEFAULT FALSE;
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS void_reason TEXT;
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS is_edited BOOLEAN DEFAULT FALSE;
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS edited_by VARCHAR(128);
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS edit_notes TEXT;
+ALTER TABLE public.energy_bills ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+
+-- Provisional & Average Bills Audit Archive Table
 CREATE TABLE IF NOT EXISTS public.energy_bills_provisional (
     bill_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     source_filename VARCHAR(256) NOT NULL,
@@ -207,6 +286,55 @@ CREATE TABLE IF NOT EXISTS public.energy_bills_provisional (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Self-healing schema upgrade for public.energy_bills_provisional
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS consumer_account_no VARCHAR(64);
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS consumer_id VARCHAR(64);
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS old_consumer_no VARCHAR(64);
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS bill_number VARCHAR(64);
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS bill_month VARCHAR(32);
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS bill_basis VARCHAR(32) DEFAULT 'AVERAGE';
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS audit_flag TEXT;
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS bill_period VARCHAR(64);
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS bill_days VARCHAR(16);
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS bill_issue_date VARCHAR(32);
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS due_date VARCHAR(32);
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS rebate_date VARCHAR(32);
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS tariff_category VARCHAR(64);
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS tariff_type VARCHAR(64);
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS division VARCHAR(128);
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS sub_division VARCHAR(128);
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS section VARCHAR(128);
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS meter_sl_no VARCHAR(64);
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS meter_rent_count VARCHAR(32);
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS security_deposit NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS md_kw NUMERIC(10, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS md_kva NUMERIC(10, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS slab_normal_kwh NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS slab_peak_kwh NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS slab_solar_kwh NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS energy_charges NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS demand_charge NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS tod_incentive NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS tod_surcharge NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS electricity_charges NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS electricity_duty NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS meter_rent NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS customer_service_charge NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS dps_rs NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS current_total NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS prompt_rebate NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS total_amount_payable NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS net_after_rebate NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS verification_status VARCHAR(64) DEFAULT 'PROVISIONAL_AVERAGE_AUDIT';
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS superseded_by_bill_number VARCHAR(64);
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS is_voided BOOLEAN DEFAULT FALSE;
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS void_reason TEXT;
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS is_edited BOOLEAN DEFAULT FALSE;
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS edited_by VARCHAR(128);
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS edit_notes TEXT;
+ALTER TABLE public.energy_bills_provisional ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+
 -- Payment Receipts Table
 CREATE TABLE IF NOT EXISTS public.payment_receipts (
     receipt_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -224,7 +352,19 @@ CREATE TABLE IF NOT EXISTS public.payment_receipts (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Receipt Allocations Table (Multi-to-Multi with Zero Double-Counting)
+-- Self-healing schema upgrade for public.payment_receipts
+ALTER TABLE public.payment_receipts ADD COLUMN IF NOT EXISTS consumer_no VARCHAR(64);
+ALTER TABLE public.payment_receipts ADD COLUMN IF NOT EXISTS account_no VARCHAR(64);
+ALTER TABLE public.payment_receipts ADD COLUMN IF NOT EXISTS consumer_name VARCHAR(256);
+ALTER TABLE public.payment_receipts ADD COLUMN IF NOT EXISTS collections_date VARCHAR(32);
+ALTER TABLE public.payment_receipts ADD COLUMN IF NOT EXISTS amount_paid NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE public.payment_receipts ADD COLUMN IF NOT EXISTS payment_type VARCHAR(32);
+ALTER TABLE public.payment_receipts ADD COLUMN IF NOT EXISTS transaction_id VARCHAR(64);
+ALTER TABLE public.payment_receipts ADD COLUMN IF NOT EXISTS bill_month VARCHAR(32);
+ALTER TABLE public.payment_receipts ADD COLUMN IF NOT EXISTS category VARCHAR(64);
+ALTER TABLE public.payment_receipts ADD COLUMN IF NOT EXISTS source_pdf VARCHAR(256);
+
+-- Receipt Allocations Table
 CREATE TABLE IF NOT EXISTS public.receipt_allocations (
     allocation_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     receipt_no VARCHAR(64) NOT NULL REFERENCES public.payment_receipts(receipt_no) ON DELETE CASCADE,
@@ -294,6 +434,10 @@ CREATE TABLE IF NOT EXISTS energy_readings.eb (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT uq_reading_eb_asset_datetime UNIQUE (asset_code, reading_datetime)
 );
+
+ALTER TABLE energy_readings.eb ADD COLUMN IF NOT EXISTS interval_kwh NUMERIC(14, 2) DEFAULT 0.0;
+ALTER TABLE energy_readings.eb ADD COLUMN IF NOT EXISTS maximum_demand NUMERIC(10, 2) DEFAULT 0.0;
+ALTER TABLE energy_readings.eb ADD COLUMN IF NOT EXISTS pf NUMERIC(4, 2) DEFAULT 1.0;
 
 CREATE TABLE IF NOT EXISTS energy_readings.dg (
     reading_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -416,22 +560,6 @@ END $$;
 -- ============================================================================
 -- STEP 4: RECREATE OFFICIAL ROADMAP SECTION 10 SQL VIEWS
 -- ============================================================================
-
-DROP VIEW IF EXISTS public.vw_bill_kpi_summary CASCADE;
-DROP VIEW IF EXISTS public.vw_official_bill_register CASCADE;
-DROP VIEW IF EXISTS public.vw_bill_review_queue CASCADE;
-DROP VIEW IF EXISTS public.vw_receipt_reconciliation CASCADE;
-DROP VIEW IF EXISTS public.vw_import_batch_acknowledgement CASCADE;
-DROP VIEW IF EXISTS public.vw_duplicate_rejections CASCADE;
-DROP VIEW IF EXISTS public.vw_budget_vs_actual CASCADE;
-DROP VIEW IF EXISTS public.vw_rebate_performance CASCADE;
-
-DROP VIEW IF EXISTS public.v_energy_consumer_realtime CASCADE;
-DROP VIEW IF EXISTS public.v_missing_bills_realtime CASCADE;
-DROP VIEW IF EXISTS public.v_energy_consumer_reconciliation CASCADE;
-DROP VIEW IF EXISTS public.energy_consumer_master CASCADE;
-DROP VIEW IF EXISTS public.consumer_account CASCADE;
-DROP VIEW IF EXISTS public.reading_eb CASCADE;
 
 -- Public schema alias views
 CREATE VIEW public.energy_consumer_master AS SELECT * FROM energy_master.consumer_account;
