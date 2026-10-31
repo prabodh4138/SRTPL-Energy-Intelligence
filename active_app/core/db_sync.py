@@ -1346,7 +1346,11 @@ def format_bill_for_db(raw_bill: dict[str, Any], verifier_result: dict[str, Any]
         "section": str(raw_bill.get("Section") or raw_bill.get("section") or ""),
         "meter_sl_no": str(raw_bill.get("Meter Sl. No.") or raw_bill.get("meter_sl_no") or ""),
         "meter_rent_count": str(raw_bill.get("Meter Rent Count") or raw_bill.get("meter_rent_count") or ""),
+        "contract_demand": str(raw_bill.get("Contract Demand") or raw_bill.get("contract_demand") or ""),
         "security_deposit": _num(raw_bill.get("Security Deposit") or raw_bill.get("security_deposit")),
+        "md": _num(raw_bill.get("MD") or raw_bill.get("md")),
+        "cuml_md_kw": _num(raw_bill.get("CUML MD-KW") or raw_bill.get("cuml_md_kw")),
+        "cuml_md_kva": _num(raw_bill.get("CUML MD-KVA") or raw_bill.get("cuml_md_kva")),
         "md_kw": _num(raw_bill.get("MD-KW") or raw_bill.get("md_kw")),
         "md_kva": _num(raw_bill.get("MD-KVA") or raw_bill.get("md_kva")),
         "slab_normal_kwh": _num(raw_bill.get("Slab Normal - KWH") or raw_bill.get("slab_normal_kwh")),
@@ -1449,6 +1453,8 @@ def _execute_bill_upsert_with_auto_healing(
             return True, None, cleaned_chunk
         except Exception as e:
             err_str = str(e)
+            if any(k in err_str.lower() for k in ["timeout", "connection", "winerror", "failed to establish", "connect"]):
+                return False, err_str, cleaned_chunk
             missing_col = _extract_missing_column(err_str)
             if missing_col:
                 _UNAVAILABLE_ENERGY_BILLS_COLUMNS.add(missing_col)
@@ -1461,6 +1467,8 @@ def _execute_bill_upsert_with_auto_healing(
                 return True, None, cleaned_chunk
             except Exception as e2:
                 err_str2 = str(e2)
+                if any(k in err_str2.lower() for k in ["timeout", "connection", "winerror", "failed to establish", "connect"]):
+                    return False, err_str2, cleaned_chunk
                 missing_col2 = _extract_missing_column(err_str2)
                 if missing_col2:
                     _UNAVAILABLE_ENERGY_BILLS_COLUMNS.add(missing_col2)

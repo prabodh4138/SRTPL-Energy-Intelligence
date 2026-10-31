@@ -31,6 +31,7 @@ def extract_md_bill_data(pdf_file, source_name, extracted_text=None):
     entry["Consumer ID"] = grab(r"Consumer ID\s*:\s*([A-Za-z0-9]+)")
     entry["Bill Number"] = grab(r"Bill Number\s*:\s*([A-Za-z0-9]+)")
     entry["Bill Month"] = grab(r"Bill Month\s*:\s*(\d{4}/\d{2})")
+    entry["Contract Demand"] = grab(r"Contract Demand\s*:\s*([^:\n]+?)(?=\s+(?:Meter Sl|DT No|Pole No|\n|$))")
 
     # ---------- NET PAYABLE AMOUNT AFTER & BEFORE RBT DT ----------
     entry["Net Payable Amount After Rbt. Dt.(Rs.)"] = ""
@@ -41,56 +42,55 @@ def extract_md_bill_data(pdf_file, source_name, extracted_text=None):
             re.search(r"Before\s*Rbt\.?\s*Dt", line, re.IGNORECASE)
             and re.search(r"After\s*Rbt\.?\s*Dt", line, re.IGNORECASE)
         ):
-            numbers = []
             for j in range(i + 1, min(i + 4, len(lines))):
-                numbers.extend(
-                    re.findall(
-                        r"[-+]?\d[\d,]*\.\d{2}",
-                        lines[j]
-                    )
-                )
-            if len(numbers) >= 2:
-                entry["Net Payable Amount Before Rbt. Dt.(Rs.)"] = numbers[0].replace(",", "")
-                entry["Net Payable Amount After Rbt. Dt.(Rs.)"] = numbers[1].replace(",", "")
+                nums = re.findall(r"[-+]?\d[\d,]*\.\d{2}", lines[j])
+                if len(nums) >= 2:
+                    entry["Net Payable Amount Before Rbt. Dt.(Rs.)"] = nums[0].replace(",", "")
+                    entry["Net Payable Amount After Rbt. Dt.(Rs.)"] = nums[1].replace(",", "")
+                    break
             break
 
-    # ---------- MD-KW (CURRENT READING & BILLABLE FALLBACK) ----------
-    entry["MD-KW"] = ""
+    # ---------- MD & CUML MD (KW & KVA) ----------
+    cuml_md_kw = ""
+    cuml_md_kva = ""
+    md_kw = ""
+    md_kva = ""
+    for l in lines:
+        if re.search(r"^\s*CUML\s+MD[-\s]*KW\b", l, re.IGNORECASE):
+            nums = re.findall(r"[\d,]+\.\d+", l)
+            cuml_md_kw = nums[1].replace(",", "") if len(nums) >= 2 else (nums[-1].replace(",", "") if nums else "")
+        elif re.search(r"^\s*CUML\s+MD[-\s]*KVA\b", l, re.IGNORECASE):
+            nums = re.findall(r"[\d,]+\.\d+", l)
+            cuml_md_kva = nums[1].replace(",", "") if len(nums) >= 2 else (nums[-1].replace(",", "") if nums else "")
+        elif re.search(r"^\s*MD[-\s]*KW\b", l, re.IGNORECASE) and not re.search(r"CUML|Normal", l, re.IGNORECASE):
+            nums = re.findall(r"[\d,]+\.\d+", l)
+            md_kw = nums[1].replace(",", "") if len(nums) >= 2 else (nums[-1].replace(",", "") if nums else "")
+        elif re.search(r"^\s*MD[-\s]*KVA\b", l, re.IGNORECASE) and not re.search(r"CUML|Normal", l, re.IGNORECASE):
+            nums = re.findall(r"[\d,]+\.\d+", l)
+            md_kva = nums[1].replace(",", "") if len(nums) >= 2 else (nums[-1].replace(",", "") if nums else "")
 
-    for line in lines:
-        if re.search(r"\b(CUML\s*)?MD[-\s]*KW\b", line, re.IGNORECASE):
-            nums = re.findall(r"\d+\.\d+", line)
-            if len(nums) >= 2:
-                entry["MD-KW"] = nums[1]
-            break
+    entry["CUML MD-KW"] = cuml_md_kw
+    entry["CUML MD-KVA"] = cuml_md_kva
+    entry["MD-KW"] = md_kw or cuml_md_kw
+    entry["MD-KVA"] = md_kva or cuml_md_kva
 
+    # Billable Demand fallback
     if not entry["MD-KW"]:
         m_bkw = re.search(r"Billable Demand-KW\s*:\s*([\d\.]+)", text)
         if m_bkw:
             entry["MD-KW"] = m_bkw.group(1).strip()
-        else:
-            m_ckw = re.search(r"Contract Demand\s*:\s*([\d\.]+)\s*KW", text, re.IGNORECASE)
-            if m_ckw:
-                entry["MD-KW"] = m_ckw.group(1).strip()
-
-    # ---------- MD-KVA (CURRENT READING & BILLABLE FALLBACK) ----------
-    entry["MD-KVA"] = ""
-
-    for line in lines:
-        if re.search(r"\b(CUML\s*)?MD[-\s]*KVA\b", line, re.IGNORECASE):
-            nums = re.findall(r"\d+\.\d+", line)
-            if len(nums) >= 2:
-                entry["MD-KVA"] = nums[1]
-            break
-
     if not entry["MD-KVA"]:
         m_bkva = re.search(r"Billable Demand-KVA\s*:\s*([\d\.]+)", text)
         if m_bkva:
             entry["MD-KVA"] = m_bkva.group(1).strip()
-        else:
-            m_ckva = re.search(r"Contract Demand\s*:\s*([\d\.]+)\s*KVA", text, re.IGNORECASE)
-            if m_ckva:
-                entry["MD-KVA"] = m_ckva.group(1).strip()
+
+    is_ht = "HT" in text.upper() or "KVA" in (entry.get("Contract Demand") or "").upper()
+    primary_md = entry["MD-KVA"] if is_ht else entry["MD-KW"]
+    if not primary_md or primary_md in ("0.0000", "0"):
+        primary_md = entry["MD-KW"] if is_ht else entry["MD-KVA"]
+    if not primary_md or primary_md in ("0.0000", "0"):
+        primary_md = cuml_md_kva if is_ht else cuml_md_kw
+    entry["MD"] = primary_md
 
     # ---------- SOURCE ----------
     entry["Source PDF"] = source_name

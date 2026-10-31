@@ -3,8 +3,7 @@ import os
 import sys
 import time
 import json
-import tempfile
-import shutil
+import asyncio
 from typing import Any
 from concurrent.futures import ThreadPoolExecutor
 import pdfplumber
@@ -187,31 +186,6 @@ def _extract_single_item(item_tuple: tuple[int, Any]) -> dict[str, Any]:
         }
 
 
-@router.post("/upload")
-async def upload_and_process_bills(files: list[UploadFile] = File(...)):
-    """Accepts multiple PDF bills/receipts or ZIP archives, extracts in parallel, audits, and rejects duplicates."""
-    if not files:
-        raise HTTPException(status_code=400, detail="No files provided.")
-
-    # Convert uploaded files into format expected by extract_pdfs_from_inputs
-    wrapped_files = []
-    for f in files:
-        content = await f.read()
-        b_io = io.BytesIO(content)
-        b_io.name = f.filename
-        wrapped_files.append(b_io)
-
-    unpacked_items = extract_pdfs_from_inputs(wrapped_files)
-    if not unpacked_items:
-        return {"processed": 0, "candidates": []}
-
-    # Parallel extraction across available CPU workers
-    workers_count = min(4, os.cpu_count() or 4, len(unpacked_items))
-    indexed_items = [(idx, item) for idx, item in enumerate(unpacked_items)]
-
-    with ThreadPoolExecutor(max_workers=workers_count) as executor:
-        extracted_data = list(executor.map(_extract_single_item, indexed_items))
-
 def _process_candidate(
     item: dict[str, Any],
     existing_bills: set[str],
@@ -262,7 +236,7 @@ def _process_candidate(
             }
         else:
             seen_receipts_in_batch.add(rec_no)
-            save_payment_receipt(rec, prevent_duplicates=True)
+            save_payment_receipt(rec, prevent_duplicates=False)
             stats["verified"] += 1
             return {
                 "file": fname,
@@ -316,7 +290,7 @@ def _process_candidate(
                     "hold_reason_code": "PROVISIONAL_AVERAGE_AUDIT",
                     "source_filename": fname,
                     "raw_payload": clean_payload,
-                }, prevent_duplicates=True)
+                }, prevent_duplicates=False)
                 stats["review"] += 1
                 return {
                     "file": fname,
@@ -341,7 +315,7 @@ def _process_candidate(
                     "hold_reason_code": "ARITHMETIC_MISMATCH",
                     "source_filename": fname,
                     "raw_payload": clean_payload,
-                }, prevent_duplicates=True)
+                }, prevent_duplicates=False)
                 stats["review"] += 1
                 return {
                     "file": fname,
@@ -354,7 +328,7 @@ def _process_candidate(
                     "payload": bill_dict,
                 }
             else:
-                save_energy_bill(bill_dict, v_res, prevent_duplicates=True)
+                save_energy_bill(bill_dict, v_res, prevent_duplicates=False)
                 log_audit_event("AUTO_POSTED", f"Bill {b_no} verified and posted", "BILL", b_no, "POSTED")
                 stats["verified"] += 1
                 return {
@@ -371,32 +345,25 @@ def _process_candidate(
 
 @router.post("/upload")
 async def upload_and_process_bills(files: list[UploadFile] = File(...)):
-    """Accepts multiple PDF bills/receipts or ZIP archives, extracts in parallel, audits, and rejects duplicates.
-    Files are stored temporarily on disk and immediately deleted after extraction.
+    """Accepts multiple PDF bills/receipts or ZIP archives, extracts in-memory, audits, and rejects duplicates.
+    PDF files are never written to disk or stored in the database.
     """
     if not files:
         raise HTTPException(status_code=400, detail="No files provided.")
 
-    temp_dir = tempfile.mkdtemp(prefix="srtpl_bill_extract_")
-    try:
-        temp_file_paths = []
-        for f in files:
-            t_path = os.path.join(temp_dir, f.filename)
-            content = await f.read()
-            with open(t_path, "wb") as out_fp:
-                out_fp.write(content)
-            temp_file_paths.append(t_path)
+    wrapped_files = []
+    for f in files:
+        if hasattr(f.file, "seek"):
+            f.file.seek(0)
+        content = f.file.read() if hasattr(f.file, "read") else await f.read()
+        b_io = io.BytesIO(content)
+        b_io.name = f.filename
+        wrapped_files.append(b_io)
 
-        unpacked_items = extract_pdfs_from_inputs(temp_file_paths)
+    try:
+        unpacked_items = extract_pdfs_from_inputs(wrapped_files)
         if not unpacked_items:
             return {"processed": 0, "candidates": []}
-
-        # Parallel extraction across available CPU workers
-        workers_count = min(4, os.cpu_count() or 4, len(unpacked_items))
-        indexed_items = [(idx, item) for idx, item in enumerate(unpacked_items)]
-
-        with ThreadPoolExecutor(max_workers=workers_count) as executor:
-            extracted_data = list(executor.map(_extract_single_item, indexed_items))
 
         # Pre-fetch existing database identifiers for instant O(1) duplicate rejection
         existing_bills = get_existing_bill_numbers()
@@ -408,9 +375,10 @@ async def upload_and_process_bills(files: list[UploadFile] = File(...)):
         results = []
         stats = {"verified": 0, "review": 0, "duplicates_rejected": 0, "failed": 0}
 
-        for item in extracted_data:
+        for idx, item in enumerate(unpacked_items):
+            extracted_item = _extract_single_item((idx, item))
             cand = _process_candidate(
-                item, existing_bills, existing_receipts, seen_bills_in_batch, seen_receipts_in_batch, stats
+                extracted_item, existing_bills, existing_receipts, seen_bills_in_batch, seen_receipts_in_batch, stats
             )
             results.append(cand)
 
@@ -423,35 +391,38 @@ async def upload_and_process_bills(files: list[UploadFile] = File(...)):
             "candidates": results,
         }
     finally:
-        # STRICT CLEANUP: Purge all temporary files from server
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        # STRICT CLEANUP: Close all in-memory streams
+        for b in wrapped_files:
+            try:
+                b.close()
+            except Exception:
+                pass
 
 
 @router.post("/upload-stream")
 async def upload_and_process_bills_stream(files: list[UploadFile] = File(...)):
-    """Accepts PDF bills/receipts or ZIP archives, unpacks into temporary storage,
+    """Accepts PDF bills/receipts or ZIP archives in memory, extracts with sub-second latency,
     and streams real-time extraction progress per bill as NDJSON:
       {"type": "item_progress", "current": 1, "total": 10, "file": "bill1.pdf", "candidate": {...}}
       ...
       {"type": "complete", "total": 10, "verified": 8, "review": 1, "duplicates_rejected": 1, "failed": 0, "candidates": [...]}
-    After extraction, all temporary storage is strictly wiped and purged.
+    Zero disk storage, zero raw PDF bytes in database.
     """
     if not files:
         raise HTTPException(status_code=400, detail="No files provided.")
 
-    temp_dir = tempfile.mkdtemp(prefix="srtpl_bill_stream_")
+    wrapped_files = []
+    for f in files:
+        if hasattr(f.file, "seek"):
+            f.file.seek(0)
+        content = f.file.read() if hasattr(f.file, "read") else await f.read()
+        b_io = io.BytesIO(content)
+        b_io.name = f.filename
+        wrapped_files.append(b_io)
 
     async def stream_generator():
         try:
-            temp_file_paths = []
-            for f in files:
-                t_path = os.path.join(temp_dir, f.filename)
-                content = await f.read()
-                with open(t_path, "wb") as out_fp:
-                    out_fp.write(content)
-                temp_file_paths.append(t_path)
-
-            unpacked_items = extract_pdfs_from_inputs(temp_file_paths)
+            unpacked_items = extract_pdfs_from_inputs(wrapped_files)
             total_count = len(unpacked_items)
 
             if total_count == 0:
@@ -488,7 +459,7 @@ async def upload_and_process_bills_stream(files: list[UploadFile] = File(...)):
                 )
                 results.append(cand)
 
-                # Stream progress for each individual bill extracted
+                # Stream progress for each individual bill extracted immediately
                 yield json.dumps({
                     "type": "item_progress",
                     "current": idx + 1,
@@ -511,8 +482,12 @@ async def upload_and_process_bills_stream(files: list[UploadFile] = File(...)):
             }) + "\n"
 
         finally:
-            # STRICT CLEANUP: Purge all temporary files from server
-            shutil.rmtree(temp_dir, ignore_errors=True)
+            # STRICT CLEANUP: Close in-memory buffers
+            for b in wrapped_files:
+                try:
+                    b.close()
+                except Exception:
+                    pass
 
     return StreamingResponse(stream_generator(), media_type="application/x-ndjson")
 
