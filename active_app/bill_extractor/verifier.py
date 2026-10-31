@@ -183,9 +183,21 @@ def verify_bill_calculations(bill_data: dict, raw_text: str = "") -> dict:
     all_matched = match_energy_charges and match_elec_charges and match_curr_total
     audit_status = "VERIFIED ✓" if all_matched else "AUDIT REQUIRED ⚠️"
 
+    mismatch_reasons = []
+    if not match_energy_charges:
+        mismatch_reasons.append(f"Energy charges mismatch (Cal ₹{cal_energy_charges:.2f} vs Ext ₹{ext_energy_charges:.2f})")
+    if not match_elec_charges:
+        mismatch_reasons.append(f"Electricity charge mismatch (Cal ₹{cal_elec_charges:.2f} vs Ext ₹{ext_elec_charge:.2f})")
+    if not match_curr_total:
+        mismatch_reasons.append(f"Current total mismatch (Cal ₹{cal_curr_total:.2f} vs Ext ₹{ext_curr_total:.2f})")
+    mismatch_str = "; ".join(mismatch_reasons) if mismatch_reasons else "All calculations verified"
+
     ai_cls = classify_bill_format(text)
 
     return {
+        "is_valid": bool(all_matched),
+        "audit_status": audit_status,
+        "mismatch_reason": mismatch_str,
         "tariff_category": cat,
         "tariff_type": tariff_type,
         "tariff_rules": tariff_rules,
