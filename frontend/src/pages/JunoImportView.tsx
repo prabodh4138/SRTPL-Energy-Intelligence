@@ -15,6 +15,9 @@ export const JunoImportView: React.FC = () => {
   const [equipment, setEquipment] = useState(EQUIPMENT_OPTIONS[0]);
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadPhase, setUploadPhase] = useState<'idle' | 'uploading' | 'processing' | 'done'>('idle');
+  const [bytesStats, setBytesStats] = useState<{ loaded: number; total: number }>({ loaded: 0, total: 0 });
   const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const fetchBatches = async () => {
@@ -35,9 +38,19 @@ export const JunoImportView: React.FC = () => {
     if (!file) return;
 
     setUploading(true);
+    setUploadPhase('uploading');
+    setUploadProgress(0);
     setStatusMsg(null);
+
     try {
-      const res = await api.uploadJunoFile(equipment, file);
+      const res = await api.uploadJunoFile(equipment, file, (percent, loaded, total) => {
+        setUploadProgress(percent);
+        setBytesStats({ loaded, total });
+        if (percent >= 100) {
+          setUploadPhase('processing');
+        }
+      });
+      setUploadPhase('done');
       if (res.status === 'SUCCESS') {
         setStatusMsg({ type: 'success', text: res.message });
         setFile(null);
@@ -46,6 +59,7 @@ export const JunoImportView: React.FC = () => {
         setStatusMsg({ type: 'error', text: res.message });
       }
     } catch (err: any) {
+      setUploadPhase('idle');
       setStatusMsg({ type: 'error', text: 'Upload failed: ' + err.message });
     } finally {
       setUploading(false);
@@ -109,6 +123,54 @@ export const JunoImportView: React.FC = () => {
               {uploading ? 'Ingesting Batch...' : 'Process Juno Batch'}
             </button>
           </div>
+
+          {/* Real-time Upload Progress Bar */}
+          {uploadPhase !== 'idle' && (
+            <div className="p-4 rounded-2xl bg-slate-950/60 border border-slate-800 space-y-2 mt-4 animate-in fade-in duration-200">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-semibold text-slate-200 flex items-center gap-2">
+                  {uploadPhase === 'uploading' && (
+                    <>
+                      <UploadCloud className="w-4 h-4 text-sky-400 animate-bounce" />
+                      Uploading log file: {uploadProgress}%
+                    </>
+                  )}
+                  {uploadPhase === 'processing' && (
+                    <>
+                      <UploadCloud className="w-4 h-4 text-emerald-400 animate-spin" />
+                      Ingesting interval records & validating duplicate hash...
+                    </>
+                  )}
+                  {uploadPhase === 'done' && (
+                    <>
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                      Ingestion complete!
+                    </>
+                  )}
+                </span>
+                <span className="font-mono text-emerald-400 font-bold">
+                  {uploadPhase === 'uploading'
+                    ? `${uploadProgress}% (${(bytesStats.loaded / 1024).toFixed(1)} KB / ${(bytesStats.total / 1024).toFixed(1)} KB)`
+                    : '100%'}
+                </span>
+              </div>
+
+              <div className="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all duration-300 ${
+                    uploadPhase === 'done'
+                      ? 'bg-emerald-500'
+                      : uploadPhase === 'processing'
+                      ? 'bg-gradient-to-r from-emerald-500 to-sky-500 animate-pulse'
+                      : 'bg-sky-500'
+                  }`}
+                  style={{
+                    width: `${uploadPhase === 'processing' || uploadPhase === 'done' ? 100 : uploadProgress}%`,
+                  }}
+                />
+              </div>
+            </div>
+          )}
         </form>
 
         {statusMsg && (

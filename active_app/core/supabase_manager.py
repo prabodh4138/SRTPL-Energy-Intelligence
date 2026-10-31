@@ -71,8 +71,14 @@ def get_supabase_client():
     if not url or not key:
         return None
     try:
-        from supabase import create_client
-        return create_client(url, key)
+        from supabase import create_client, ClientOptions
+        return create_client(url, key, options=ClientOptions(postgrest_client_timeout=5.0))
+    except Exception:
+        try:
+            from supabase import create_client
+            return create_client(url, key)
+        except Exception:
+            return None
     except Exception:
         return None
 

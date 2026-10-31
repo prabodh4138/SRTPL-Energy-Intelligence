@@ -1480,9 +1480,20 @@ def _execute_bill_upsert_with_auto_healing(
     return False, "Exceeded retry attempts adapting to table columns", cleaned_chunk
 
 
-def save_energy_bill(raw_bill: dict[str, Any], verifier_result: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Saves or upserts an extracted energy bill into public.energy_bills with auto-healing schema adaptation."""
+def save_energy_bill(raw_bill: dict[str, Any], verifier_result: dict[str, Any] | None = None, prevent_duplicates: bool = True) -> dict[str, Any]:
+    """Saves an extracted energy bill into public.energy_bills with duplicate rejection and auto-healing schema adaptation."""
     payload = format_bill_for_db(raw_bill, verifier_result)
+    b_no = str(payload.get("bill_number") or "").strip()
+    if prevent_duplicates and b_no:
+        existing = get_existing_bill_numbers()
+        if b_no in existing:
+            return {
+                "status": "DUPLICATE_REJECTED",
+                "error": f"Duplicate rejected: Bill {b_no} already exists in database.",
+                "cloud_saved": False,
+                "bill_number": b_no,
+                "payload": payload,
+            }
     client = get_supabase_client()
     cloud_saved = False
     cloud_error = None
@@ -2577,20 +2588,58 @@ def get_all_payment_receipts() -> pd.DataFrame:
     return pd.DataFrame(DEFAULT_PAYMENT_RECEIPTS)
 
 
-def save_payment_receipt(receipt_record: dict[str, Any]) -> dict[str, Any]:
-    """Upsert a payment receipt into public.payment_receipts and local session state."""
+def get_existing_receipt_numbers() -> set[str]:
+    """Returns set of all receipt numbers already present in Supabase or session cache."""
+    recs = set()
+    client = get_supabase_client()
+    if client:
+        try:
+            res = client.table("payment_receipts").select("receipt_no").execute()
+            if res and res.data:
+                for r in res.data:
+                    v = str(r.get("receipt_no") or "").strip()
+                    if v:
+                        recs.add(v)
+        except Exception:
+            pass
+    if "saved_payment_receipts" in st.session_state:
+        for k in st.session_state["saved_payment_receipts"].keys():
+            if k:
+                recs.add(str(k).strip())
+    for r in DEFAULT_PAYMENT_RECEIPTS:
+        if r.get("receipt_no"):
+            recs.add(str(r["receipt_no"]).strip())
+    return recs
+
+
+def save_payment_receipt(receipt_record: dict[str, Any], prevent_duplicates: bool = True) -> dict[str, Any]:
+    """Saves a payment receipt into public.payment_receipts and local session state with duplicate rejection."""
     r_no = str(receipt_record.get("receipt_no") or "").strip()
     if not r_no:
         return {"status": "ERROR", "error": "Receipt number is required."}
+
+    if prevent_duplicates:
+        existing = get_existing_receipt_numbers()
+        if r_no in existing:
+            return {
+                "status": "DUPLICATE_REJECTED",
+                "error": f"Duplicate rejected: Receipt {r_no} already exists in database.",
+                "cloud_synced": False,
+                "payload": receipt_record,
+            }
 
     client = get_supabase_client()
     cloud_synced = False
     if client:
         try:
-            client.table("payment_receipts").upsert(receipt_record, on_conflict="receipt_no").execute()
+            client.table("payment_receipts").insert(receipt_record).execute()
             cloud_synced = True
         except Exception:
-            pass
+            try:
+                client.table("payment_receipts").upsert(receipt_record, on_conflict="receipt_no").execute()
+                cloud_synced = True
+            except Exception:
+                pass
 
     if "saved_payment_receipts" not in st.session_state:
         st.session_state["saved_payment_receipts"] = {
@@ -3026,8 +3075,17 @@ def get_bill_review_queue() -> pd.DataFrame:
     return pd.DataFrame(st.session_state["bill_review_queue"])
 
 
-def save_to_review_queue(candidate: dict[str, Any]) -> dict[str, Any]:
-    """Adds an uncertain, mismatched or provisional bill to review queue."""
+def save_to_review_queue(candidate: dict[str, Any], prevent_duplicates: bool = True) -> dict[str, Any]:
+    """Adds an uncertain, mismatched or provisional bill to review queue with duplicate rejection."""
+    b_no = str(candidate.get("bill_number") or "").strip()
+    if prevent_duplicates and b_no:
+        existing = get_existing_bill_numbers()
+        if b_no in existing:
+            return {
+                "status": "DUPLICATE_REJECTED",
+                "error": f"Duplicate rejected: Bill {b_no} already exists in database or review queue."
+            }
+
     client = get_supabase_client()
     cid = candidate.get("candidate_id") or f"REV-{int(time.time()*1000)}"
     candidate["candidate_id"] = cid
@@ -3040,6 +3098,11 @@ def save_to_review_queue(candidate: dict[str, Any]) -> dict[str, Any]:
             pass
 
     q = st.session_state.setdefault("bill_review_queue", [])
+    if any(str(c.get("bill_number") or "").strip() == b_no for c in q if b_no):
+        return {
+            "status": "DUPLICATE_REJECTED",
+            "error": f"Duplicate rejected: Bill {b_no} already exists in review queue."
+        }
     q.append(candidate)
     log_audit_event("HELD_IN_REVIEW", f"Bill {candidate.get('bill_number')} held: {candidate.get('exception_reason')}", "CANDIDATE", cid, "HELD")
     return {"status": "SUCCESS", "candidate_id": cid}

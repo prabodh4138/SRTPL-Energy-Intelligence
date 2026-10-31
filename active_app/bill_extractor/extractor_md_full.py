@@ -2,7 +2,7 @@ import pdfplumber
 import re
 
 
-def extract_md_bill_data(pdf_file, source_name):
+def extract_md_bill_data(pdf_file, source_name, extracted_text=None):
     """
     pdf_file   : file-like object (BytesIO / uploaded file)
     source_name: original PDF filename
@@ -12,9 +12,12 @@ def extract_md_bill_data(pdf_file, source_name):
 
     entry = {}
 
-    with pdfplumber.open(pdf_file) as pdf:
-        page = pdf.pages[0]
-        text = page.extract_text() or ""
+    if extracted_text is not None:
+        text = extracted_text
+    else:
+        with pdfplumber.open(pdf_file) as pdf:
+            page = pdf.pages[0]
+            text = page.extract_text() or ""
 
     # Normalize lines
     lines = [l.strip() for l in text.splitlines() if l.strip()]

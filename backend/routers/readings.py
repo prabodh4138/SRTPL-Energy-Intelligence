@@ -124,11 +124,20 @@ def add_reading(asset_type: str, payload: AddReadingPayload):
     if atype not in EQUIPMENT_DATA:
         raise HTTPException(status_code=404, detail=f"Asset type '{asset_type}' not recognized.")
     
+    today_str = "2026-10-31"
+    # Duplicate rejection at application and database level
+    for r in EQUIPMENT_DATA[atype]["records"]:
+        if r.get("meter_code") == payload.meter_code and r.get("date") == today_str:
+            raise HTTPException(
+                status_code=409,
+                detail=f"DUPLICATE REJECTED: Meter reading for '{payload.meter_code}' on {today_str} already recorded in database."
+            )
+
     new_record = {
         "id": f"{atype.upper()}-{len(EQUIPMENT_DATA[atype]['records']) + 1:02d}",
         "meter_code": payload.meter_code,
         "plaza": payload.plaza,
-        "date": "2026-10-31",
+        "date": today_str,
         "curr_kwh": payload.reading_value,
         "status": "VALID",
         "notes": payload.notes,

@@ -48,13 +48,13 @@ async def import_juno_file(equipment: str, file: UploadFile = File(...)) -> dict
 
     sha256_hash = hashlib.sha256(content).hexdigest()
 
-    # Check for duplicate
+    # Check for duplicate by SHA-256 hash or filename
     for b in IMPORT_BATCHES:
-        if b["sha256"] == sha256_hash:
+        if b["sha256"] == sha256_hash or b["file_name"] == file.filename:
             log_audit_event("DUPLICATE_REJECTED", f"Blocked duplicate file {file.filename} (Hash: {sha256_hash[:8]}...)", "FILE", file.filename, "REJECTED")
             return {
                 "status": "DUPLICATE_REJECTED",
-                "message": f"File '{file.filename}' with identical SHA-256 was already ingested in batch {b['batch_id']}.",
+                "message": f"DUPLICATE REJECTED: File '{file.filename}' was already ingested in batch {b['batch_id']}.",
                 "existing_batch": b,
             }
 

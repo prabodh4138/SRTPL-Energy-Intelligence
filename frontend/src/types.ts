@@ -30,7 +30,7 @@ export interface CandidateResult {
   month: string;
   detail: string;
   amount: number;
-  result: 'VERIFIED' | 'REVIEW' | 'FAILED' | 'EXTRACTED';
+  result: 'VERIFIED' | 'REVIEW' | 'FAILED' | 'EXTRACTED' | 'DUPLICATE_REJECTED';
   payload: Record<string, any>;
 }
 

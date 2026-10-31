@@ -69,27 +69,97 @@ export const api = {
     const res = await fetch(`${getApiBase()}/juno/batches`);
     return await res.json();
   },
-  uploadJunoFile: async (equipment: string, file: File) => {
-    const formData = new FormData();
-    formData.append('file', file);
-    const res = await fetch(`${getApiBase()}/juno/upload?equipment=${encodeURIComponent(equipment)}`, {
-      method: 'POST',
-      body: formData,
+  uploadJunoFile: (
+    equipment: string,
+    file: File,
+    onProgress?: (percent: number, loaded: number, total: number) => void
+  ): Promise<any> => {
+    return new Promise((resolve, reject) => {
+      const formData = new FormData();
+      formData.append('file', file);
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${getApiBase()}/juno/upload?equipment=${encodeURIComponent(equipment)}`);
+
+      if (onProgress) {
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const percent = Math.round((event.loaded / event.total) * 100);
+            onProgress(percent, event.loaded, event.total);
+          }
+        };
+      }
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            resolve(JSON.parse(xhr.responseText));
+          } catch {
+            reject(new Error('Invalid JSON response'));
+          }
+        } else {
+          try {
+            const err = JSON.parse(xhr.responseText);
+            reject(new Error(err.detail || err.message || `Upload failed (HTTP ${xhr.status})`));
+          } catch {
+            reject(new Error(`Upload failed (HTTP ${xhr.status})`));
+          }
+        }
+      };
+
+      xhr.onerror = () => reject(new Error('Network error during file upload'));
+      xhr.send(formData);
     });
-    return await res.json();
   },
 
   // Bills Reconciliation
-  uploadBills: async (files: File[]) => {
-    const formData = new FormData();
-    for (const f of files) {
-      formData.append('files', f);
-    }
-    const res = await fetch(`${getApiBase()}/bills/upload`, {
-      method: 'POST',
-      body: formData,
+  uploadBills: (
+    files: File[],
+    onProgress?: (percent: number, loaded: number, total: number) => void
+  ): Promise<{
+    processed: number;
+    verified: number;
+    review: number;
+    duplicates_rejected: number;
+    failed: number;
+    candidates: any[];
+  }> => {
+    return new Promise((resolve, reject) => {
+      const formData = new FormData();
+      for (const f of files) {
+        formData.append('files', f);
+      }
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${getApiBase()}/bills/upload`);
+
+      if (onProgress) {
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const percent = Math.round((event.loaded / event.total) * 100);
+            onProgress(percent, event.loaded, event.total);
+          }
+        };
+      }
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            resolve(JSON.parse(xhr.responseText));
+          } catch {
+            reject(new Error('Invalid JSON response from server'));
+          }
+        } else {
+          try {
+            const err = JSON.parse(xhr.responseText);
+            reject(new Error(err.detail || `Upload failed with HTTP ${xhr.status}`));
+          } catch {
+            reject(new Error(`Upload failed with HTTP ${xhr.status}`));
+          }
+        }
+      };
+
+      xhr.onerror = () => reject(new Error('Network error during bill upload'));
+      xhr.send(formData);
     });
-    return await res.json();
   },
   getOfficialRegister: async (plaza = 'ALL', month = 'ALL', type = 'ALL') => {
     const params = new URLSearchParams({ toll_plaza: plaza, bill_month: month, bill_type: type });

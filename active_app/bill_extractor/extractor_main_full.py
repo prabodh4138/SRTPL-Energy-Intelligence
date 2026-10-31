@@ -10,7 +10,7 @@ def extract_clean_number(pattern, text_blob, group_num=1, flags=0):
     return ""
 
 
-def extract_energy_bill_full(pdf_file, source_name):
+def extract_energy_bill_full(pdf_file, source_name, extracted_text=None):
     """
     Extracts FULL energy bill data across both old and new formats.
     Includes all 14 requested columns:
@@ -32,9 +32,12 @@ def extract_energy_bill_full(pdf_file, source_name):
     """
     entry = {}
 
-    with pdfplumber.open(pdf_file) as pdf:
-        page = pdf.pages[0]
-        text = page.extract_text() or ""
+    if extracted_text is not None:
+        text = extracted_text
+    else:
+        with pdfplumber.open(pdf_file) as pdf:
+            page = pdf.pages[0]
+            text = page.extract_text() or ""
 
     lines = [l.strip() for l in text.splitlines() if l.strip()]
 

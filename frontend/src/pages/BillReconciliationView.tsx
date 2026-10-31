@@ -21,7 +21,11 @@ export const BillReconciliationView: React.FC = () => {
   // Extraction State
   const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
   const [extracting, setExtracting] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadPhase, setUploadPhase] = useState<'idle' | 'uploading' | 'processing' | 'done'>('idle');
+  const [bytesStats, setBytesStats] = useState<{ loaded: number; total: number }>({ loaded: 0, total: 0 });
   const [candidates, setCandidates] = useState<CandidateResult[]>([]);
+  const [candidateFilter, setCandidateFilter] = useState<'ALL' | 'VERIFIED' | 'REVIEW' | 'DUPLICATE_REJECTED' | 'FAILED'>('ALL');
 
   // Review Queue State
   const [reviewQueue, setReviewQueue] = useState<ReviewQueueItem[]>([]);
@@ -70,13 +74,25 @@ export const BillReconciliationView: React.FC = () => {
     }
 
     setExtracting(true);
+    setUploadPhase('uploading');
+    setUploadProgress(0);
+    setBytesStats({ loaded: 0, total: 0 });
+
     try {
       const fileArr = Array.from(selectedFiles);
-      const res = await api.uploadBills(fileArr);
+      const res = await api.uploadBills(fileArr, (percent, loaded, total) => {
+        setUploadProgress(percent);
+        setBytesStats({ loaded, total });
+        if (percent >= 100) {
+          setUploadPhase('processing');
+        }
+      });
       setCandidates(res.candidates || []);
+      setUploadPhase('done');
       setSelectedFiles(null);
     } catch (err: any) {
       alert('Extraction failed: ' + err.message);
+      setUploadPhase('idle');
     } finally {
       setExtracting(false);
     }
@@ -252,60 +268,176 @@ export const BillReconciliationView: React.FC = () => {
                   {extracting ? 'Processing Extraction & Calculations...' : '🚀 Run Extraction Pipeline'}
                 </button>
               </div>
+
+              {/* Real-time Upload & Processing Progress Bar */}
+              {uploadPhase !== 'idle' && (
+                <div className="p-4 rounded-2xl bg-slate-950/60 border border-slate-800 space-y-2 mt-4 animate-in fade-in duration-200">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-semibold text-slate-200 flex items-center gap-2">
+                      {uploadPhase === 'uploading' && (
+                        <>
+                          <UploadCloud className="w-4 h-4 text-sky-400 animate-bounce" />
+                          Uploading files over SSL...
+                        </>
+                      )}
+                      {uploadPhase === 'processing' && (
+                        <>
+                          <Layers className="w-4 h-4 text-emerald-400 animate-spin" />
+                          Parallel Multi-Thread OCR Extraction, Formula Audit & Duplicate Rejection...
+                        </>
+                      )}
+                      {uploadPhase === 'done' && (
+                        <>
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                          Extraction & Duplicate Filtering Complete!
+                        </>
+                      )}
+                    </span>
+                    <span className="font-mono text-emerald-400 font-bold">
+                      {uploadPhase === 'uploading'
+                        ? `${uploadProgress}% (${(bytesStats.loaded / 1024 / 1024).toFixed(2)} MB / ${(bytesStats.total / 1024 / 1024).toFixed(2)} MB)`
+                        : uploadPhase === 'processing'
+                        ? 'Processing...'
+                        : '100%'}
+                    </span>
+                  </div>
+
+                  <div className="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-300 ${
+                        uploadPhase === 'done'
+                          ? 'bg-emerald-500'
+                          : uploadPhase === 'processing'
+                          ? 'bg-gradient-to-r from-emerald-500 to-sky-500 animate-pulse'
+                          : 'bg-sky-500'
+                      }`}
+                      style={{
+                        width: `${uploadPhase === 'processing' || uploadPhase === 'done' ? 100 : uploadProgress}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
             </form>
           </div>
 
           {/* Extracted Candidates Table */}
           {candidates.length > 0 && (
-            <div className="rounded-2xl bg-slate-900 border border-slate-800 overflow-hidden shadow-xl">
-              <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-slate-200">Candidate Extraction Results</h3>
-                <span className="text-xs text-emerald-400 font-semibold">{candidates.length} processed items</span>
+            <div className="space-y-4">
+              {/* Summary KPIs */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800">
+                  <span className="text-[11px] text-slate-400">Total Processed</span>
+                  <div className="text-xl font-bold text-slate-100">{candidates.length}</div>
+                </div>
+                <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800">
+                  <span className="text-[11px] text-emerald-400">Verified & Posted</span>
+                  <div className="text-xl font-bold text-emerald-400">
+                    {candidates.filter((c) => c.result === 'VERIFIED').length}
+                  </div>
+                </div>
+                <div className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800">
+                  <span className="text-[11px] text-amber-400">Held in Review</span>
+                  <div className="text-xl font-bold text-amber-400">
+                    {candidates.filter((c) => c.result === 'REVIEW').length}
+                  </div>
+                </div>
+                <div className="p-3.5 rounded-2xl bg-slate-900 border border-rose-900/40 bg-rose-950/10">
+                  <span className="text-[11px] text-rose-400 font-semibold">Duplicates Rejected</span>
+                  <div className="text-xl font-bold text-rose-400">
+                    {candidates.filter((c) => c.result === 'DUPLICATE_REJECTED').length}
+                  </div>
+                </div>
               </div>
 
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs text-slate-300">
-                  <thead className="bg-slate-950/40 text-[11px] uppercase tracking-wider text-slate-500 border-b border-slate-800">
-                    <tr>
-                      <th className="px-6 py-3">Source File</th>
-                      <th className="px-6 py-3">Document Kind</th>
-                      <th className="px-6 py-3">Consumer Account</th>
-                      <th className="px-6 py-3">Bill Month</th>
-                      <th className="px-6 py-3">Reference / Bill Details</th>
-                      <th className="px-6 py-3">Extracted Amount</th>
-                      <th className="px-6 py-3">Validation Result</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/60 font-mono text-xs">
-                    {candidates.map((cand, i) => (
-                      <tr key={i} className="hover:bg-slate-800/40 transition">
-                        <td className="px-6 py-3 text-slate-300 font-sans">{cand.file}</td>
-                        <td className="px-6 py-3">
-                          <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-400 text-[10px] font-sans">
-                            {cand.kind}
-                          </span>
-                        </td>
-                        <td className="px-6 py-3 font-semibold text-sky-400">{cand.consumer}</td>
-                        <td className="px-6 py-3 text-slate-400">{cand.month}</td>
-                        <td className="px-6 py-3 text-slate-300 font-sans">{cand.detail}</td>
-                        <td className="px-6 py-3 text-slate-100 font-bold">{formatMoney(cand.amount)}</td>
-                        <td className="px-6 py-3">
-                          <span
-                            className={`px-2.5 py-1 rounded-full text-[10px] font-bold font-sans ${
-                              cand.result === 'VERIFIED'
-                                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                                : cand.result === 'REVIEW'
-                                ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                                : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+              {/* Table Card */}
+              <div className="rounded-2xl bg-slate-900 border border-slate-800 overflow-hidden shadow-xl">
+                <div className="px-6 py-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-semibold text-slate-200">Candidate Extraction Results</h3>
+                    <span className="text-xs text-slate-500">({candidates.length} items)</span>
+                  </div>
+
+                  {/* Filter Pills */}
+                  <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-950 border border-slate-800 text-xs">
+                    {(['ALL', 'VERIFIED', 'REVIEW', 'DUPLICATE_REJECTED'] as const).map((f) => (
+                      <button
+                        key={f}
+                        onClick={() => setCandidateFilter(f)}
+                        className={`px-3 py-1 rounded-lg font-semibold transition ${
+                          candidateFilter === f
+                            ? 'bg-slate-800 text-slate-100 shadow'
+                            : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        {f === 'ALL'
+                          ? `All (${candidates.length})`
+                          : f === 'VERIFIED'
+                          ? `Verified (${candidates.filter((c) => c.result === 'VERIFIED').length})`
+                          : f === 'REVIEW'
+                          ? `Review (${candidates.filter((c) => c.result === 'REVIEW').length})`
+                          : `Rejected (${candidates.filter((c) => c.result === 'DUPLICATE_REJECTED').length})`}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs text-slate-300">
+                    <thead className="bg-slate-950/40 text-[11px] uppercase tracking-wider text-slate-500 border-b border-slate-800">
+                      <tr>
+                        <th className="px-6 py-3">Source File</th>
+                        <th className="px-6 py-3">Document Kind</th>
+                        <th className="px-6 py-3">Consumer Account</th>
+                        <th className="px-6 py-3">Bill Month</th>
+                        <th className="px-6 py-3">Reference / Bill Details</th>
+                        <th className="px-6 py-3">Extracted Amount</th>
+                        <th className="px-6 py-3">Validation Result</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 font-mono text-xs">
+                      {candidates
+                        .filter((c) => candidateFilter === 'ALL' || c.result === candidateFilter)
+                        .map((cand, i) => (
+                          <tr
+                            key={i}
+                            className={`hover:bg-slate-800/40 transition ${
+                              cand.result === 'DUPLICATE_REJECTED' ? 'bg-rose-950/10' : ''
                             }`}
                           >
-                            {cand.result} {cand.result === 'VERIFIED' ? '✓' : ''}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                            <td className="px-6 py-3 text-slate-300 font-sans">{cand.file}</td>
+                            <td className="px-6 py-3">
+                              <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-400 text-[10px] font-sans">
+                                {cand.kind}
+                              </span>
+                            </td>
+                            <td className="px-6 py-3 font-semibold text-sky-400">{cand.consumer}</td>
+                            <td className="px-6 py-3 text-slate-400">{cand.month}</td>
+                            <td className="px-6 py-3 text-slate-300 font-sans">{cand.detail}</td>
+                            <td className="px-6 py-3 text-slate-100 font-bold">{formatMoney(cand.amount)}</td>
+                            <td className="px-6 py-3">
+                              <span
+                                className={`px-2.5 py-1 rounded-full text-[10px] font-bold font-sans flex items-center gap-1 w-fit ${
+                                  cand.result === 'VERIFIED'
+                                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                    : cand.result === 'REVIEW'
+                                    ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                    : cand.result === 'DUPLICATE_REJECTED'
+                                    ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                                    : 'bg-slate-800 text-slate-400 border border-slate-700'
+                                }`}
+                              >
+                                {cand.result === 'DUPLICATE_REJECTED' && <Ban className="w-3 h-3 text-rose-400" />}
+                                {cand.result === 'VERIFIED' && <CheckCircle2 className="w-3 h-3 text-emerald-400" />}
+                                {cand.result === 'REVIEW' && <AlertCircle className="w-3 h-3 text-amber-400" />}
+                                {cand.result}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           )}

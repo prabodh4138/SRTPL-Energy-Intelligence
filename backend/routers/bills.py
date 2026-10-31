@@ -3,6 +3,8 @@ import os
 import sys
 import time
 from typing import Any
+from concurrent.futures import ThreadPoolExecutor
+import pdfplumber
 import pandas as pd
 from fastapi import APIRouter, File, UploadFile, HTTPException
 from pydantic import BaseModel
@@ -28,6 +30,8 @@ from core.db_sync import (
     delete_held_draft,
     save_energy_bill,
     save_payment_receipt,
+    get_existing_bill_numbers,
+    get_existing_receipt_numbers,
     get_receipt_reconciliation,
     allocate_receipt_to_bill,
     log_audit_event,
@@ -48,9 +52,140 @@ class ReviewResolutionPayload(BaseModel):
     corrections: dict[str, Any] | None = None
 
 
+def _extract_single_item(item_tuple: tuple[int, Any]) -> dict[str, Any]:
+    """Helper to extract bill/receipt text and metadata in a worker thread."""
+    idx, item = item_tuple
+    if isinstance(item, tuple) and len(item) == 2:
+        fname, raw_bytes = item
+    elif isinstance(item, dict):
+        fname = item.get("name") or f"file_{idx}.pdf"
+        raw_bytes = item.get("content") or item.get("raw_bytes") or b""
+    else:
+        fname = getattr(item, "name", None) or f"file_{idx}.pdf"
+        if hasattr(item, "getvalue"):
+            raw_bytes = item.getvalue()
+        elif hasattr(item, "read"):
+            if hasattr(item, "seek"):
+                item.seek(0)
+            raw_bytes = item.read()
+        else:
+            raw_bytes = bytes(item) if item else b""
+
+    is_receipt = any(k in fname.lower() for k in ["receipt", "payment", "utr", "challan"])
+
+    if is_receipt:
+        try:
+            stream_receipt = io.BytesIO(raw_bytes)
+            stream_receipt.name = fname
+            rec = extract_energy_receipt_data(stream_receipt, fname)
+            rec_no = str(rec.get("receipt_no") or f"RCP-{idx}").strip()
+            amt = _clean_kpi_num(rec.get("amount_paid") or rec.get("amount"))
+            return {
+                "idx": idx,
+                "file": fname,
+                "kind": "Receipt",
+                "consumer": str(rec.get("account_no") or rec.get("consumer_no") or "—"),
+                "month": str(rec.get("bill_month") or "—"),
+                "identifier": rec_no,
+                "amount": amt,
+                "payload": rec,
+                "is_receipt": True,
+                "error": None,
+            }
+        except Exception as e:
+            return {
+                "idx": idx,
+                "file": fname,
+                "kind": "Receipt",
+                "consumer": "—",
+                "month": "—",
+                "identifier": f"RCP-{idx}",
+                "amount": 0.0,
+                "payload": {},
+                "is_receipt": True,
+                "error": str(e),
+            }
+
+    # Bill Extraction (Single-pass PDF text extraction for max performance)
+    try:
+        extracted_text = ""
+        try:
+            with pdfplumber.open(io.BytesIO(raw_bytes)) as pdf:
+                if pdf.pages:
+                    extracted_text = pdf.pages[0].extract_text() or ""
+        except Exception:
+            extracted_text = ""
+
+        stream_main = io.BytesIO(raw_bytes)
+        stream_main.name = fname
+        stream_md = io.BytesIO(raw_bytes)
+        stream_md.name = fname
+
+        bill_main = extract_energy_bill_full(stream_main, fname, extracted_text=extracted_text)
+        bill_md = extract_md_bill_data(stream_md, fname, extracted_text=extracted_text)
+        cleaned_df = merge_and_clean_dataframes(bill_main, bill_md, raw_bytes=raw_bytes, filename=fname)
+        bill_dict = cleaned_df.iloc[0].to_dict() if not cleaned_df.empty else {**bill_main, **bill_md}
+        if "raw_text" not in bill_dict and "raw_text" in bill_main:
+            bill_dict["raw_text"] = bill_main["raw_text"]
+        elif "raw_text" not in bill_dict and extracted_text:
+            bill_dict["raw_text"] = extracted_text
+
+        v_res = verify_bill_calculations(bill_dict, raw_text=bill_dict.get("raw_text", ""))
+
+        # Enrich with calculation checks
+        bill_dict["Cal Energy Charges"] = v_res.get("cal_energy_charges", 0.0)
+        bill_dict["Energy Charges Check"] = "MATCH ✓" if v_res.get("match_energy_charges") else "MISMATCH ⚠️"
+        bill_dict["Cal Electricity Charges"] = v_res.get("cal_electricity_charges", 0.0)
+        bill_dict["Electricity Charges Check"] = "MATCH ✓" if v_res.get("match_electricity_charges") else "MISMATCH ⚠️"
+        bill_dict["Cal Current Total"] = v_res.get("cal_current_total", 0.0)
+        bill_dict["Current Total Check"] = "MATCH ✓" if v_res.get("match_current_total") else "MISMATCH ⚠️"
+        bill_dict["Audit Verdict"] = v_res.get("audit_status", "AUDIT REQUIRED ⚠️")
+
+        b_no = str(bill_dict.get("Bill Number") or bill_dict.get("bill_number") or f"BILL-{idx}").strip()
+        ac_no = str(bill_dict.get("Consumer A/c No.") or bill_dict.get("consumer_account_no") or "—").strip()
+        b_mo = str(bill_dict.get("Bill Month") or bill_dict.get("bill_month") or "—").strip()
+        amt = _clean_kpi_num(
+            bill_dict.get("Net Payable Amount Before Rbt. Dt.(Rs.)")
+            or bill_dict.get("total_amount_payable")
+            or bill_dict.get("Current Total (o)")
+            or bill_dict.get("current_total")
+        )
+        b_basis = str(bill_dict.get("Bill Basis") or bill_dict.get("bill_basis") or "ACTUAL").strip().upper()
+
+        return {
+            "idx": idx,
+            "file": fname,
+            "kind": "Bill",
+            "consumer": ac_no,
+            "month": b_mo,
+            "identifier": b_no,
+            "amount": amt,
+            "basis": b_basis,
+            "verifier_result": v_res,
+            "payload": bill_dict,
+            "is_receipt": False,
+            "error": None,
+        }
+    except Exception as e:
+        return {
+            "idx": idx,
+            "file": fname,
+            "kind": "Bill",
+            "consumer": "—",
+            "month": "—",
+            "identifier": f"BILL-{idx}",
+            "amount": 0.0,
+            "basis": "UNKNOWN",
+            "verifier_result": {},
+            "payload": {},
+            "is_receipt": False,
+            "error": str(e),
+        }
+
+
 @router.post("/upload")
 async def upload_and_process_bills(files: list[UploadFile] = File(...)):
-    """Accepts multiple PDF bills/receipts or ZIP archives, extracts, cleans, audits, and routes."""
+    """Accepts multiple PDF bills/receipts or ZIP archives, extracts in parallel, audits, and rejects duplicates."""
     if not files:
         raise HTTPException(status_code=400, detail="No files provided.")
 
@@ -63,91 +198,103 @@ async def upload_and_process_bills(files: list[UploadFile] = File(...)):
         wrapped_files.append(b_io)
 
     unpacked_items = extract_pdfs_from_inputs(wrapped_files)
+    if not unpacked_items:
+        return {"processed": 0, "candidates": []}
+
+    # Parallel extraction across available CPU workers
+    workers_count = min(4, os.cpu_count() or 4, len(unpacked_items))
+    indexed_items = [(idx, item) for idx, item in enumerate(unpacked_items)]
+
+    with ThreadPoolExecutor(max_workers=workers_count) as executor:
+        extracted_data = list(executor.map(_extract_single_item, indexed_items))
+
+    # Pre-fetch existing database identifiers for instant O(1) duplicate rejection
+    existing_bills = get_existing_bill_numbers()
+    existing_receipts = get_existing_receipt_numbers()
+
+    seen_bills_in_batch: set[str] = set()
+    seen_receipts_in_batch: set[str] = set()
+
     results = []
+    stats = {"verified": 0, "review": 0, "duplicates_rejected": 0, "failed": 0}
 
-    for idx, item in enumerate(unpacked_items):
-        if isinstance(item, tuple) and len(item) == 2:
-            fname, raw_bytes = item
-        elif isinstance(item, dict):
-            fname = item.get("name") or f"file_{idx}.pdf"
-            raw_bytes = item.get("content") or item.get("raw_bytes") or b""
-        else:
-            fname = getattr(item, "name", None) or f"file_{idx}.pdf"
-            if hasattr(item, "getvalue"):
-                raw_bytes = item.getvalue()
-            elif hasattr(item, "read"):
-                if hasattr(item, "seek"):
-                    item.seek(0)
-                raw_bytes = item.read()
-            else:
-                raw_bytes = bytes(item) if item else b""
+    for item in extracted_data:
+        fname = item["file"]
+        is_receipt = item["is_receipt"]
+        err = item["error"]
 
-        stream_receipt = io.BytesIO(raw_bytes)
-        stream_receipt.name = fname
-        stream_main = io.BytesIO(raw_bytes)
-        stream_main.name = fname
-        stream_md = io.BytesIO(raw_bytes)
-        stream_md.name = fname
-
-        is_receipt = any(k in fname.lower() for k in ["receipt", "payment", "utr", "challan"])
+        if err:
+            results.append({
+                "file": fname,
+                "kind": item["kind"],
+                "consumer": item["consumer"],
+                "month": item["month"],
+                "detail": f"Extraction Failed: {err}",
+                "amount": 0.0,
+                "result": "FAILED",
+                "payload": {},
+            })
+            stats["failed"] += 1
+            continue
 
         if is_receipt:
-            try:
-                rec = extract_energy_receipt_data(stream_receipt, fname)
-                rec_no = rec.get("receipt_no") or f"RCP-{idx}"
-                amt = _clean_kpi_num(rec.get("amount_paid") or rec.get("amount"))
-                save_payment_receipt(rec)
+            rec_no = item["identifier"]
+            rec = item["payload"]
+            amt = item["amount"]
+
+            # DUPLICATE CHECK: Application & Database level
+            if rec_no in existing_receipts or rec_no in seen_receipts_in_batch:
                 results.append({
                     "file": fname,
                     "kind": "Receipt",
-                    "consumer": str(rec.get("account_no") or rec.get("consumer_no") or "—"),
-                    "month": str(rec.get("bill_month") or "—"),
-                    "detail": f"Receipt {rec_no}",
+                    "consumer": item["consumer"],
+                    "month": item["month"],
+                    "detail": f"DUPLICATE REJECTED · Receipt #{rec_no} already exists in database",
+                    "amount": amt,
+                    "result": "DUPLICATE_REJECTED",
+                    "payload": rec,
+                })
+                stats["duplicates_rejected"] += 1
+                log_audit_event("DUPLICATE_REJECTED", f"Receipt {rec_no} rejected as duplicate", "RECEIPT", rec_no, "REJECTED")
+            else:
+                seen_receipts_in_batch.add(rec_no)
+                save_payment_receipt(rec, prevent_duplicates=True)
+                results.append({
+                    "file": fname,
+                    "kind": "Receipt",
+                    "consumer": item["consumer"],
+                    "month": item["month"],
+                    "detail": f"Receipt {rec_no} Registered",
                     "amount": amt,
                     "result": "EXTRACTED",
                     "payload": rec,
                 })
-            except Exception as e:
+                stats["verified"] += 1
+        else:
+            b_no = item["identifier"]
+            ac_no = item["consumer"]
+            b_mo = item["month"]
+            amt = item["amount"]
+            b_basis = item["basis"]
+            bill_dict = item["payload"]
+            v_res = item["verifier_result"]
+
+            # DUPLICATE CHECK: Application & Database level
+            if b_no in existing_bills or b_no in seen_bills_in_batch:
                 results.append({
                     "file": fname,
-                    "kind": "Receipt",
-                    "consumer": "—",
-                    "month": "—",
-                    "detail": str(e),
-                    "amount": 0.0,
-                    "result": "FAILED",
-                    "payload": {},
+                    "kind": "Bill",
+                    "consumer": ac_no,
+                    "month": b_mo,
+                    "detail": f"DUPLICATE REJECTED · Bill #{b_no} already registered in database",
+                    "amount": amt,
+                    "result": "DUPLICATE_REJECTED",
+                    "payload": bill_dict,
                 })
-        else:
-            try:
-                bill_main = extract_energy_bill_full(stream_main, fname)
-                bill_md = extract_md_bill_data(stream_md, fname)
-                cleaned_df = merge_and_clean_dataframes(bill_main, bill_md, raw_bytes=raw_bytes, filename=fname)
-                bill_dict = cleaned_df.iloc[0].to_dict() if not cleaned_df.empty else {**bill_main, **bill_md}
-                if "raw_text" not in bill_dict and "raw_text" in bill_main:
-                    bill_dict["raw_text"] = bill_main["raw_text"]
-
-                v_res = verify_bill_calculations(bill_dict, raw_text=bill_dict.get("raw_text", ""))
-
-                # Enrich with calculations
-                bill_dict["Cal Energy Charges"] = v_res.get("cal_energy_charges", 0.0)
-                bill_dict["Energy Charges Check"] = "MATCH ✓" if v_res.get("match_energy_charges") else "MISMATCH ⚠️"
-                bill_dict["Cal Electricity Charges"] = v_res.get("cal_electricity_charges", 0.0)
-                bill_dict["Electricity Charges Check"] = "MATCH ✓" if v_res.get("match_electricity_charges") else "MISMATCH ⚠️"
-                bill_dict["Cal Current Total"] = v_res.get("cal_current_total", 0.0)
-                bill_dict["Current Total Check"] = "MATCH ✓" if v_res.get("match_current_total") else "MISMATCH ⚠️"
-                bill_dict["Audit Verdict"] = v_res.get("audit_status", "AUDIT REQUIRED ⚠️")
-
-                b_no = str(bill_dict.get("Bill Number") or bill_dict.get("bill_number") or f"BILL-{idx}").strip()
-                ac_no = str(bill_dict.get("Consumer A/c No.") or bill_dict.get("consumer_account_no") or "—").strip()
-                b_mo = str(bill_dict.get("Bill Month") or bill_dict.get("bill_month") or "—").strip()
-                amt = _clean_kpi_num(
-                    bill_dict.get("Net Payable Amount Before Rbt. Dt.(Rs.)")
-                    or bill_dict.get("total_amount_payable")
-                    or bill_dict.get("Current Total (o)")
-                    or bill_dict.get("current_total")
-                )
-                b_basis = str(bill_dict.get("Bill Basis") or bill_dict.get("bill_basis") or "ACTUAL").strip().upper()
+                stats["duplicates_rejected"] += 1
+                log_audit_event("DUPLICATE_REJECTED", f"Bill {b_no} rejected as duplicate", "BILL", b_no, "REJECTED")
+            else:
+                seen_bills_in_batch.add(b_no)
 
                 if b_basis in ["AVERAGE", "PROVISIONAL"]:
                     save_to_review_queue({
@@ -160,11 +307,18 @@ async def upload_and_process_bills(files: list[UploadFile] = File(...)):
                         "hold_reason_code": "PROVISIONAL_AVERAGE_AUDIT",
                         "source_filename": fname,
                         "raw_payload": bill_dict,
-                    })
+                    }, prevent_duplicates=True)
                     results.append({
-                        "file": fname, "kind": "Bill", "consumer": ac_no, "month": b_mo,
-                        "detail": f"{b_basis} · {b_no}", "amount": amt, "result": "REVIEW", "payload": bill_dict
+                        "file": fname,
+                        "kind": "Bill",
+                        "consumer": ac_no,
+                        "month": b_mo,
+                        "detail": f"{b_basis} · {b_no} Held in Review Queue",
+                        "amount": amt,
+                        "result": "REVIEW",
+                        "payload": bill_dict,
                     })
+                    stats["review"] += 1
                 elif not v_res.get("is_valid", False) and v_res.get("audit_status") != "VERIFIED ✓":
                     mismatch_reason = v_res.get("mismatch_reason") or "Formula calculation mismatch"
                     save_to_review_queue({
@@ -177,25 +331,41 @@ async def upload_and_process_bills(files: list[UploadFile] = File(...)):
                         "hold_reason_code": "ARITHMETIC_MISMATCH",
                         "source_filename": fname,
                         "raw_payload": bill_dict,
-                    })
+                    }, prevent_duplicates=True)
                     results.append({
-                        "file": fname, "kind": "Bill", "consumer": ac_no, "month": b_mo,
-                        "detail": f"MISMATCH · {b_no}", "amount": amt, "result": "REVIEW", "payload": bill_dict
+                        "file": fname,
+                        "kind": "Bill",
+                        "consumer": ac_no,
+                        "month": b_mo,
+                        "detail": f"MISMATCH · {b_no} Held in Review Queue",
+                        "amount": amt,
+                        "result": "REVIEW",
+                        "payload": bill_dict,
                     })
+                    stats["review"] += 1
                 else:
-                    save_energy_bill(bill_dict, v_res)
+                    save_energy_bill(bill_dict, v_res, prevent_duplicates=True)
                     log_audit_event("AUTO_POSTED", f"Bill {b_no} verified and posted", "BILL", b_no, "POSTED")
                     results.append({
-                        "file": fname, "kind": "Bill", "consumer": ac_no, "month": b_mo,
-                        "detail": f"ACTUAL · {b_no}", "amount": amt, "result": "VERIFIED", "payload": bill_dict
+                        "file": fname,
+                        "kind": "Bill",
+                        "consumer": ac_no,
+                        "month": b_mo,
+                        "detail": f"ACTUAL · {b_no} Verified & Posted",
+                        "amount": amt,
+                        "result": "VERIFIED",
+                        "payload": bill_dict,
                     })
-            except Exception as e:
-                results.append({
-                    "file": fname, "kind": "Bill", "consumer": "—", "month": "—",
-                    "detail": str(e), "amount": 0.0, "result": "FAILED", "payload": {}
-                })
+                    stats["verified"] += 1
 
-    return {"processed": len(results), "candidates": results}
+    return {
+        "processed": len(results),
+        "verified": stats["verified"],
+        "review": stats["review"],
+        "duplicates_rejected": stats["duplicates_rejected"],
+        "failed": stats["failed"],
+        "candidates": results,
+    }
 
 
 @router.get("/register")
