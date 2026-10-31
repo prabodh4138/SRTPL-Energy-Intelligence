@@ -1,37 +1,40 @@
 # 🚀 SRTPL Energy Intelligence — Cloud Deployment Guide
 
-This guide details the complete, step-by-step production deployment for the **SRTPL Energy Intelligence System** using:
+This guide details the complete, production deployment for the **SRTPL Energy Intelligence System** hosted entirely on **Render** (both Frontend & Backend in one Blueprint) connected to **Supabase Cloud**.
+
 1. **Database & Storage**: [Supabase Cloud](https://supabase.com) (PostgreSQL)
-2. **Backend API**: [Render](https://render.com) or [Railway](https://railway.app) (FastAPI Python)
-3. **Frontend Application**: [Vercel](https://vercel.com) or [Netlify](https://netlify.com) (React 19 + Vite)
+2. **Backend API**: [Render](https://render.com) (`srtpl-energy-backend` — Python FastAPI Web Service)
+3. **Frontend Application**: [Render](https://render.com) (`srtpl-energy-frontend` — React 19 Static Site)
+
+*(Vercel is omitted; everything runs inside Render for unified management).*
 
 ---
 
 ## Architecture Topology
 
 ```
-                  ┌──────────────────────────────┐
-                  │    React Frontend (Vercel)   │
-                  │   https://srtpl-energy.app   │
-                  └──────────────┬───────────────┘
-                                 │
-                    HTTPS Requests (API Calls)
-                                 │
-                                 ▼
-                  ┌──────────────────────────────┐
-                  │   FastAPI Backend (Render)   │
-                  │  https://api.srtpl-energy.com│
-                  └──────────────┬───────────────┘
-                                 │
-                   PostgreSQL / Storage / Auth
-                                 │
-                                 ▼
-                  ┌──────────────────────────────┐
-                  │        Supabase Cloud        │
-                  │  • energy_master schema      │
-                  │  • public schema & SQL views │
-                  │  • PDF Storage Buckets       │
-                  └──────────────────────────────┘
+                  ┌───────────────────────────────────────────────┐
+                  │      React Frontend (Render Static Site)      │
+                  │     https://srtpl-energy-frontend.onrender    │
+                  └───────────────────────┬───────────────────────┘
+                                          │
+                            HTTPS Requests (API Calls)
+                                          │
+                                          ▼
+                  ┌───────────────────────────────────────────────┐
+                  │      FastAPI Backend (Render Web Service)     │
+                  │      https://srtpl-energy-backend.onrender    │
+                  └───────────────────────┬───────────────────────┘
+                                          │
+                            PostgreSQL / Storage / Auth
+                                          │
+                                          ▼
+                  ┌───────────────────────────────────────────────┐
+                  │                Supabase Cloud                 │
+                  │  • energy_master schema                       │
+                  │  • public schema & SQL views                  │
+                  │  • PDF Storage Buckets                        │
+                  └───────────────────────────────────────────────┘
 ```
 
 ---
@@ -51,7 +54,7 @@ This guide details the complete, step-by-step production deployment for the **SR
    - Format: `postgresql://postgres:[YOUR-PASSWORD]@db.<your-project-id>.supabase.co:5432/postgres`
 4. **Create Supabase Storage Buckets**:
    - In Supabase dashboard, click **Storage** → **New Bucket**:
-     - Bucket 1: `energy-bills` (Public or Private with RLS)
+     - Bucket 1: `energy-bills`
      - Bucket 2: `payment-receipts`
 5. **Verify Database Schemas**:
    - Open **SQL Editor** in Supabase and ensure schemas `energy_master` and `public` are ready:
@@ -62,115 +65,66 @@ This guide details the complete, step-by-step production deployment for the **SR
 
 ---
 
-## Step 2: Deploy FastAPI Backend (Render or Railway)
+## Step 2: 1-Click Deploy on Render (Frontend + Backend Together)
 
-### Option A: Render (Recommended — 1-Click Blueprint)
+The repository includes [`render.yaml`](render.yaml) which configures **both** services simultaneously:
 
-The repository includes a ready-to-use [`render.yaml`](render.yaml) file.
-
-1. Go to [https://render.com](https://render.com) and connect your GitHub repository (`SRTPL-Energy-Intelligence`).
-2. Click **New +** → **Blueprint**.
-3. Select your repository. Render automatically reads `render.yaml` and sets up:
-   - **`srtpl-energy-backend`** (FastAPI Web Service)
-   - **`srtpl-energy-frontend`** (React Static Site)
-4. Add the required Environment Variables in Render:
+1. **Open Render**:
+   - Go to [https://dashboard.render.com](https://dashboard.render.com).
+2. **Create New Blueprint Instance**:
+   - Click **New +** → **Blueprint**.
+   - Connect your GitHub repository: `prabodh4138/SRTPL-Energy-Intelligence`.
+3. **Render Automatically Configures Both Services**:
+   - **Service 1: `srtpl-energy-backend`** (Web Service, Python 3.11, FastAPI)
+     - Build Command: `pip install -r requirements.txt`
+     - Start Command: `uvicorn backend.main:app --host 0.0.0.0 --port $PORT`
+   - **Service 2: `srtpl-energy-frontend`** (Static Site, React 19 + Vite)
+     - Root Directory: `frontend`
+     - Build Command: `npm install && npm run build`
+     - Publish Directory: `dist`
+4. **Enter Your Supabase Environment Variables**:
+   Render will prompt for the variables defined with `sync: false`:
    | Key | Value | Description |
    | :--- | :--- | :--- |
    | `SUPABASE_URL` | `https://<your-project-id>.supabase.co` | Your Supabase Project URL |
-   | `SUPABASE_KEY` | `eyJh...` (Service Role or Anon) | Backend API key |
-   | `DATABASE_URL` | `postgresql://postgres:...` | Direct PostgreSQL connection string |
-5. Click **Apply**. Render will build and deploy your backend. Your backend URL will look like:
-   `https://srtpl-energy-backend.onrender.com`
+   | `SUPABASE_KEY` | `eyJh...` | Your Supabase Service Role Key or Anon Key |
+   | `SUPABASE_SERVICE_ROLE_KEY` | `eyJh...` | Your Supabase Service Role Key |
+5. **Click "Apply"**:
+   - Render starts deploying both services in parallel.
+   - Build logs will show Python wheels installing and Vite bundling `dist/`.
+6. **Live URLs**:
+   - **Backend API**: `https://srtpl-energy-backend.onrender.com`
+   - **Swagger / OpenAPI Documentation**: `https://srtpl-energy-backend.onrender.com/docs`
+   - **Frontend UI**: `https://srtpl-energy-frontend.onrender.com`
 
 ---
 
-### Option B: Railway (Docker Deployment)
+## Step 3: Verification & Smoke Test
 
-The repository includes [`Dockerfile.backend`](Dockerfile.backend) and [`railway.json`](railway.json).
-
-1. Go to [https://railway.app](https://railway.app).
-2. Click **New Project** → **Deploy from GitHub repo**.
-3. Select `SRTPL-Energy-Intelligence`.
-4. Under **Variables**, add:
-   - `SUPABASE_URL`
-   - `SUPABASE_KEY`
-   - `PORT=8000`
-5. Railway will automatically build using `Dockerfile.backend` and provide a public URL like:
-   `https://srtpl-energy-intelligence-production.up.railway.app`
-
----
-
-## Step 3: Deploy React Frontend (Vercel or Netlify)
-
-### Option A: Vercel (Fastest & Free)
-
-1. Go to [https://vercel.com](https://vercel.com) and log in with GitHub.
-2. Click **Add New** → **Project**.
-3. Import `SRTPL-Energy-Intelligence`.
-4. Configure Project Settings:
-   - **Framework Preset**: `Vite`
-   - **Root Directory**: `frontend` *(Important! Click Edit and select the `frontend` folder)*
-   - **Build Command**: `npm run build`
-   - **Output Directory**: `dist`
-5. Under **Environment Variables**, add:
-   | Key | Value |
-   | :--- | :--- |
-   | `VITE_API_URL` | `https://srtpl-energy-backend.onrender.com` *(Your deployed FastAPI Backend URL)* |
-   | `VITE_SUPABASE_URL` | `https://<your-project-id>.supabase.co` |
-   | `VITE_SUPABASE_ANON_KEY` | `eyJh...` *(Your Supabase Anon Key)* |
-6. Click **Deploy**. Vercel will build and deploy in ~30 seconds, generating your live domain (e.g. `https://srtpl-energy-frontend.vercel.app`).
-
----
-
-### Option B: Netlify
-
-1. Go to [https://netlify.com](https://netlify.com).
-2. Click **Add new site** → **Import an existing project**.
-3. Select `frontend` as base directory and `dist` as publish directory.
-4. Add `VITE_API_URL` under Site Settings → Environment Variables.
-5. Click **Deploy Site**.
-
----
-
-## Step 4: Verification & Smoke Test
-
-Once deployed, verify your live system:
-
-1. **Backend Health Check**:
-   - Open: `https://your-backend-url.onrender.com/api/health`
-   - Expected JSON:
+1. **Verify Backend Health**:
+   - Open: `https://srtpl-energy-backend.onrender.com/api/health`
+   - Response:
      ```json
      {
        "status": "ONLINE",
        "service": "SRTPL Energy Intelligence FastAPI",
        "version": "2.0.0",
-       "database": "CONNECTED"
+       "database": "ACTIVE"
      }
      ```
-2. **Interactive Swagger Documentation**:
-   - Open: `https://your-backend-url.onrender.com/docs`
-   - Test endpoints: `/api/dashboard/summary`, `/api/consumers/`, `/api/bills/register`.
-3. **React Frontend**:
-   - Open: `https://your-frontend-url.vercel.app`
-   - Test extraction: Drop sample bill PDF (`411001070208_82025_EN.pdf`).
-   - Verify calculation badges (`VERIFIED ✓`), Review Queue holding, and Excel/CSV export.
+2. **Verify Frontend UI**:
+   - Open: `https://srtpl-energy-frontend.onrender.com`
+   - The top header will display:
+     - `FastAPI: ONLINE` (green indicator)
+     - `Supabase: ACTIVE` (cyan indicator)
+   - Test navigating across all 6 modules:
+     - 1. **Dashboard**
+     - 2. **Reading Section** (DG, EB, SOLAR, TRANSFORMER, UPS)
+     - 3. **Validation and Exceptions**
+     - 4. **Juno Import Centre**
+     - 5. **Bill Reconciliation & Review Queue**
+     - 6. **Reports** (Excel, CSV, PDF)
 
----
-
-## Quick Reference: Environment Variables
-
-### Backend (`.env` or Cloud Provider Settings)
-```ini
-SUPABASE_URL=https://your-project-id.supabase.co
-SUPABASE_KEY=your-supabase-service-role-or-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
-DATABASE_URL=postgresql://postgres:password@db.your-project-id.supabase.co:5432/postgres
-PORT=8000
-```
-
-### Frontend (`frontend/.env` or Vercel Settings)
-```ini
-VITE_API_URL=https://your-backend-url.onrender.com
-VITE_SUPABASE_URL=https://your-project-id.supabase.co
-VITE_SUPABASE_ANON_KEY=your-supabase-anon-key
-```
+3. **Dynamic API Configuration (If Needed)**:
+   - If your Render backend was assigned an alternative URL suffix, you don't even need to rebuild the frontend:
+   - Click the **FastAPI badge** in the frontend header, enter your backend URL, and click **Save & Connect**.
