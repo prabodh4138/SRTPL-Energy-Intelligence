@@ -17,25 +17,22 @@ def render_dashboard_module() -> None:
     """Module 1: Dashboard suite."""
     st.markdown('<div class="eyebrow">MODULE 1 · DASHBOARD SUITE</div>', unsafe_allow_html=True)
     
-    current_subtab = st.session_state.get("dashboard_subtab", "Executive Overview")
     options = [
         "Executive Overview",
         "Plaza Dashboard",
         "Equipment Dashboard",
         "Operator & Compliance",
     ]
-    if current_subtab not in options:
-        current_subtab = "Executive Overview"
+    if "dashboard_subtab" not in st.session_state or st.session_state["dashboard_subtab"] not in options:
+        st.session_state["dashboard_subtab"] = "Executive Overview"
 
     selected = st.segmented_control(
         "Dashboard Module Views",
         options=options,
-        default=current_subtab,
-        key="dashboard_subtab_selector",
+        key="dashboard_subtab",
         label_visibility="collapsed",
     )
-    active_tab = selected or current_subtab
-    st.session_state["dashboard_subtab"] = active_tab
+    active_tab = selected or st.session_state.get("dashboard_subtab") or "Executive Overview"
 
     if active_tab == "Executive Overview":
         from pages.executive_dashboard import render
@@ -55,7 +52,6 @@ def render_reading_module() -> None:
     """Module 2: Reading Section for DG, EB, Solar, Transformer, and UPS."""
     st.markdown('<div class="eyebrow">MODULE 2 · READING SECTION (DG, EB, SOLAR, TRANSFORMER, UPS)</div>', unsafe_allow_html=True)
 
-    current_subtab = st.session_state.get("reading_subtab", "⚡ EB Reading")
     options = [
         "⚡ EB Reading",
         "⚡ DG Reading",
@@ -63,18 +59,16 @@ def render_reading_module() -> None:
         "🔌 Transformer Reading",
         "🔋 UPS Reading",
     ]
-    if current_subtab not in options:
-        current_subtab = "⚡ EB Reading"
+    if "reading_subtab" not in st.session_state or st.session_state["reading_subtab"] not in options:
+        st.session_state["reading_subtab"] = "⚡ EB Reading"
 
     selected = st.segmented_control(
         "Equipment Reading Views",
         options=options,
-        default=current_subtab,
-        key="reading_subtab_selector",
+        key="reading_subtab",
         label_visibility="collapsed",
     )
-    active_tab = selected or current_subtab
-    st.session_state["reading_subtab"] = active_tab
+    active_tab = selected or st.session_state.get("reading_subtab") or "⚡ EB Reading"
 
     if active_tab == "⚡ EB Reading":
         from pages.eb import render
@@ -97,23 +91,20 @@ def render_validation_module() -> None:
     """Module 3: Validation and Exceptions."""
     st.markdown('<div class="eyebrow">MODULE 3 · VALIDATION AND EXCEPTIONS</div>', unsafe_allow_html=True)
 
-    current_subtab = st.session_state.get("validation_subtab", "🚨 Validation & Exceptions Center")
     options = [
         "🚨 Validation & Exceptions Center",
         "📊 Data Quality Monitor",
     ]
-    if current_subtab not in options:
-        current_subtab = "🚨 Validation & Exceptions Center"
+    if "validation_subtab" not in st.session_state or st.session_state["validation_subtab"] not in options:
+        st.session_state["validation_subtab"] = "🚨 Validation & Exceptions Center"
 
     selected = st.segmented_control(
         "Validation Views",
         options=options,
-        default=current_subtab,
-        key="validation_subtab_selector",
+        key="validation_subtab",
         label_visibility="collapsed",
     )
-    active_tab = selected or current_subtab
-    st.session_state["validation_subtab"] = active_tab
+    active_tab = selected or st.session_state.get("validation_subtab") or "🚨 Validation & Exceptions Center"
 
     if active_tab == "🚨 Validation & Exceptions Center":
         from pages.validation_exception_center import render
@@ -127,7 +118,6 @@ def render_juno_import_module() -> None:
     """Module 4: Juno Import Centre (DG, EB, Solar, Transformer, UPS)."""
     st.markdown('<div class="eyebrow">MODULE 4 · JUNO IMPORT CENTRE (DG, EB, SOLAR, TRANSFORMER, UPS)</div>', unsafe_allow_html=True)
 
-    current_subtab = st.session_state.get("juno_import_subtab", "⚡ EB JUNO Import")
     options = [
         "⚡ EB JUNO Import",
         "⚡ DG JUNO Import",
@@ -137,18 +127,16 @@ def render_juno_import_module() -> None:
         "📁 Bulk Import Center",
         "📜 Import History",
     ]
-    if current_subtab not in options:
-        current_subtab = "⚡ EB JUNO Import"
+    if "juno_import_subtab" not in st.session_state or st.session_state["juno_import_subtab"] not in options:
+        st.session_state["juno_import_subtab"] = "⚡ EB JUNO Import"
 
     selected = st.segmented_control(
         "JUNO Ingestion Workspaces",
         options=options,
-        default=current_subtab,
-        key="juno_import_subtab_selector",
+        key="juno_import_subtab",
         label_visibility="collapsed",
     )
-    active_tab = selected or current_subtab
-    st.session_state["juno_import_subtab"] = active_tab
+    active_tab = selected or st.session_state.get("juno_import_subtab") or "⚡ EB JUNO Import"
 
     if active_tab == "⚡ EB JUNO Import":
         from pages.eb_juno_import import render
@@ -183,23 +171,20 @@ def render_reports_module() -> None:
     """Module 6: Reports (Excel, CSV and Pdf)."""
     st.markdown('<div class="eyebrow">MODULE 6 · REPORTS (EXCEL, CSV & PDF)</div>', unsafe_allow_html=True)
 
-    current_subtab = st.session_state.get("reports_subtab", "📑 Reports & Export Center")
     options = [
         "📑 Reports & Export Center",
         "📜 Audit Log & System Trail",
     ]
-    if current_subtab not in options:
-        current_subtab = "📑 Reports & Export Center"
+    if "reports_subtab" not in st.session_state or st.session_state["reports_subtab"] not in options:
+        st.session_state["reports_subtab"] = "📑 Reports & Export Center"
 
     selected = st.segmented_control(
         "Reports Views",
         options=options,
-        default=current_subtab,
-        key="reports_subtab_selector",
+        key="reports_subtab",
         label_visibility="collapsed",
     )
-    active_tab = selected or current_subtab
-    st.session_state["reports_subtab"] = active_tab
+    active_tab = selected or st.session_state.get("reports_subtab") or "📑 Reports & Export Center"
 
     if active_tab == "📑 Reports & Export Center":
         from pages.reports_export_center import render

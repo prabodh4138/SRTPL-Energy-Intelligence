@@ -8,6 +8,7 @@ from ui.navigation import (
     NAVIGATION_MAP,
     resolve_page,
     navigate_to,
+    render_navigation,
 )
 from ui.modules import (
     render_dashboard_module,
@@ -102,6 +103,15 @@ def test_navigate_to_behavior():
         assert st.session_state["reading_subtab"] == "⚡ EB Reading"
         assert st.session_state["pending_nav_page"] == "2. Reading Section"
         mock_rerun.assert_called_once()
+
+
+def test_radio_selection_persistence_no_revert():
+    """Verify that when a user selects module 2, 3, 4, 5, or 6, it NEVER reverts to module 1."""
+    for mod in PRIMARY_MODULES:
+        st.session_state["nav_page"] = mod
+        with patch("streamlit.sidebar.radio", return_value=mod):
+            active_page = render_navigation()
+            assert active_page == mod, f"Expected {mod} to remain active, but got {active_page}"
 
 
 def test_render_reading_module_dispatch():

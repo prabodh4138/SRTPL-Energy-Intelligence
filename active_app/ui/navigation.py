@@ -100,38 +100,30 @@ def navigate_to(page_name: str) -> None:
     if subtab_key and subtab_val:
         st.session_state[subtab_key] = subtab_val
     st.session_state["pending_nav_page"] = target_page
-    st.session_state["nav_page"] = target_page
     if target_page in PRIMARY_MODULES:
-        st.session_state["primary_module_radio"] = target_page
+        st.session_state["nav_page"] = target_page
+        st.session_state.pop("admin_active_page", None)
+    elif target_page in ADMIN_PAGES:
+        st.session_state["admin_active_page"] = target_page
     st.rerun()
 
 
 def render_navigation() -> str:
-    # Process any pending programmatic navigation BEFORE creating the radio widget
+    # 1. Process any pending programmatic navigation BEFORE creating the radio widget
     pending = st.session_state.pop("pending_nav_page", None)
     if pending:
         target_page, subtab_key, subtab_val = resolve_page(pending)
         if subtab_key and subtab_val:
             st.session_state[subtab_key] = subtab_val
-        st.session_state["nav_page"] = target_page
         if target_page in PRIMARY_MODULES:
-            st.session_state["primary_module_radio"] = target_page
+            st.session_state["nav_page"] = target_page
+            st.session_state.pop("admin_active_page", None)
+        elif target_page in ADMIN_PAGES:
+            st.session_state["admin_active_page"] = target_page
 
-    # Fallback initialization if first run
-    if "nav_page" not in st.session_state or st.session_state["nav_page"] not in PAGES:
+    # 2. Fallback initialization if first run
+    if "nav_page" not in st.session_state or st.session_state["nav_page"] not in PRIMARY_MODULES:
         st.session_state["nav_page"] = "1. Dashboard"
-
-    current_page = st.session_state["nav_page"]
-
-    # If it's a legacy alias, map it to the primary module or admin page
-    if current_page not in PRIMARY_MODULES and current_page not in ADMIN_PAGES:
-        target_page, subtab_key, subtab_val = resolve_page(current_page)
-        if subtab_key and subtab_val:
-            st.session_state[subtab_key] = subtab_val
-        current_page = target_page
-        st.session_state["nav_page"] = current_page
-        if target_page in PRIMARY_MODULES:
-            st.session_state["primary_module_radio"] = target_page
 
     st.sidebar.markdown(
         """
@@ -150,38 +142,29 @@ def render_navigation() -> str:
 
     st.sidebar.divider()
 
-    if current_page in ADMIN_PAGES:
-        st.sidebar.info(f"Viewing: **{current_page}**")
+    # 3. Handle Admin page display if active
+    admin_active = st.session_state.get("admin_active_page", None)
+    if admin_active and admin_active in ADMIN_PAGES:
+        st.sidebar.info(f"Viewing: **{admin_active}**")
         if st.sidebar.button("← Return to Core Modules", width="stretch", type="primary"):
-            navigate_to("1. Dashboard")
+            st.session_state.pop("admin_active_page", None)
+            st.rerun()
         st.sidebar.divider()
 
-    if "primary_module_radio" not in st.session_state or st.session_state["primary_module_radio"] not in PRIMARY_MODULES:
-        st.session_state["primary_module_radio"] = current_page if current_page in PRIMARY_MODULES else "1. Dashboard"
-
-    if current_page in PRIMARY_MODULES and st.session_state.get("primary_module_radio") != current_page:
-        st.session_state["primary_module_radio"] = current_page
+    # 4. Primary Radio bound directly to key="nav_page"
+    def _on_module_change():
+        st.session_state.pop("admin_active_page", None)
 
     selected_module = st.sidebar.radio(
         "Application Modules",
         PRIMARY_MODULES,
         format_func=lambda m: MODULE_DISPLAY_NAMES.get(m, m),
-        key="primary_module_radio",
+        key="nav_page",
+        on_change=_on_module_change,
     )
 
-    # Only update nav_page from primary radio if user is not in an admin view or if user switched radio
-    if current_page not in ADMIN_PAGES:
-        current_page = selected_module
-        st.session_state["nav_page"] = selected_module
-    elif selected_module != st.session_state.get("_last_admin_selected_module", None):
-        # User explicitly clicked radio while in admin mode -> switch to that module
-        current_page = selected_module
-        st.session_state["nav_page"] = selected_module
-
-    st.session_state["_last_admin_selected_module"] = selected_module
-
-    # Secondary Expandable Drawer for Master Data & Administration
-    with st.sidebar.expander("⚙️ Master Data & Administration", expanded=(current_page in ADMIN_PAGES)):
+    # 5. Secondary Expandable Drawer for Master Data & Administration
+    with st.sidebar.expander("⚙️ Master Data & Administration", expanded=bool(admin_active)):
         st.caption("Administrative & Master Configuration")
         if st.button("📁 Master Data Center", width="stretch", key="nav_btn_md"):
             navigate_to("Master Data Center")
@@ -236,4 +219,6 @@ def render_navigation() -> str:
         st.session_state.clear()
         st.rerun()
 
-    return current_page
+    if admin_active and admin_active in ADMIN_PAGES:
+        return admin_active
+    return selected_module
