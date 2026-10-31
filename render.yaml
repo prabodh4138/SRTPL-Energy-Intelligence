@@ -29,7 +29,4 @@ services:
         destination: /index.html
     envVars:
       - key: VITE_API_URL
-        fromService:
-          type: web
-          name: srtpl-energy-backend
-          property: url
+        value: https://srtpl-energy-backend.onrender.com

@@ -1,10 +1,36 @@
-const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:8000').replace(/\/$/, '') + '/api';
+export const getApiBase = (): string => {
+  if (typeof window !== 'undefined') {
+    const override = localStorage.getItem('SRTPL_API_URL');
+    if (override && override.trim()) {
+      return override.trim().replace(/\/$/, '') + '/api';
+    }
+  }
+  const envUrl = import.meta.env.VITE_API_URL;
+  if (envUrl && envUrl.trim()) {
+    return envUrl.trim().replace(/\/$/, '') + '/api';
+  }
+  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+    return 'https://srtpl-energy-backend.onrender.com/api';
+  }
+  return 'http://localhost:8000/api';
+};
 
 export const api = {
+  getApiBase,
+  setApiBase: (url: string) => {
+    if (typeof window !== 'undefined') {
+      if (!url) {
+        localStorage.removeItem('SRTPL_API_URL');
+      } else {
+        localStorage.setItem('SRTPL_API_URL', url);
+      }
+    }
+  },
+
   // Health
   checkHealth: async () => {
     try {
-      const res = await fetch(`${API_BASE}/health`);
+      const res = await fetch(`${getApiBase()}/health`);
       return await res.json();
     } catch (e) {
       return { status: 'OFFLINE', error: String(e) };
@@ -14,17 +40,17 @@ export const api = {
   // Dashboard
   getDashboard: async (plaza = 'ALL', month = 'ALL', type = 'ALL') => {
     const params = new URLSearchParams({ toll_plaza: plaza, bill_month: month, bill_type: type });
-    const res = await fetch(`${API_BASE}/dashboard/summary?${params}`);
+    const res = await fetch(`${getApiBase()}/dashboard/summary?${params}`);
     return await res.json();
   },
 
   // Readings
   getReadings: async (assetType: string) => {
-    const res = await fetch(`${API_BASE}/readings/${assetType}`);
+    const res = await fetch(`${getApiBase()}/readings/${assetType}`);
     return await res.json();
   },
   addReading: async (assetType: string, payload: { meter_code: string; plaza: string; reading_value: number; notes?: string }) => {
-    const res = await fetch(`${API_BASE}/readings/${assetType}`, {
+    const res = await fetch(`${getApiBase()}/readings/${assetType}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -34,19 +60,19 @@ export const api = {
 
   // Validation
   getValidation: async () => {
-    const res = await fetch(`${API_BASE}/validation/summary`);
+    const res = await fetch(`${getApiBase()}/validation/summary`);
     return await res.json();
   },
 
   // Juno Import
   getJunoBatches: async () => {
-    const res = await fetch(`${API_BASE}/juno/batches`);
+    const res = await fetch(`${getApiBase()}/juno/batches`);
     return await res.json();
   },
   uploadJunoFile: async (equipment: string, file: File) => {
     const formData = new FormData();
     formData.append('file', file);
-    const res = await fetch(`${API_BASE}/juno/upload?equipment=${encodeURIComponent(equipment)}`, {
+    const res = await fetch(`${getApiBase()}/juno/upload?equipment=${encodeURIComponent(equipment)}`, {
       method: 'POST',
       body: formData,
     });
@@ -59,7 +85,7 @@ export const api = {
     for (const f of files) {
       formData.append('files', f);
     }
-    const res = await fetch(`${API_BASE}/bills/upload`, {
+    const res = await fetch(`${getApiBase()}/bills/upload`, {
       method: 'POST',
       body: formData,
     });
@@ -67,15 +93,15 @@ export const api = {
   },
   getOfficialRegister: async (plaza = 'ALL', month = 'ALL', type = 'ALL') => {
     const params = new URLSearchParams({ toll_plaza: plaza, bill_month: month, bill_type: type });
-    const res = await fetch(`${API_BASE}/bills/register?${params}`);
+    const res = await fetch(`${getApiBase()}/bills/register?${params}`);
     return await res.json();
   },
   getReviewQueue: async () => {
-    const res = await fetch(`${API_BASE}/bills/review-queue`);
+    const res = await fetch(`${getApiBase()}/bills/review-queue`);
     return await res.json();
   },
   postReviewCandidate: async (candidateId: string, corrections = {}) => {
-    const res = await fetch(`${API_BASE}/bills/review-queue/${candidateId}/verify-and-post`, {
+    const res = await fetch(`${getApiBase()}/bills/review-queue/${candidateId}/verify-and-post`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ corrections }),
@@ -83,23 +109,23 @@ export const api = {
     return await res.json();
   },
   deleteReviewCandidate: async (candidateId: string) => {
-    const res = await fetch(`${API_BASE}/bills/review-queue/${candidateId}/delete`, {
+    const res = await fetch(`${getApiBase()}/bills/review-queue/${candidateId}/delete`, {
       method: 'POST',
     });
     return await res.json();
   },
   voidBill: async (billNumber: string, reason = 'Voided by operator') => {
-    const res = await fetch(`${API_BASE}/bills/register/${encodeURIComponent(billNumber)}/void?reason=${encodeURIComponent(reason)}`, {
+    const res = await fetch(`${getApiBase()}/bills/register/${encodeURIComponent(billNumber)}/void?reason=${encodeURIComponent(reason)}`, {
       method: 'POST',
     });
     return await res.json();
   },
   getReceipts: async () => {
-    const res = await fetch(`${API_BASE}/bills/receipts`);
+    const res = await fetch(`${getApiBase()}/bills/receipts`);
     return await res.json();
   },
   allocateReceipt: async (payload: { receipt_no: string; bill_number: string; allocation_amount: number; notes?: string }) => {
-    const res = await fetch(`${API_BASE}/bills/receipts/allocate`, {
+    const res = await fetch(`${getApiBase()}/bills/receipts/allocate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -110,16 +136,22 @@ export const api = {
   // Consumers
   getConsumers: async (plaza = 'ALL', type = 'ALL') => {
     const params = new URLSearchParams({ plaza, bill_type: type });
-    const res = await fetch(`${API_BASE}/consumers/?${params}`);
+    const res = await fetch(`${getApiBase()}/consumers/?${params}`);
     return await res.json();
   },
 
   // Reports
   getReportsSummary: async () => {
-    const res = await fetch(`${API_BASE}/reports/summary`);
+    const res = await fetch(`${getApiBase()}/reports/summary`);
     return await res.json();
   },
-  downloadBillsExcelUrl: `${API_BASE}/reports/download-bills-excel`,
-  downloadBillsCsvUrl: `${API_BASE}/reports/download-bills-csv`,
-  downloadConsumersExcelUrl: `${API_BASE}/reports/download-consumers-excel`,
+  get downloadBillsExcelUrl() {
+    return `${getApiBase()}/reports/download-bills-excel`;
+  },
+  get downloadBillsCsvUrl() {
+    return `${getApiBase()}/reports/download-bills-csv`;
+  },
+  get downloadConsumersExcelUrl() {
+    return `${getApiBase()}/reports/download-consumers-excel`;
+  },
 };
