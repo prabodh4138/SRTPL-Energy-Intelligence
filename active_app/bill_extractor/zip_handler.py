@@ -12,6 +12,20 @@ class NamedBytesIO(io.BytesIO):
         super().__init__(initial_bytes)
         self.name = name
 
+    def get(self, key: str, default: Any = None) -> Any:
+        """Dict-compatible accessor for backward compatibility."""
+        if key in ("name", "filename"):
+            return self.name
+        if key in ("bytes", "content", "raw_bytes"):
+            return self.getvalue()
+        return getattr(self, key, default)
+
+    def __getitem__(self, key: str) -> Any:
+        val = self.get(key)
+        if val is None:
+            raise KeyError(key)
+        return val
+
 
 def extract_pdfs_from_inputs(inputs: Any) -> List[Any]:
     """

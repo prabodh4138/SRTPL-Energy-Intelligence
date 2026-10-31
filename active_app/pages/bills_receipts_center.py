@@ -303,15 +303,33 @@ def render():
 
                         results = []
                         for idx, item in enumerate(unpacked_items):
-                            fname = item.get("filename", f"file_{idx}.pdf")
-                            raw_bytes = item.get("bytes")
+                            if isinstance(item, dict):
+                                fname = item.get("filename") or item.get("name") or f"file_{idx}.pdf"
+                                raw_bytes = item.get("bytes") or item.get("content") or b""
+                            else:
+                                fname = getattr(item, "name", None) or f"file_{idx}.pdf"
+                                if hasattr(item, "getvalue"):
+                                    raw_bytes = item.getvalue()
+                                elif hasattr(item, "read"):
+                                    if hasattr(item, "seek"):
+                                        item.seek(0)
+                                    raw_bytes = item.read()
+                                else:
+                                    raw_bytes = bytes(item) if item else b""
+
+                            stream_receipt = io.BytesIO(raw_bytes)
+                            stream_receipt.name = fname
+                            stream_main = io.BytesIO(raw_bytes)
+                            stream_main.name = fname
+                            stream_md = io.BytesIO(raw_bytes)
+                            stream_md.name = fname
 
                             # Detect receipt vs bill
                             is_receipt = any(k in fname.lower() for k in ["receipt", "payment", "utr", "challan"])
 
                             if is_receipt:
                                 try:
-                                    rec = extract_energy_receipt_data(raw_bytes, fname)
+                                    rec = extract_energy_receipt_data(stream_receipt, fname)
                                     rec_no = rec.get("receipt_no") or f"RCP-{idx}"
                                     amt = _clean_kpi_num(rec.get("amount_paid") or rec.get("amount"))
                                     results.append({
@@ -323,8 +341,8 @@ def render():
                                     results.append({"file": fname, "kind": "Receipt", "consumer": "—", "month": "—", "detail": str(e), "amount": 0.0, "result": "FAILED", "payload": {}})
                             else:
                                 try:
-                                    bill_main = extract_energy_bill_full(raw_bytes, fname)
-                                    bill_md = extract_md_bill_data(raw_bytes, fname)
+                                    bill_main = extract_energy_bill_full(stream_main, fname)
+                                    bill_md = extract_md_bill_data(stream_md, fname)
                                     cleaned_df = merge_and_clean_dataframes(bill_main, bill_md, raw_bytes=raw_bytes, filename=fname)
                                     bill_dict = cleaned_df.iloc[0].to_dict() if not cleaned_df.empty else {}
                                     v_res = verify_bill_calculations(bill_dict)
