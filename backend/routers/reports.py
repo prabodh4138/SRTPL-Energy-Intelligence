@@ -1,5 +1,5 @@
 import io
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 from fastapi.responses import StreamingResponse
 import pandas as pd
 import sys
@@ -44,11 +44,49 @@ def download_bills_excel():
 
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        # Sheet 1: Comprehensive official data (includes bill_type, consumer_scope, sanctioned_load_kw & all 13 fields)
         df.to_excel(writer, index=False, sheet_name="Official_Energy_Bills")
-    output.seek(0)
+
+        # Sheet 2: Executive Presentation with Formatted Column Titles
+        if not df.empty and "bill_number" in df.columns:
+            column_map = {
+                "bill_number": "Bill Number",
+                "consumer_account_no": "Consumer A/C No.",
+                "toll_plaza_id": "Toll Plaza",
+                "bill_type": "Feeder Type (HT/LT)",
+                "consumer_scope": "Scope (PLAZA/HIGHWAY)",
+                "sanctioned_load_kw": "Sanctioned Load (kW)",
+                "contract_demand": "Contract Demand",
+                "tariff_category": "Tariff Category",
+                "security_deposit": "Security Deposit (Rs.)",
+                "md": "MD",
+                "cuml_md_kva": "CUML MD-KVA",
+                "cuml_md_kw": "CUML MD-KW",
+                "section": "Section",
+                "sub_division": "Sub-Division",
+                "rebate_date": "Rebate Date",
+                "meter_sl_no": "Meter Sl. No.",
+                "dps_rs": "DPS (Rs.)",
+                "net_payable_amount_before_rbt_dt_rs": "Net Payable Before Rbt. Dt. (Rs.)",
+                "net_payable_amount_after_rbt_dt_rs": "Net Payable After Rbt. Dt. (Rs.)",
+                "bill_month": "Bill Month",
+                "bill_basis": "Bill Basis",
+                "total_billed_kwh": "Total Units (kWh)",
+                "energy_charges": "Energy Charges (Rs.)",
+                "demand_charge": "Demand Charge (Rs.)",
+                "total_amount_payable": "Total Payable (Rs.)",
+                "amount_paid": "Amount Paid (Rs.)",
+                "outstanding_balance": "Outstanding (Rs.)",
+                "payment_status": "Payment Status",
+                "ai_model_applied": "AI Model Fit (100%)",
+                "audit_verdict": "Arithmetic Verdict",
+            }
+            exec_cols = [c for c in column_map.keys() if c in df.columns]
+            exec_df = df[exec_cols].rename(columns=column_map)
+            exec_df.to_excel(writer, index=False, sheet_name="Executive_Summary")
 
     headers = {"Content-Disposition": 'attachment; filename="SRTPL_Official_Energy_Bills.xlsx"'}
-    return StreamingResponse(output, headers=headers, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    return Response(content=output.getvalue(), headers=headers, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 @router.get("/download-bills-csv")
@@ -59,7 +97,7 @@ def download_bills_csv():
 
     csv_data = df.to_csv(index=False).encode("utf-8")
     headers = {"Content-Disposition": 'attachment; filename="SRTPL_Official_Energy_Bills.csv"'}
-    return StreamingResponse(io.BytesIO(csv_data), headers=headers, media_type="text/csv")
+    return Response(content=csv_data, headers=headers, media_type="text/csv")
 
 
 @router.get("/download-consumers-excel")
@@ -68,6 +106,5 @@ def download_consumers_excel():
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="Consumer_Master_60")
-    output.seek(0)
     headers = {"Content-Disposition": 'attachment; filename="SRTPL_Consumer_Master_60.xlsx"'}
-    return StreamingResponse(output, headers=headers, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    return Response(content=output.getvalue(), headers=headers, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

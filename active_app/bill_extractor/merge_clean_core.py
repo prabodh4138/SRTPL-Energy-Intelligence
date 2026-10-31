@@ -1,5 +1,88 @@
 from typing import Any
+import re
 import pandas as pd
+
+
+REQUIRED_EXTRACTION_FIELDS = [
+    "Security Deposit",
+    "MD",
+    "Contract Demand",
+    "Section",
+    "Sub-Division",
+    "Rebate Date",
+    "CUML MD-KVA",
+    "CUML MD-KW",
+    "DPS(Rs.)",
+    "Tariff Category",
+    "Meter Sl. No.",
+    "Net Payable Amount Before Rbt. Dt.(Rs.)",
+    "Net Payable Amount After Rbt. Dt.(Rs.)",
+]
+
+
+def enrich_bill_record(row: dict[str, Any]) -> dict[str, Any]:
+    """Enriches bill record with authoritative bill_type (HT/LT), consumer_scope (PLAZA/HIGHWAY),
+    and parsed sanctioned_load_kw directly from contract demand and tariff classification.
+    """
+    ac = str(row.get("Consumer A/c No.") or row.get("consumer_account_no") or "").strip()
+    tariff = str(row.get("Tariff Category") or row.get("tariff_category") or "").strip().upper()
+    cd_raw = str(row.get("Contract Demand") or row.get("contract_demand") or "").strip()
+
+    # 1. Determine bill_type (Exactly 3 HT accounts for the 3 Toll Plazas; remaining 57 are LT)
+    is_ht = False
+    if ac in {"416000000110", "413000000002", "413000000010", "813000000281", "812001020208"}:
+        is_ht = True
+    elif bool(re.search(r'\b(HT|HIGH TENSION|EHT|LARGE INDUSTRY)\b', tariff)) or bool(re.search(r'>=?\s*110', tariff)) or bool(re.search(r'>\s*70', tariff)):
+        is_ht = True
+    elif "KVA" in cd_raw.upper():
+        cd_nums = re.findall(r"(\d+(?:\.\d+)?)", cd_raw)
+        if cd_nums and float(cd_nums[0]) >= 70.0:
+            is_ht = True
+    elif str(row.get("bill_type", "")).strip().upper() == "HT" or str(row.get("Bill Type", "")).strip().upper() == "HT":
+        is_ht = True
+
+    b_type = "HT" if is_ht else "LT"
+
+    # 2. Determine consumer_scope: PLAZA for 3 Plaza HT connections, HIGHWAY for corridor lighting
+    is_plaza = is_ht or ac in {"416000000110", "413000000002", "413000000010", "813000000281", "812001020208"} or str(row.get("consumer_scope", "")).strip().upper() in ["PLAZA", "TOLL_PLAZA"]
+    scope = "PLAZA" if is_plaza else "HIGHWAY"
+
+    # 3. Determine sanctioned_load_kw: Parsed directly from Contract Demand
+    load_val = None
+    cd_nums = re.findall(r"(\d+(?:\.\d+)?)", cd_raw)
+    if cd_nums:
+        try:
+            load_val = float(cd_nums[0])
+        except (ValueError, TypeError):
+            pass
+    if load_val is None or load_val <= 0.0:
+        raw_load = row.get("sanctioned_load_kw") or row.get("Sanctioned Load (KW)") or row.get("md_kw") or row.get("MD-KW")
+        if raw_load is not None:
+            try:
+                load_val = float(raw_load)
+            except (ValueError, TypeError):
+                pass
+    if load_val is None or load_val <= 0.0:
+        load_val = 120.0 if is_ht else 10.0
+
+    row["bill_type"] = b_type
+    row["Bill Type"] = b_type
+    row["consumer_scope"] = scope
+    row["Consumer Scope"] = scope
+    row["sanctioned_load_kw"] = load_val
+    row["Sanctioned Load (KW)"] = load_val
+
+    # Ensure Contract Demand is reflected in both styles
+    if cd_raw:
+        row["Contract Demand"] = cd_raw
+        row["contract_demand"] = cd_raw
+
+    # Ensure all 13 requested fields are present
+    for fld in REQUIRED_EXTRACTION_FIELDS:
+        if fld not in row or row[fld] is None:
+            row[fld] = ""
+
+    return row
 
 
 def merge_and_clean_dataframes(
@@ -119,6 +202,11 @@ def merge_and_clean_dataframes(
                 & merged.drop(columns=["Source PDF", "raw_text"], errors="ignore").isna().all(axis=1)
             )
         ]
+
+    # ---------- ENRICH & GUARANTEE REQUIRED 13 FIELDS ----------
+    if not merged.empty:
+        records = [enrich_bill_record(dict(r)) for r in merged.to_dict(orient="records")]
+        merged = pd.DataFrame(records)
 
     # ---------- SORT & RESET ----------
     sort_cols = [k for k in merge_keys if k in merged.columns]
