@@ -7,21 +7,39 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({ currentModule }) => {
-  const [health, setHealth] = useState<{ status: string; database?: string }>({ status: 'CHECKING...' });
+  const [health, setHealth] = useState<{ status: string; database?: string }>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('SRTPL_LAST_HEALTH');
+        if (saved) return JSON.parse(saved);
+      } catch {
+        // ignore
+      }
+    }
+    return { status: 'ONLINE', database: 'Active' };
+  });
   const [loading, setLoading] = useState(false);
   const [showConfig, setShowConfig] = useState(false);
   const [customUrl, setCustomUrl] = useState('');
 
   const checkStatus = async () => {
     setLoading(true);
-    const data = await api.checkHealth();
-    setHealth(data);
-    setLoading(false);
+    try {
+      const data = await api.checkHealth(4000);
+      setHealth(data);
+      if (data.status === 'ONLINE' && typeof window !== 'undefined') {
+        localStorage.setItem('SRTPL_LAST_HEALTH', JSON.stringify(data));
+      }
+    } catch {
+      setHealth({ status: 'OFFLINE', database: 'Unreachable' });
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
     checkStatus();
-    const interval = setInterval(checkStatus, 15000);
+    const interval = setInterval(checkStatus, 20000);
     return () => clearInterval(interval);
   }, []);
 
@@ -54,8 +72,8 @@ export const Header: React.FC<HeaderProps> = ({ currentModule }) => {
           className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-800 border border-slate-700 hover:border-slate-600 text-xs text-slate-300 transition cursor-pointer"
           title="Click to configure backend API URL"
         >
-          <Activity className={`w-3.5 h-3.5 ${health.status === 'ONLINE' ? 'text-emerald-400 animate-pulse' : 'text-amber-400'}`} />
-          <span>FastAPI: <strong className={health.status === 'ONLINE' ? 'text-emerald-400' : 'text-amber-400'}>{health.status}</strong></span>
+          <Activity className={`w-3.5 h-3.5 ${health.status === 'ONLINE' ? 'text-emerald-400 animate-pulse' : health.status.includes('WAKING') ? 'text-amber-300 animate-spin' : health.status === 'OFFLINE' ? 'text-rose-400' : 'text-amber-400'}`} />
+          <span>FastAPI: <strong className={health.status === 'ONLINE' ? 'text-emerald-400' : health.status.includes('WAKING') ? 'text-amber-300' : health.status === 'OFFLINE' ? 'text-rose-400' : 'text-amber-400'}>{health.status}</strong></span>
           <Settings className="w-3 h-3 text-slate-500" />
         </button>
 

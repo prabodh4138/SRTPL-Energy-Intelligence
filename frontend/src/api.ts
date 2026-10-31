@@ -1,13 +1,18 @@
+const normalizeApiUrl = (raw: string): string => {
+  const clean = raw.trim().replace(/\/+$/, '').replace(/\/api$/, '');
+  return `${clean}/api`;
+};
+
 export const getApiBase = (): string => {
   if (typeof window !== 'undefined') {
     const override = localStorage.getItem('SRTPL_API_URL');
     if (override && override.trim()) {
-      return override.trim().replace(/\/$/, '') + '/api';
+      return normalizeApiUrl(override);
     }
   }
   const envUrl = import.meta.env.VITE_API_URL;
   if (envUrl && envUrl.trim()) {
-    return envUrl.trim().replace(/\/$/, '') + '/api';
+    return normalizeApiUrl(envUrl);
   }
   if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
     return 'https://srtpl-energy-backend.onrender.com/api';
@@ -27,13 +32,31 @@ export const api = {
     }
   },
 
-  // Health
-  checkHealth: async () => {
+  // Health check with fast 4s timeout & non-blocking AbortController
+  checkHealth: async (timeoutMs = 4000) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
     try {
-      const res = await fetch(`${getApiBase()}/health`);
+      const res = await fetch(`${getApiBase()}/health`, {
+        signal: controller.signal,
+        headers: { 'Accept': 'application/json' },
+      });
+      clearTimeout(timeoutId);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
       return await res.json();
-    } catch (e) {
-      return { status: 'OFFLINE', error: String(e) };
+    } catch (e: any) {
+      clearTimeout(timeoutId);
+      if (e.name === 'AbortError') {
+        return {
+          status: 'WAKING UP...',
+          database: 'Standby',
+          error: 'Backend is waking up or spinning up on Render. Retrying shortly...',
+        };
+      }
+      return { status: 'OFFLINE', database: 'Unreachable', error: String(e) };
     }
   },
 
