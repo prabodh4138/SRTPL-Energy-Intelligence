@@ -111,6 +111,81 @@ export const api = {
     });
   },
 
+  // Bills Reconciliation Stream (Real-time per-bill extraction progress)
+  uploadBillsStream: async (
+    files: File[],
+    onItemProgress: (current: number, total: number, file: string, candidate: any) => void
+  ): Promise<{
+    processed: number;
+    verified: number;
+    review: number;
+    duplicates_rejected: number;
+    failed: number;
+    candidates: any[];
+  }> => {
+    const formData = new FormData();
+    for (const f of files) {
+      formData.append('files', f);
+    }
+
+    const response = await fetch(`${getApiBase()}/bills/upload-stream`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      let msg = `Upload failed with status ${response.status}`;
+      try {
+        const err = await response.json();
+        msg = err.detail || msg;
+      } catch {}
+      throw new Error(msg);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error('Streaming response not available.');
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finalSummary: any = null;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const ev = JSON.parse(line);
+          if (ev.type === 'item_progress') {
+            onItemProgress(ev.current, ev.total, ev.file, ev.candidate);
+          } else if (ev.type === 'complete') {
+            finalSummary = ev;
+          }
+        } catch {
+          // Ignore partial chunk parsing
+        }
+      }
+    }
+
+    return (
+      finalSummary || {
+        processed: 0,
+        verified: 0,
+        review: 0,
+        duplicates_rejected: 0,
+        failed: 0,
+        candidates: [],
+      }
+    );
+  },
+
   // Bills Reconciliation
   uploadBills: (
     files: File[],

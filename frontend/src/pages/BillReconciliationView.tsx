@@ -24,6 +24,11 @@ export const BillReconciliationView: React.FC = () => {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadPhase, setUploadPhase] = useState<'idle' | 'uploading' | 'processing' | 'done'>('idle');
   const [bytesStats, setBytesStats] = useState<{ loaded: number; total: number }>({ loaded: 0, total: 0 });
+  const [extractProgress, setExtractProgress] = useState<{ current: number; total: number; currentFile: string }>({
+    current: 0,
+    total: 0,
+    currentFile: '',
+  });
   const [candidates, setCandidates] = useState<CandidateResult[]>([]);
   const [candidateFilter, setCandidateFilter] = useState<'ALL' | 'VERIFIED' | 'REVIEW' | 'DUPLICATE_REJECTED' | 'FAILED'>('ALL');
 
@@ -74,20 +79,32 @@ export const BillReconciliationView: React.FC = () => {
     }
 
     setExtracting(true);
-    setUploadPhase('uploading');
+    setUploadPhase('processing');
     setUploadProgress(0);
-    setBytesStats({ loaded: 0, total: 0 });
+    setExtractProgress({
+      current: 0,
+      total: selectedFiles.length,
+      currentFile: 'Uploading to temporary memory & unpacking...',
+    });
+    setCandidates([]); // Clean state for real-time live-streaming results
 
     try {
       const fileArr = Array.from(selectedFiles);
-      const res = await api.uploadBills(fileArr, (percent, loaded, total) => {
-        setUploadProgress(percent);
-        setBytesStats({ loaded, total });
-        if (percent >= 100) {
-          setUploadPhase('processing');
-        }
+      const res = await api.uploadBillsStream(fileArr, (current, total, file, candidate) => {
+        setExtractProgress({ current, total, currentFile: file });
+        const pct = Math.round((current / total) * 100);
+        setUploadProgress(pct);
+        setCandidates((prev) => {
+          if (prev.some((c) => c.file === candidate.file && c.detail === candidate.detail)) {
+            return prev;
+          }
+          return [...prev, candidate];
+        });
       });
-      setCandidates(res.candidates || []);
+
+      if (res && res.candidates) {
+        setCandidates(res.candidates);
+      }
       setUploadPhase('done');
       setSelectedFiles(null);
     } catch (err: any) {
@@ -269,52 +286,63 @@ export const BillReconciliationView: React.FC = () => {
                 </button>
               </div>
 
-              {/* Real-time Upload & Processing Progress Bar */}
+              {/* Real-time Per-Bill Extraction Progress Bar */}
               {uploadPhase !== 'idle' && (
-                <div className="p-4 rounded-2xl bg-slate-950/60 border border-slate-800 space-y-2 mt-4 animate-in fade-in duration-200">
+                <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-2 mt-4 animate-in fade-in duration-200">
                   <div className="flex items-center justify-between text-xs">
                     <span className="font-semibold text-slate-200 flex items-center gap-2">
-                      {uploadPhase === 'uploading' && (
-                        <>
-                          <UploadCloud className="w-4 h-4 text-sky-400 animate-bounce" />
-                          Uploading files over SSL...
-                        </>
-                      )}
                       {uploadPhase === 'processing' && (
                         <>
                           <Layers className="w-4 h-4 text-emerald-400 animate-spin" />
-                          Parallel Multi-Thread OCR Extraction, Formula Audit & Duplicate Rejection...
+                          <span>
+                            Extracting Bill <strong className="text-emerald-400 font-mono text-sm">{extractProgress.current}</strong> of{' '}
+                            <strong className="text-slate-100 font-mono text-sm">{extractProgress.total}</strong>:{' '}
+                            <span className="text-slate-400 font-mono font-normal truncate max-w-xs inline-block align-bottom">
+                              {extractProgress.currentFile}
+                            </span>
+                          </span>
                         </>
                       )}
                       {uploadPhase === 'done' && (
                         <>
                           <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                          Extraction & Duplicate Filtering Complete!
+                          <span>
+                            Extraction complete! <strong className="text-emerald-400 font-mono">{extractProgress.total} of {extractProgress.total}</strong> documents processed & temporary storage purged.
+                          </span>
                         </>
                       )}
                     </span>
-                    <span className="font-mono text-emerald-400 font-bold">
-                      {uploadPhase === 'uploading'
-                        ? `${uploadProgress}% (${(bytesStats.loaded / 1024 / 1024).toFixed(2)} MB / ${(bytesStats.total / 1024 / 1024).toFixed(2)} MB)`
-                        : uploadPhase === 'processing'
-                        ? 'Processing...'
-                        : '100%'}
+                    <span className="font-mono text-emerald-400 font-bold text-sm">
+                      {uploadPhase === 'done'
+                        ? '100% (COMPLETE)'
+                        : `${extractProgress.total > 0 ? Math.round((extractProgress.current / extractProgress.total) * 100) : 0}% [${extractProgress.current}/${extractProgress.total}]`}
                     </span>
                   </div>
 
-                  <div className="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden">
+                  <div className="w-full bg-slate-800 rounded-full h-3 overflow-hidden p-0.5">
                     <div
                       className={`h-full rounded-full transition-all duration-300 ${
                         uploadPhase === 'done'
                           ? 'bg-emerald-500'
-                          : uploadPhase === 'processing'
-                          ? 'bg-gradient-to-r from-emerald-500 to-sky-500 animate-pulse'
-                          : 'bg-sky-500'
+                          : 'bg-gradient-to-r from-emerald-500 via-sky-500 to-emerald-400'
                       }`}
                       style={{
-                        width: `${uploadPhase === 'processing' || uploadPhase === 'done' ? 100 : uploadProgress}%`,
+                        width: `${
+                          uploadPhase === 'done'
+                            ? 100
+                            : extractProgress.total > 0
+                            ? Math.max(3, Math.round((extractProgress.current / extractProgress.total) * 100))
+                            : 3
+                        }%`,
                       }}
                     />
+                  </div>
+
+                  <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1">
+                    <span className="text-slate-400 flex items-center gap-1">
+                      🔒 <strong>Zero PDF Database Storage:</strong> PDFs are processed in temporary sandbox memory and immediately wiped.
+                    </span>
+                    <span className="text-emerald-400 font-medium">⚡ Real-time Stream & Duplicate Barrier Active</span>
                   </div>
                 </div>
               )}

@@ -2,11 +2,15 @@ import io
 import os
 import sys
 import time
+import json
+import tempfile
+import shutil
 from typing import Any
 from concurrent.futures import ThreadPoolExecutor
 import pdfplumber
 import pandas as pd
 from fastapi import APIRouter, File, UploadFile, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 APP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "active_app"))
@@ -208,164 +212,309 @@ async def upload_and_process_bills(files: list[UploadFile] = File(...)):
     with ThreadPoolExecutor(max_workers=workers_count) as executor:
         extracted_data = list(executor.map(_extract_single_item, indexed_items))
 
-    # Pre-fetch existing database identifiers for instant O(1) duplicate rejection
-    existing_bills = get_existing_bill_numbers()
-    existing_receipts = get_existing_receipt_numbers()
+def _process_candidate(
+    item: dict[str, Any],
+    existing_bills: set[str],
+    existing_receipts: set[str],
+    seen_bills_in_batch: set[str],
+    seen_receipts_in_batch: set[str],
+    stats: dict[str, int],
+) -> dict[str, Any]:
+    """Applies duplicate checks, validates formulas, and saves structured metadata (NO PDF files in DB)."""
+    fname = item["file"]
+    is_receipt = item["is_receipt"]
+    err = item["error"]
 
-    seen_bills_in_batch: set[str] = set()
-    seen_receipts_in_batch: set[str] = set()
+    if err:
+        stats["failed"] += 1
+        return {
+            "file": fname,
+            "kind": item["kind"],
+            "consumer": item["consumer"],
+            "month": item["month"],
+            "detail": f"Extraction Failed: {err}",
+            "amount": 0.0,
+            "result": "FAILED",
+            "payload": {},
+        }
 
-    results = []
-    stats = {"verified": 0, "review": 0, "duplicates_rejected": 0, "failed": 0}
+    if is_receipt:
+        rec_no = item["identifier"]
+        rec = item["payload"]
+        amt = item["amount"]
 
-    for item in extracted_data:
-        fname = item["file"]
-        is_receipt = item["is_receipt"]
-        err = item["error"]
+        # Ensure NO raw file bytes in database
+        rec.pop("raw_bytes", None)
+        rec.pop("content", None)
 
-        if err:
-            results.append({
+        if rec_no in existing_receipts or rec_no in seen_receipts_in_batch:
+            stats["duplicates_rejected"] += 1
+            log_audit_event("DUPLICATE_REJECTED", f"Receipt {rec_no} rejected as duplicate", "RECEIPT", rec_no, "REJECTED")
+            return {
                 "file": fname,
-                "kind": item["kind"],
+                "kind": "Receipt",
                 "consumer": item["consumer"],
                 "month": item["month"],
-                "detail": f"Extraction Failed: {err}",
-                "amount": 0.0,
-                "result": "FAILED",
-                "payload": {},
-            })
-            stats["failed"] += 1
-            continue
-
-        if is_receipt:
-            rec_no = item["identifier"]
-            rec = item["payload"]
-            amt = item["amount"]
-
-            # DUPLICATE CHECK: Application & Database level
-            if rec_no in existing_receipts or rec_no in seen_receipts_in_batch:
-                results.append({
-                    "file": fname,
-                    "kind": "Receipt",
-                    "consumer": item["consumer"],
-                    "month": item["month"],
-                    "detail": f"DUPLICATE REJECTED · Receipt #{rec_no} already exists in database",
-                    "amount": amt,
-                    "result": "DUPLICATE_REJECTED",
-                    "payload": rec,
-                })
-                stats["duplicates_rejected"] += 1
-                log_audit_event("DUPLICATE_REJECTED", f"Receipt {rec_no} rejected as duplicate", "RECEIPT", rec_no, "REJECTED")
-            else:
-                seen_receipts_in_batch.add(rec_no)
-                save_payment_receipt(rec, prevent_duplicates=True)
-                results.append({
-                    "file": fname,
-                    "kind": "Receipt",
-                    "consumer": item["consumer"],
-                    "month": item["month"],
-                    "detail": f"Receipt {rec_no} Registered",
-                    "amount": amt,
-                    "result": "EXTRACTED",
-                    "payload": rec,
-                })
-                stats["verified"] += 1
+                "detail": f"DUPLICATE REJECTED · Receipt #{rec_no} already exists in database",
+                "amount": amt,
+                "result": "DUPLICATE_REJECTED",
+                "payload": rec,
+            }
         else:
-            b_no = item["identifier"]
-            ac_no = item["consumer"]
-            b_mo = item["month"]
-            amt = item["amount"]
-            b_basis = item["basis"]
-            bill_dict = item["payload"]
-            v_res = item["verifier_result"]
+            seen_receipts_in_batch.add(rec_no)
+            save_payment_receipt(rec, prevent_duplicates=True)
+            stats["verified"] += 1
+            return {
+                "file": fname,
+                "kind": "Receipt",
+                "consumer": item["consumer"],
+                "month": item["month"],
+                "detail": f"Receipt {rec_no} Registered",
+                "amount": amt,
+                "result": "EXTRACTED",
+                "payload": rec,
+            }
+    else:
+        b_no = item["identifier"]
+        ac_no = item["consumer"]
+        b_mo = item["month"]
+        amt = item["amount"]
+        b_basis = item["basis"]
+        bill_dict = item["payload"]
+        v_res = item["verifier_result"]
 
-            # DUPLICATE CHECK: Application & Database level
-            if b_no in existing_bills or b_no in seen_bills_in_batch:
-                results.append({
+        # Ensure NO raw file bytes in database
+        bill_dict.pop("raw_bytes", None)
+        bill_dict.pop("content", None)
+        bill_dict.pop("raw_content", None)
+
+        if b_no in existing_bills or b_no in seen_bills_in_batch:
+            stats["duplicates_rejected"] += 1
+            log_audit_event("DUPLICATE_REJECTED", f"Bill {b_no} rejected as duplicate", "BILL", b_no, "REJECTED")
+            return {
+                "file": fname,
+                "kind": "Bill",
+                "consumer": ac_no,
+                "month": b_mo,
+                "detail": f"DUPLICATE REJECTED · Bill #{b_no} already registered in database",
+                "amount": amt,
+                "result": "DUPLICATE_REJECTED",
+                "payload": bill_dict,
+            }
+        else:
+            seen_bills_in_batch.add(b_no)
+
+            if b_basis in ["AVERAGE", "PROVISIONAL"]:
+                clean_payload = {k: v for k, v in bill_dict.items() if not isinstance(v, (bytes, bytearray))}
+                save_to_review_queue({
+                    "bill_number": b_no,
+                    "consumer_account_no": ac_no,
+                    "bill_month": b_mo,
+                    "bill_basis": b_basis,
+                    "amount": amt,
+                    "exception_reason": f"{b_basis.capitalize()} bill basis held for review",
+                    "hold_reason_code": "PROVISIONAL_AVERAGE_AUDIT",
+                    "source_filename": fname,
+                    "raw_payload": clean_payload,
+                }, prevent_duplicates=True)
+                stats["review"] += 1
+                return {
                     "file": fname,
                     "kind": "Bill",
                     "consumer": ac_no,
                     "month": b_mo,
-                    "detail": f"DUPLICATE REJECTED · Bill #{b_no} already registered in database",
+                    "detail": f"{b_basis} · {b_no} Held in Review Queue",
                     "amount": amt,
-                    "result": "DUPLICATE_REJECTED",
+                    "result": "REVIEW",
                     "payload": bill_dict,
-                })
-                stats["duplicates_rejected"] += 1
-                log_audit_event("DUPLICATE_REJECTED", f"Bill {b_no} rejected as duplicate", "BILL", b_no, "REJECTED")
+                }
+            elif not v_res.get("is_valid", False) and v_res.get("audit_status") != "VERIFIED ✓":
+                mismatch_reason = v_res.get("mismatch_reason") or "Formula calculation mismatch"
+                clean_payload = {k: v for k, v in bill_dict.items() if not isinstance(v, (bytes, bytearray))}
+                save_to_review_queue({
+                    "bill_number": b_no,
+                    "consumer_account_no": ac_no,
+                    "bill_month": b_mo,
+                    "bill_basis": b_basis,
+                    "amount": amt,
+                    "exception_reason": f"Calculation mismatch: {mismatch_reason}",
+                    "hold_reason_code": "ARITHMETIC_MISMATCH",
+                    "source_filename": fname,
+                    "raw_payload": clean_payload,
+                }, prevent_duplicates=True)
+                stats["review"] += 1
+                return {
+                    "file": fname,
+                    "kind": "Bill",
+                    "consumer": ac_no,
+                    "month": b_mo,
+                    "detail": f"MISMATCH · {b_no} Held in Review Queue",
+                    "amount": amt,
+                    "result": "REVIEW",
+                    "payload": bill_dict,
+                }
             else:
-                seen_bills_in_batch.add(b_no)
+                save_energy_bill(bill_dict, v_res, prevent_duplicates=True)
+                log_audit_event("AUTO_POSTED", f"Bill {b_no} verified and posted", "BILL", b_no, "POSTED")
+                stats["verified"] += 1
+                return {
+                    "file": fname,
+                    "kind": "Bill",
+                    "consumer": ac_no,
+                    "month": b_mo,
+                    "detail": f"ACTUAL · {b_no} Verified & Posted",
+                    "amount": amt,
+                    "result": "VERIFIED",
+                    "payload": bill_dict,
+                }
 
-                if b_basis in ["AVERAGE", "PROVISIONAL"]:
-                    save_to_review_queue({
-                        "bill_number": b_no,
-                        "consumer_account_no": ac_no,
-                        "bill_month": b_mo,
-                        "bill_basis": b_basis,
-                        "amount": amt,
-                        "exception_reason": f"{b_basis.capitalize()} bill basis held for review",
-                        "hold_reason_code": "PROVISIONAL_AVERAGE_AUDIT",
-                        "source_filename": fname,
-                        "raw_payload": bill_dict,
-                    }, prevent_duplicates=True)
-                    results.append({
-                        "file": fname,
-                        "kind": "Bill",
-                        "consumer": ac_no,
-                        "month": b_mo,
-                        "detail": f"{b_basis} · {b_no} Held in Review Queue",
-                        "amount": amt,
-                        "result": "REVIEW",
-                        "payload": bill_dict,
-                    })
-                    stats["review"] += 1
-                elif not v_res.get("is_valid", False) and v_res.get("audit_status") != "VERIFIED ✓":
-                    mismatch_reason = v_res.get("mismatch_reason") or "Formula calculation mismatch"
-                    save_to_review_queue({
-                        "bill_number": b_no,
-                        "consumer_account_no": ac_no,
-                        "bill_month": b_mo,
-                        "bill_basis": b_basis,
-                        "amount": amt,
-                        "exception_reason": f"Calculation mismatch: {mismatch_reason}",
-                        "hold_reason_code": "ARITHMETIC_MISMATCH",
-                        "source_filename": fname,
-                        "raw_payload": bill_dict,
-                    }, prevent_duplicates=True)
-                    results.append({
-                        "file": fname,
-                        "kind": "Bill",
-                        "consumer": ac_no,
-                        "month": b_mo,
-                        "detail": f"MISMATCH · {b_no} Held in Review Queue",
-                        "amount": amt,
-                        "result": "REVIEW",
-                        "payload": bill_dict,
-                    })
-                    stats["review"] += 1
-                else:
-                    save_energy_bill(bill_dict, v_res, prevent_duplicates=True)
-                    log_audit_event("AUTO_POSTED", f"Bill {b_no} verified and posted", "BILL", b_no, "POSTED")
-                    results.append({
-                        "file": fname,
-                        "kind": "Bill",
-                        "consumer": ac_no,
-                        "month": b_mo,
-                        "detail": f"ACTUAL · {b_no} Verified & Posted",
-                        "amount": amt,
-                        "result": "VERIFIED",
-                        "payload": bill_dict,
-                    })
-                    stats["verified"] += 1
 
-    return {
-        "processed": len(results),
-        "verified": stats["verified"],
-        "review": stats["review"],
-        "duplicates_rejected": stats["duplicates_rejected"],
-        "failed": stats["failed"],
-        "candidates": results,
-    }
+@router.post("/upload")
+async def upload_and_process_bills(files: list[UploadFile] = File(...)):
+    """Accepts multiple PDF bills/receipts or ZIP archives, extracts in parallel, audits, and rejects duplicates.
+    Files are stored temporarily on disk and immediately deleted after extraction.
+    """
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided.")
+
+    temp_dir = tempfile.mkdtemp(prefix="srtpl_bill_extract_")
+    try:
+        temp_file_paths = []
+        for f in files:
+            t_path = os.path.join(temp_dir, f.filename)
+            content = await f.read()
+            with open(t_path, "wb") as out_fp:
+                out_fp.write(content)
+            temp_file_paths.append(t_path)
+
+        unpacked_items = extract_pdfs_from_inputs(temp_file_paths)
+        if not unpacked_items:
+            return {"processed": 0, "candidates": []}
+
+        # Parallel extraction across available CPU workers
+        workers_count = min(4, os.cpu_count() or 4, len(unpacked_items))
+        indexed_items = [(idx, item) for idx, item in enumerate(unpacked_items)]
+
+        with ThreadPoolExecutor(max_workers=workers_count) as executor:
+            extracted_data = list(executor.map(_extract_single_item, indexed_items))
+
+        # Pre-fetch existing database identifiers for instant O(1) duplicate rejection
+        existing_bills = get_existing_bill_numbers()
+        existing_receipts = get_existing_receipt_numbers()
+
+        seen_bills_in_batch: set[str] = set()
+        seen_receipts_in_batch: set[str] = set()
+
+        results = []
+        stats = {"verified": 0, "review": 0, "duplicates_rejected": 0, "failed": 0}
+
+        for item in extracted_data:
+            cand = _process_candidate(
+                item, existing_bills, existing_receipts, seen_bills_in_batch, seen_receipts_in_batch, stats
+            )
+            results.append(cand)
+
+        return {
+            "processed": len(results),
+            "verified": stats["verified"],
+            "review": stats["review"],
+            "duplicates_rejected": stats["duplicates_rejected"],
+            "failed": stats["failed"],
+            "candidates": results,
+        }
+    finally:
+        # STRICT CLEANUP: Purge all temporary files from server
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+@router.post("/upload-stream")
+async def upload_and_process_bills_stream(files: list[UploadFile] = File(...)):
+    """Accepts PDF bills/receipts or ZIP archives, unpacks into temporary storage,
+    and streams real-time extraction progress per bill as NDJSON:
+      {"type": "item_progress", "current": 1, "total": 10, "file": "bill1.pdf", "candidate": {...}}
+      ...
+      {"type": "complete", "total": 10, "verified": 8, "review": 1, "duplicates_rejected": 1, "failed": 0, "candidates": [...]}
+    After extraction, all temporary storage is strictly wiped and purged.
+    """
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided.")
+
+    temp_dir = tempfile.mkdtemp(prefix="srtpl_bill_stream_")
+
+    async def stream_generator():
+        try:
+            temp_file_paths = []
+            for f in files:
+                t_path = os.path.join(temp_dir, f.filename)
+                content = await f.read()
+                with open(t_path, "wb") as out_fp:
+                    out_fp.write(content)
+                temp_file_paths.append(t_path)
+
+            unpacked_items = extract_pdfs_from_inputs(temp_file_paths)
+            total_count = len(unpacked_items)
+
+            if total_count == 0:
+                yield json.dumps({
+                    "type": "complete",
+                    "total": 0,
+                    "verified": 0,
+                    "review": 0,
+                    "duplicates_rejected": 0,
+                    "failed": 0,
+                    "candidates": [],
+                }) + "\n"
+                return
+
+            yield json.dumps({
+                "type": "start",
+                "total": total_count,
+                "message": f"Found {total_count} documents to extract.",
+            }) + "\n"
+
+            existing_bills = get_existing_bill_numbers()
+            existing_receipts = get_existing_receipt_numbers()
+
+            seen_bills_in_batch: set[str] = set()
+            seen_receipts_in_batch: set[str] = set()
+
+            results = []
+            stats = {"verified": 0, "review": 0, "duplicates_rejected": 0, "failed": 0}
+
+            for idx, item in enumerate(unpacked_items):
+                extracted_item = _extract_single_item((idx, item))
+                cand = _process_candidate(
+                    extracted_item, existing_bills, existing_receipts, seen_bills_in_batch, seen_receipts_in_batch, stats
+                )
+                results.append(cand)
+
+                # Stream progress for each individual bill extracted
+                yield json.dumps({
+                    "type": "item_progress",
+                    "current": idx + 1,
+                    "total": total_count,
+                    "file": cand["file"],
+                    "result": cand["result"],
+                    "detail": cand["detail"],
+                    "candidate": cand,
+                }) + "\n"
+
+            # Stream completion summary
+            yield json.dumps({
+                "type": "complete",
+                "total": total_count,
+                "verified": stats["verified"],
+                "review": stats["review"],
+                "duplicates_rejected": stats["duplicates_rejected"],
+                "failed": stats["failed"],
+                "candidates": results,
+            }) + "\n"
+
+        finally:
+            # STRICT CLEANUP: Purge all temporary files from server
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    return StreamingResponse(stream_generator(), media_type="application/x-ndjson")
 
 
 @router.get("/register")

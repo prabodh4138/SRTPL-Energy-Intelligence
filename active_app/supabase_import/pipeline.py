@@ -40,14 +40,8 @@ class ImportPipeline:
         })
         batch_id = batch.get("import_batch_id", batch_id)
 
-        # Storage path deliberately uses hash to make it deterministic.
-        storage_path = f"{report_type}/{file_hash[:2]}/{file_hash}.csv"
-
-        # Storage upload is optional and non-blocking
-        try:
-            self.storage.upload_original(str(path), storage_path)
-        except Exception:
-            pass
+        # NOTE: Do NOT store raw files into database or cloud storage. Files are processed temporarily and discarded.
+        storage_path = ""
 
         file_id = str(uuid.uuid4())
         file_row = self.repo.create_file({
