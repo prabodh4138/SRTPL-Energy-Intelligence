@@ -2,54 +2,136 @@ from __future__ import annotations
 
 import streamlit as st
 
-PAGES = [
-    "Executive Dashboard",
-    "Plaza Dashboard",
-    "Equipment Dashboard",
-    "Bills & Receipts",
-    "Operator & Compliance Tracking",
-    "EB JUNO Import",
-    "DG JUNO Import",
-    "Solar JUNO Import",
-    "Transformer JUNO Import",
-    "UPS JUNO Import",
-    "JUNO Import Center",
-    "EB",
-    "DG",
-    "Solar",
-    "Transformer",
-    "UPS",
-    "Import History",
-    "Validation & Exceptions",
-    "Data Quality",
-    "Reports",
-    "Audit",
-    "Master Data",
-    "Administration",
+PRIMARY_MODULES = [
+    "1. Dashboard",
+    "2. Reading Section",
+    "3. Validation and Exceptions",
+    "4. Juno Import Centre",
+    "5. Bill Reconcilation",
+    "6. Reports",
+]
+
+MODULE_DISPLAY_NAMES = {
+    "1. Dashboard": "1. Dashboard",
+    "2. Reading Section": "2. Reading Section (DG, EB, SOLAR, TRANSFORMER and UPS)",
+    "3. Validation and Exceptions": "3. Validation and Exceptions",
+    "4. Juno Import Centre": "4. Juno Import Centre (DG, EB, SOLAR, TRANSFORMER and UPS)",
+    "5. Bill Reconcilation": "5. Bill Reconcilation (EB Bill Extraction field, and many More)",
+    "6. Reports": "6. Reports (Excel, CSV and Pdf)",
+}
+
+ADMIN_PAGES = [
+    "Master Data Center",
+    "Administration Center",
     "System Health",
 ]
 
+NAVIGATION_MAP: dict[str, tuple[str, str | None, str | None]] = {
+    # 1. Dashboard
+    "1. Dashboard": ("1. Dashboard", None, None),
+    "Dashboard": ("1. Dashboard", None, None),
+    "Executive Dashboard": ("1. Dashboard", "dashboard_subtab", "Executive Overview"),
+    "Executive Overview": ("1. Dashboard", "dashboard_subtab", "Executive Overview"),
+    "Plaza Dashboard": ("1. Dashboard", "dashboard_subtab", "Plaza Dashboard"),
+    "Equipment Dashboard": ("1. Dashboard", "dashboard_subtab", "Equipment Dashboard"),
+    "Operator & Compliance Tracking": ("1. Dashboard", "dashboard_subtab", "Operator & Compliance"),
+    "Operator & Compliance": ("1. Dashboard", "dashboard_subtab", "Operator & Compliance"),
 
-def navigate_to(page_name: str):
+    # 2. Reading Section
+    "2. Reading Section": ("2. Reading Section", None, None),
+    "Reading Section": ("2. Reading Section", None, None),
+    "2. Reading Section(DG,EB,SOLAR,TRANSFORMER and UPS)": ("2. Reading Section", None, None),
+    "EB": ("2. Reading Section", "reading_subtab", "⚡ EB Reading"),
+    "DG": ("2. Reading Section", "reading_subtab", "⚡ DG Reading"),
+    "Solar": ("2. Reading Section", "reading_subtab", "☀️ Solar Reading"),
+    "Transformer": ("2. Reading Section", "reading_subtab", "🔌 Transformer Reading"),
+    "UPS": ("2. Reading Section", "reading_subtab", "🔋 UPS Reading"),
+
+    # 3. Validation and Exceptions
+    "3. Validation and Exceptions": ("3. Validation and Exceptions", None, None),
+    "Validation and Exceptions": ("3. Validation and Exceptions", None, None),
+    "3. Validation & Exceptions": ("3. Validation and Exceptions", None, None),
+    "Validation & Exceptions": ("3. Validation and Exceptions", "validation_subtab", "🚨 Validation & Exceptions Center"),
+    "Data Quality": ("3. Validation and Exceptions", "validation_subtab", "📊 Data Quality Monitor"),
+
+    # 4. Juno Import Centre
+    "4. Juno Import Centre": ("4. Juno Import Centre", None, None),
+    "Juno Import Centre": ("4. Juno Import Centre", None, None),
+    "4. Juno Import Centre(DG,EB,SOLAR,TRANSFORMER and UPS)": ("4. Juno Import Centre", None, None),
+    "JUNO Import Center": ("4. Juno Import Centre", "juno_import_subtab", "📁 Bulk Import Center"),
+    "EB JUNO Import": ("4. Juno Import Centre", "juno_import_subtab", "⚡ EB JUNO Import"),
+    "DG JUNO Import": ("4. Juno Import Centre", "juno_import_subtab", "⚡ DG JUNO Import"),
+    "Solar JUNO Import": ("4. Juno Import Centre", "juno_import_subtab", "☀️ Solar JUNO Import"),
+    "Transformer JUNO Import": ("4. Juno Import Centre", "juno_import_subtab", "🔌 Transformer JUNO Import"),
+    "UPS JUNO Import": ("4. Juno Import Centre", "juno_import_subtab", "🔋 UPS JUNO Import"),
+    "Import History": ("4. Juno Import Centre", "juno_import_subtab", "📜 Import History"),
+
+    # 5. Bill Reconcilation
+    "5. Bill Reconcilation": ("5. Bill Reconcilation", None, None),
+    "Bill Reconcilation": ("5. Bill Reconcilation", None, None),
+    "5. Bill Reconcilation(EB Bill Extraction field,and many More)": ("5. Bill Reconcilation", None, None),
+    "Bills & Receipts": ("5. Bill Reconcilation", None, None),
+
+    # 6. Reports
+    "6. Reports": ("6. Reports", "reports_subtab", "📑 Reports & Export Center"),
+    "Reports": ("6. Reports", "reports_subtab", "📑 Reports & Export Center"),
+    "6. Reports(Excel,CSV and Pdf)": ("6. Reports", "reports_subtab", "📑 Reports & Export Center"),
+    "Audit": ("6. Reports", "reports_subtab", "📜 Audit Log & System Trail"),
+
+    # Administrative Workspaces
+    "Master Data": ("Master Data Center", None, None),
+    "Master Data Center": ("Master Data Center", None, None),
+    "Administration": ("Administration Center", None, None),
+    "Administration Center": ("Administration Center", None, None),
+    "System Health": ("System Health", None, None),
+}
+
+PAGES = list(dict.fromkeys(PRIMARY_MODULES + ADMIN_PAGES + list(NAVIGATION_MAP.keys())))
+
+
+def resolve_page(page_name: str) -> tuple[str, str | None, str | None]:
+    """Resolves any module or legacy page name to (target_page, subtab_key, subtab_val)."""
+    return NAVIGATION_MAP.get(page_name, (page_name, None, None))
+
+
+def navigate_to(page_name: str) -> None:
     """Safely triggers programmatic navigation without mutating widget session state post-instantiation."""
-    if page_name in PAGES:
-        st.session_state["pending_nav_page"] = page_name
-        st.session_state["nav_page"] = page_name
-        st.rerun()
+    target_page, subtab_key, subtab_val = resolve_page(page_name)
+    if subtab_key and subtab_val:
+        st.session_state[subtab_key] = subtab_val
+    st.session_state["pending_nav_page"] = target_page
+    st.session_state["nav_page"] = target_page
+    if target_page in PRIMARY_MODULES:
+        st.session_state["primary_module_radio"] = target_page
+    st.rerun()
 
 
-def render_navigation():
+def render_navigation() -> str:
     # Process any pending programmatic navigation BEFORE creating the radio widget
     pending = st.session_state.pop("pending_nav_page", None)
-    if pending and pending in PAGES:
-        st.session_state["nav_page_selector"] = pending
-        st.session_state["nav_page"] = pending
+    if pending:
+        target_page, subtab_key, subtab_val = resolve_page(pending)
+        if subtab_key and subtab_val:
+            st.session_state[subtab_key] = subtab_val
+        st.session_state["nav_page"] = target_page
+        if target_page in PRIMARY_MODULES:
+            st.session_state["primary_module_radio"] = target_page
 
     # Fallback initialization if first run
     if "nav_page" not in st.session_state or st.session_state["nav_page"] not in PAGES:
-        st.session_state["nav_page"] = "Executive Dashboard"
-    if "nav_page_selector" not in st.session_state or st.session_state["nav_page_selector"] not in PAGES:
-        st.session_state["nav_page_selector"] = st.session_state["nav_page"]
+        st.session_state["nav_page"] = "1. Dashboard"
+
+    current_page = st.session_state["nav_page"]
+
+    # If it's a legacy alias, map it to the primary module or admin page
+    if current_page not in PRIMARY_MODULES and current_page not in ADMIN_PAGES:
+        target_page, subtab_key, subtab_val = resolve_page(current_page)
+        if subtab_key and subtab_val:
+            st.session_state[subtab_key] = subtab_val
+        current_page = target_page
+        st.session_state["nav_page"] = current_page
+        if target_page in PRIMARY_MODULES:
+            st.session_state["primary_module_radio"] = target_page
 
     st.sidebar.markdown(
         """
@@ -63,28 +145,50 @@ def render_navigation():
     st.sidebar.caption(f"Signed in as: **{st.session_state.get('user', 'admin@srtpl.com')}**")
 
     # Quick Home Button
-    if st.sidebar.button("🏠 Home (Executive Overview)", width="stretch"):
-        navigate_to("Executive Dashboard")
+    if st.sidebar.button("🏠 Home (Dashboard)", width="stretch"):
+        navigate_to("1. Dashboard")
 
     st.sidebar.divider()
 
-    current_page = st.session_state.get("nav_page", "Executive Dashboard")
-    current_idx = PAGES.index(current_page) if current_page in PAGES else 0
+    if current_page in ADMIN_PAGES:
+        st.sidebar.info(f"Viewing: **{current_page}**")
+        if st.sidebar.button("← Return to Core Modules", width="stretch", type="primary"):
+            navigate_to("1. Dashboard")
+        st.sidebar.divider()
 
-    if "nav_page_selector" not in st.session_state:
-        selected_page = st.sidebar.radio(
-            "Navigation Workspace",
-            PAGES,
-            index=current_idx,
-            key="nav_page_selector",
-        )
-    else:
-        selected_page = st.sidebar.radio(
-            "Navigation Workspace",
-            PAGES,
-            key="nav_page_selector",
-        )
-    st.session_state["nav_page"] = selected_page
+    if "primary_module_radio" not in st.session_state or st.session_state["primary_module_radio"] not in PRIMARY_MODULES:
+        st.session_state["primary_module_radio"] = current_page if current_page in PRIMARY_MODULES else "1. Dashboard"
+
+    if current_page in PRIMARY_MODULES and st.session_state.get("primary_module_radio") != current_page:
+        st.session_state["primary_module_radio"] = current_page
+
+    selected_module = st.sidebar.radio(
+        "Application Modules",
+        PRIMARY_MODULES,
+        format_func=lambda m: MODULE_DISPLAY_NAMES.get(m, m),
+        key="primary_module_radio",
+    )
+
+    # Only update nav_page from primary radio if user is not in an admin view or if user switched radio
+    if current_page not in ADMIN_PAGES:
+        current_page = selected_module
+        st.session_state["nav_page"] = selected_module
+    elif selected_module != st.session_state.get("_last_admin_selected_module", None):
+        # User explicitly clicked radio while in admin mode -> switch to that module
+        current_page = selected_module
+        st.session_state["nav_page"] = selected_module
+
+    st.session_state["_last_admin_selected_module"] = selected_module
+
+    # Secondary Expandable Drawer for Master Data & Administration
+    with st.sidebar.expander("⚙️ Master Data & Administration", expanded=(current_page in ADMIN_PAGES)):
+        st.caption("Administrative & Master Configuration")
+        if st.button("📁 Master Data Center", width="stretch", key="nav_btn_md"):
+            navigate_to("Master Data Center")
+        if st.button("👥 Administration Center", width="stretch", key="nav_btn_adm"):
+            navigate_to("Administration Center")
+        if st.button("🩺 System Health", width="stretch", key="nav_btn_sh"):
+            navigate_to("System Health")
 
     st.sidebar.divider()
 
@@ -132,4 +236,4 @@ def render_navigation():
         st.session_state.clear()
         st.rerun()
 
-    return selected_page
+    return current_page
