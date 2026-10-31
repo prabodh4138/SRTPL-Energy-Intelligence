@@ -20,7 +20,6 @@ services:
   - type: web
     name: srtpl-energy-frontend
     runtime: static
-    plan: free
     rootDir: frontend
     buildCommand: npm install && npm run build
     staticPublishPath: dist
@@ -33,4 +32,4 @@ services:
         fromService:
           type: web
           name: srtpl-energy-backend
-          property: host
+          property: url
