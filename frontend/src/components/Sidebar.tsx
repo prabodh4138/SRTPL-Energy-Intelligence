@@ -7,6 +7,7 @@ import {
   FileCheck2,
   FileSpreadsheet,
   Layers,
+  X,
 } from 'lucide-react';
 
 export type ModuleKey =
@@ -20,6 +21,8 @@ export type ModuleKey =
 interface SidebarProps {
   activeModule: ModuleKey;
   onSelectModule: (m: ModuleKey) => void;
+  isMobileOpen?: boolean;
+  onCloseMobile?: () => void;
 }
 
 export const MODULE_LIST: { id: ModuleKey; label: string; number: string; icon: React.FC<{ className?: string }> }[] = [
@@ -28,25 +31,50 @@ export const MODULE_LIST: { id: ModuleKey; label: string; number: string; icon: 
   { id: 'validation', label: 'Validation & Exceptions', number: '3', icon: AlertTriangle },
   { id: 'juno', label: 'Juno Import Centre', number: '4', icon: UploadCloud },
   { id: 'bills', label: 'Bill Reconciliation', number: '5', icon: FileCheck2 },
-  { id: 'reports', label: 'Reports', number: '6', icon: FileSpreadsheet },
+  { id: 'reports', label: 'Reports & Custom Studio', number: '6', icon: FileSpreadsheet },
 ];
 
-export const Sidebar: React.FC<SidebarProps> = ({ activeModule, onSelectModule }) => {
-  return (
-    <aside className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col shrink-0 min-h-screen">
+export const Sidebar: React.FC<SidebarProps> = ({
+  activeModule,
+  onSelectModule,
+  isMobileOpen = false,
+  onCloseMobile,
+}) => {
+  const handleItemClick = (id: ModuleKey) => {
+    onSelectModule(id);
+    if (onCloseMobile) {
+      onCloseMobile();
+    }
+  };
+
+  const navContent = (
+    <div className="flex flex-col h-full">
       {/* Brand Header */}
-      <div className="h-16 px-6 border-b border-slate-800 flex items-center gap-3">
-        <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 to-sky-500 flex items-center justify-center text-white shadow-lg shadow-emerald-950/40">
-          <Layers className="w-5 h-5" />
+      <div className="h-16 px-6 border-b border-slate-800 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 to-sky-500 flex items-center justify-center text-white shadow-lg shadow-emerald-950/40">
+            <Layers className="w-5 h-5" />
+          </div>
+          <div>
+            <span className="font-extrabold text-sm text-slate-100 tracking-wide">SRTPL ENERGY</span>
+            <span className="block text-[10px] text-emerald-400 font-semibold tracking-wider uppercase">Intelligence v2</span>
+          </div>
         </div>
-        <div>
-          <span className="font-extrabold text-sm text-slate-100 tracking-wide">SRTPL ENERGY</span>
-          <span className="block text-[10px] text-emerald-400 font-semibold tracking-wider uppercase">Intelligence v2</span>
-        </div>
+
+        {/* Mobile Close Button */}
+        {onCloseMobile && (
+          <button
+            onClick={onCloseMobile}
+            className="lg:hidden p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-slate-100 transition"
+            aria-label="Close navigation"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        )}
       </div>
 
       {/* Navigation Modules */}
-      <div className="p-4 flex-1 space-y-1">
+      <div className="p-4 flex-1 space-y-1.5 overflow-y-auto">
         <div className="px-3 py-2 text-[11px] font-semibold tracking-wider uppercase text-slate-500">
           Core Workflows
         </div>
@@ -57,7 +85,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, onSelectModule }
           return (
             <button
               key={item.id}
-              onClick={() => onSelectModule(item.id)}
+              onClick={() => handleItemClick(item.id)}
               className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-xl text-left font-medium text-xs transition duration-150 ${
                 isActive
                   ? 'bg-gradient-to-r from-emerald-600/20 to-sky-600/10 text-emerald-400 border border-emerald-500/30 shadow-sm'
@@ -71,7 +99,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, onSelectModule }
               >
                 {item.number}
               </div>
-              <Icon className={`w-4 h-4 ${isActive ? 'text-emerald-400' : 'text-slate-500'}`} />
+              <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-emerald-400' : 'text-slate-500'}`} />
               <span className="flex-1 truncate">{item.label}</span>
             </button>
           );
@@ -90,6 +118,32 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeModule, onSelectModule }
           <div className="text-[10px] text-slate-500 mt-2">60 Consumers (3 HT / 57 LT)</div>
         </div>
       </div>
-    </aside>
+    </div>
+  );
+
+  return (
+    <>
+      {/* Desktop Static Sidebar (Always visible on lg screens) */}
+      <aside className="hidden lg:flex lg:flex-col w-64 bg-slate-900 border-r border-slate-800 shrink-0 min-h-screen sticky top-0 h-screen overflow-hidden">
+        {navContent}
+      </aside>
+
+      {/* Mobile Slide-Out Drawer with Backdrop (Visible on mobile when open) */}
+      {isMobileOpen && (
+        <div className="fixed inset-0 z-50 lg:hidden flex">
+          {/* Backdrop Blur Overlay */}
+          <div
+            className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm transition-opacity"
+            onClick={onCloseMobile}
+            aria-hidden="true"
+          />
+
+          {/* Slide-out Drawer Panel */}
+          <aside className="relative w-72 max-w-[85vw] bg-slate-900 border-r border-slate-800 z-50 flex flex-col h-full shadow-2xl animate-in slide-in-from-left duration-200">
+            {navContent}
+          </aside>
+        </div>
+      )}
+    </>
   );
 };

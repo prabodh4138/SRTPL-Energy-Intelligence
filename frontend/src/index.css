@@ -12,6 +12,13 @@ body {
   min-height: 100vh;
   background-color: #0b0f19;
   color: #f1f5f9;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+/* Mobile iOS notch safe padding */
+.safe-area-bottom {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
 }
 
 /* Custom scrollbars */
