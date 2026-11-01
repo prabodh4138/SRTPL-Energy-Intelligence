@@ -44,7 +44,7 @@ FIELD_SYNONYM_MAP = {
 
 def enrich_bill_record(row: dict[str, Any]) -> dict[str, Any]:
     """Enriches bill record with authoritative bill_type (HT/LT), consumer_scope (PLAZA/HIGHWAY),
-    and parsed sanctioned_load_kw directly from contract demand and tariff classification.
+    and parsed sanctioned_load_kw directly from contract demand, master accounts, and tariff classification.
     Synchronizes both Title Case and snake_case keys for all 13 required fields.
     """
     # 0. Sync synonyms across all known fields first
@@ -62,9 +62,22 @@ def enrich_bill_record(row: dict[str, Any]) -> dict[str, Any]:
     tariff = str(row.get("Tariff Category") or row.get("tariff_category") or "").strip().upper()
     cd_raw = str(row.get("Contract Demand") or row.get("contract_demand") or "").strip()
 
+    # Look up authoritative master consumer account
+    master_acc: dict[str, Any] = {}
+    try:
+        from core.db_sync import DEFAULT_CONSUMER_ACCOUNTS
+        for a in DEFAULT_CONSUMER_ACCOUNTS:
+            if str(a.get("consumer_account_no", "")).strip() == ac:
+                master_acc = a
+                break
+    except Exception:
+        master_acc = {}
+
     # 1. Determine bill_type (Exactly 3 HT accounts for the 3 Toll Plazas; remaining 57 are LT)
     is_ht = False
-    if ac in {"416000000110", "413000000002", "413000000010", "813000000281", "812001020208"}:
+    if master_acc.get("bill_type") == "HT":
+        is_ht = True
+    elif ac in {"416000000110", "813000000281", "812001020208"}:
         is_ht = True
     elif bool(re.search(r'\b(HT|HIGH TENSION|EHT|LARGE INDUSTRY)\b', tariff)) or bool(re.search(r'>=?\s*110', tariff)) or bool(re.search(r'>\s*70', tariff)):
         is_ht = True
@@ -78,10 +91,13 @@ def enrich_bill_record(row: dict[str, Any]) -> dict[str, Any]:
     b_type = "HT" if is_ht else "LT"
 
     # 2. Determine consumer_scope: PLAZA for 3 Plaza HT connections, HIGHWAY for corridor lighting
-    is_plaza = is_ht or ac in {"416000000110", "413000000002", "413000000010", "813000000281", "812001020208"} or str(row.get("consumer_scope", "")).strip().upper() in ["PLAZA", "TOLL_PLAZA"]
-    scope = "PLAZA" if is_plaza else "HIGHWAY"
+    if master_acc.get("consumer_scope"):
+        scope = master_acc["consumer_scope"].upper()
+    else:
+        is_plaza = is_ht or ac in {"416000000110", "813000000281", "812001020208"} or str(row.get("consumer_scope", "")).strip().upper() in ["PLAZA", "TOLL_PLAZA"]
+        scope = "PLAZA" if is_plaza else "HIGHWAY"
 
-    # 3. Determine sanctioned_load_kw: Parsed directly from Contract Demand
+    # 3. Determine sanctioned_load_kw: Parsed directly from Contract Demand or Master Account
     load_val = None
     cd_nums = re.findall(r"(\d+(?:\.\d+)?)", cd_raw)
     if cd_nums:
@@ -89,6 +105,12 @@ def enrich_bill_record(row: dict[str, Any]) -> dict[str, Any]:
             load_val = float(cd_nums[0])
         except (ValueError, TypeError):
             pass
+    if load_val is None or load_val <= 0.0:
+        if master_acc.get("sanctioned_load_kw") is not None:
+            try:
+                load_val = float(master_acc["sanctioned_load_kw"])
+            except (ValueError, TypeError):
+                pass
     if load_val is None or load_val <= 0.0:
         raw_load = row.get("sanctioned_load_kw") or row.get("Sanctioned Load (KW)") or row.get("md_kw") or row.get("MD-KW")
         if raw_load is not None:
@@ -107,10 +129,23 @@ def enrich_bill_record(row: dict[str, Any]) -> dict[str, Any]:
     row["Sanctioned Load (KW)"] = load_val
 
     # Ensure Contract Demand is reflected in both styles
-    if not cd_raw:
+    if not cd_raw or cd_raw in ["—", "None", "nan"]:
         cd_raw = f"{load_val:.0f} KVA" if is_ht else f"{load_val:.0f} KW"
     row["Contract Demand"] = cd_raw
     row["contract_demand"] = cd_raw
+
+    # Carry forward master account details if not present in bill
+    if master_acc:
+        if not row.get("toll_plaza_id") and master_acc.get("toll_plaza_id"):
+            row["toll_plaza_id"] = master_acc["toll_plaza_id"]
+        if not row.get("Division") and not row.get("division") and master_acc.get("division_name"):
+            row["Division"] = master_acc["division_name"]
+            row["division"] = master_acc["division_name"]
+            row["division_name"] = master_acc["division_name"]
+        if not row.get("asset_code") and master_acc.get("asset_code"):
+            row["asset_code"] = master_acc["asset_code"]
+        if not row.get("location") and master_acc.get("location"):
+            row["location"] = master_acc["location"]
 
     # Ensure all 13 requested fields are present in both casing formats
     for fld in REQUIRED_EXTRACTION_FIELDS:
@@ -209,7 +244,9 @@ def merge_and_clean_dataframes(
             col_y = base_col + "_y"
 
             if col_y in merged.columns:
-                merged[base_col] = merged[col].combine_first(merged[col_y])
+                s_x = merged[col].astype(object).replace(r"^\s*$", None, regex=True)
+                s_y = merged[col_y].astype(object).replace(r"^\s*$", None, regex=True)
+                merged[base_col] = s_x.combine_first(s_y).fillna("")
                 merged.drop([col, col_y], axis=1, inplace=True, errors="ignore")
             else:
                 merged[base_col] = merged[col]

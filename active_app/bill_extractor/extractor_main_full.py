@@ -222,10 +222,15 @@ def extract_energy_bill_full(pdf_file, source_name, extracted_text=None):
             nums = re.findall(r"[\d,]+\.\d+", l)
             md_kva = nums[1].replace(",", "") if len(nums) >= 2 else (nums[-1].replace(",", "") if nums else "")
 
-    entry["CUML MD-KW"] = cuml_md_kw
-    entry["CUML MD-KVA"] = cuml_md_kva
-    entry["MD-KW"] = md_kw or cuml_md_kw
-    entry["MD-KVA"] = md_kva or cuml_md_kva
+    # Fallback to Billable Demand printed in connection/supply details (standard in LT SBM bills)
+    if not md_kw:
+        m_bkw = re.search(r"Billable Demand[-\s]*KW\s*:\s*([\d\.]+)", text, re.IGNORECASE)
+        if m_bkw:
+            md_kw = m_bkw.group(1).strip()
+    if not md_kva:
+        m_bkva = re.search(r"Billable Demand[-\s]*KVA\s*:\s*([\d\.]+)", text, re.IGNORECASE)
+        if m_bkva:
+            md_kva = m_bkva.group(1).strip()
 
     is_ht = "HT" in (raw_cat or "").upper() or "KVA" in (entry.get("Contract Demand") or "").upper() or "KVA" in (raw_cat or "").upper()
     primary_md = md_kva if is_ht else md_kw
@@ -233,6 +238,17 @@ def extract_energy_bill_full(pdf_file, source_name, extracted_text=None):
         primary_md = md_kw if is_ht else md_kva
     if not primary_md or primary_md in ("0.0000", "0"):
         primary_md = cuml_md_kva if is_ht else cuml_md_kw
+
+    # For LT bills without separate CUML register, standardize CUML to recorded demand
+    if not cuml_md_kw:
+        cuml_md_kw = md_kw or ("0.00" if not is_ht else "")
+    if not cuml_md_kva:
+        cuml_md_kva = md_kva or ("0.00" if is_ht else "")
+
+    entry["CUML MD-KW"] = cuml_md_kw
+    entry["CUML MD-KVA"] = cuml_md_kva
+    entry["MD-KW"] = md_kw or cuml_md_kw
+    entry["MD-KVA"] = md_kva or cuml_md_kva
     entry["MD"] = primary_md
 
     # Net Payable Before & After Rebate Date

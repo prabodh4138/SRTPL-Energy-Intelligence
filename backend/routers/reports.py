@@ -15,6 +15,7 @@ from core.db_sync import (
     get_receipt_reconciliation,
     get_budget_vs_actual,
     get_unified_billing_kpi_dataset,
+    _ensure_official_register_columns,
 )
 
 router = APIRouter(prefix="/api/reports", tags=["Reports"])
@@ -38,7 +39,7 @@ def get_reports_summary():
 
 @router.get("/download-bills-excel")
 def download_bills_excel():
-    df = get_official_bill_register()
+    df = _ensure_official_register_columns(get_official_bill_register())
     if df.empty:
         raise HTTPException(
             status_code=400,
@@ -100,7 +101,7 @@ def download_bills_excel():
 
 @router.get("/download-bills-csv")
 def download_bills_csv():
-    df = get_official_bill_register()
+    df = _ensure_official_register_columns(get_official_bill_register())
     if df.empty:
         raise HTTPException(
             status_code=400,

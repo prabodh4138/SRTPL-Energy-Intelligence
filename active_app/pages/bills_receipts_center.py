@@ -49,57 +49,37 @@ from bill_extractor.zip_handler import extract_pdfs_from_inputs
 
 
 from core.db_sync import (
-
     get_all_consumer_accounts,
-
     get_all_energy_bills,
-
     get_all_provisional_energy_bills,
-
     get_all_payment_receipts,
-
     get_consumer_mapping_dict,
-
     get_unified_billing_kpi_dataset,
-
     get_official_bill_register,
-
     get_bill_review_queue,
-
     save_to_review_queue,
-
     verify_and_post_bill,
-
     delete_held_draft,
-
     void_posted_bill,
-
     replace_average_with_actual,
-
     get_receipt_reconciliation,
-
     allocate_receipt_to_bill,
-
     get_budget_vs_actual,
-
     get_rebate_performance,
-
     get_audit_events,
-
     log_audit_event,
-
     save_energy_bill,
-
     save_provisional_energy_bill,
-
     save_payment_receipt,
-
     get_correlated_consumer_reconciliation,
-
     get_missing_bills_kpi,
-
     _clean_kpi_num,
-
+    move_to_rejected_bucket,
+    get_rejected_bills_bucket,
+    save_rejected_bill,
+    restore_rejected_bill,
+    delete_rejected_bill,
+    _ensure_official_register_columns,
 )
 
 
@@ -762,6 +742,18 @@ def render():
                                         "amount": amt, "result": "DUPLICATE_REJECTED", "payload": bill_dict
                                     })
                                     log_audit_event("DUPLICATE_REJECTED", f"Bill {b_no} rejected as duplicate", "BILL", b_no, "REJECTED")
+                                    save_rejected_bill({
+                                        "candidate_id": f"DUP-{b_no}",
+                                        "bill_number": b_no,
+                                        "consumer_account_no": ac_no,
+                                        "toll_plaza_id": bill_dict.get("toll_plaza_id", "TP01"),
+                                        "bill_type": bill_dict.get("bill_type", "LT"),
+                                        "bill_month": b_mo,
+                                        "amount": amt,
+                                        "rejection_reason": f"DUPLICATE REJECTED · Bill #{b_no} already registered in database",
+                                        "source_filename": fname,
+                                        "raw_payload": bill_dict,
+                                    })
                                 else:
                                     seen_bills_in_batch.add(b_no)
                                     if b_basis in ["AVERAGE", "PROVISIONAL"]:
@@ -799,7 +791,7 @@ def render():
                         st.session_state["extracted_candidates"] = results
                         bill_payloads = [r["payload"] for r in results if r.get("kind") == "Bill" and r.get("payload")]
                         if bill_payloads:
-                            st.session_state["extracted_bills_full_df"] = pd.DataFrame(bill_payloads).drop(columns=["raw_text"], errors="ignore")
+                            st.session_state["extracted_bills_full_df"] = _ensure_official_register_columns(pd.DataFrame(bill_payloads).drop(columns=["raw_text"], errors="ignore"))
                         else:
                             st.session_state["extracted_bills_full_df"] = pd.DataFrame()
                         status_text.success(f"⚡ Parallel extraction complete: {total_unpacked} documents processed ({len(seen_bills_in_batch)} bills processed, {len(seen_receipts_in_batch)} receipts registered).")
@@ -933,142 +925,258 @@ def render():
     # =========================================================================
 
     with tab_review:
-
-        st.subheader("Persistent Bill Review Queue")
-
-        st.caption("Held candidate records with calculation mismatches, provisional audit flags, or mapping uncertainties. No record is posted until explicitly verified.")
-
-
+        st.subheader("Persistent Bill Review Queue & Rejected Bucket")
+        st.caption("Inspect and modify held bills (mismatch/provisional) before posting, or review and restore rejected records.")
 
         queue_df = get_bill_review_queue()
+        rejected_df = get_rejected_bills_bucket()
 
+        sub_review, sub_rejected = st.tabs([
+            f"📋 Active Review Queue ({len(queue_df)})",
+            f"🗑️ Rejected Bucket ({len(rejected_df)})",
+        ])
 
+        with sub_review:
+            if not queue_df.empty:
+                st.markdown(f"**{len(queue_df)} candidates currently held in review queue:**")
 
-        if not queue_df.empty:
+                q_disp = queue_df[["candidate_id", "consumer_account_no", "bill_month", "bill_number", "bill_basis", "amount", "exception_reason", "status"]]
+                st.dataframe(
+                    q_disp.rename(columns={
+                        "candidate_id": "Candidate ID",
+                        "consumer_account_no": "Consumer A/C",
+                        "bill_month": "Month",
+                        "bill_number": "Bill Ref",
+                        "bill_basis": "Basis",
+                        "amount": "Amount (₹)",
+                        "exception_reason": "Hold / Exception Reason",
+                        "status": "Queue Status",
+                    }),
+                    width="stretch",
+                    hide_index=True,
+                )
 
-            st.markdown(f"**{len(queue_df)} candidates held in review queue:**")
+                st.divider()
 
+                st.markdown("##### 🛠️ Operator Review, Data Correction & Posting")
+                sel_cid = st.selectbox(
+                    "Select Candidate to Inspect / Modify",
+                    queue_df["candidate_id"].tolist(),
+                    format_func=lambda cid: f"{cid} · {queue_df[queue_df['candidate_id'] == cid].iloc[0].get('consumer_account_no', '')} ({queue_df[queue_df['candidate_id'] == cid].iloc[0].get('bill_number', '')})",
+                    key="sel_queue_cid",
+                )
 
+                target_row = queue_df[queue_df["candidate_id"] == sel_cid].iloc[0].to_dict()
+                raw_payload = target_row.get("raw_payload") or {}
+                if isinstance(raw_payload, str):
+                    import json
+                    try:
+                        raw_payload = json.loads(raw_payload)
+                    except Exception:
+                        raw_payload = {}
 
-            q_disp = queue_df[["candidate_id", "consumer_account_no", "bill_month", "bill_number", "bill_basis", "amount", "exception_reason", "status"]]
+                merged_item = {**raw_payload, **target_row}
 
-            st.dataframe(
+                hold_reason = target_row.get("exception_reason") or "Audit / calculation mismatch review required"
+                st.warning(f"⚠️ **Held in Review Reason:** {hold_reason}")
 
-                q_disp.rename(columns={
+                with st.form(f"review_modify_form_{sel_cid}"):
+                    st.markdown("###### 1. Core Identifiers & Master Classification")
+                    r1_c1, r1_c2, r1_c3, r1_c4 = st.columns(4)
+                    edit_ac = r1_c1.text_input("Consumer Account No.", value=str(merged_item.get("consumer_account_no") or merged_item.get("Consumer A/c No.") or ""))
+                    edit_bno = r1_c2.text_input("Bill Number", value=str(merged_item.get("bill_number") or merged_item.get("Bill Number") or ""))
+                    edit_mo = r1_c3.text_input("Bill Month", value=str(merged_item.get("bill_month") or merged_item.get("Bill Month") or ""))
+                    cur_basis = str(merged_item.get("bill_basis") or merged_item.get("Bill Basis") or "ACTUAL").upper()
+                    edit_basis = r1_c4.selectbox("Bill Basis", ["ACTUAL", "AVERAGE", "PROVISIONAL"], index=0 if cur_basis == "ACTUAL" else (1 if cur_basis == "AVERAGE" else 2))
 
-                    "candidate_id": "Candidate ID",
+                    r2_c1, r2_c2, r2_c3, r2_c4 = st.columns(4)
+                    cur_btype = str(merged_item.get("bill_type") or merged_item.get("Bill Type") or "LT").upper()
+                    edit_btype = r2_c1.selectbox("Feeder Classification", ["HT", "LT"], index=0 if cur_btype == "HT" else 1)
+                    cur_scope = str(merged_item.get("consumer_scope") or merged_item.get("Consumer Scope") or "HIGHWAY").upper()
+                    edit_scope = r2_c2.selectbox("Consumer Scope", ["PLAZA", "HIGHWAY"], index=0 if cur_scope == "PLAZA" else 1)
+                    cur_plz = str(merged_item.get("toll_plaza_id") or "TP01").upper()
+                    plz_idx = 0 if cur_plz == "TP01" else (1 if cur_plz == "TP02" else 2)
+                    edit_plz = r2_c3.selectbox("Toll Plaza ID", ["TP01", "TP02", "TP03"], index=plz_idx)
+                    edit_tariff = r2_c4.text_input("Tariff Category", value=str(merged_item.get("tariff_category") or merged_item.get("Tariff Category") or ""))
 
-                    "consumer_account_no": "Consumer A/C",
+                    st.markdown("###### 2. Demand, Loads & Meter Readings (13 Extracted Fields)")
+                    r3_c1, r3_c2, r3_c3, r3_c4 = st.columns(4)
+                    edit_cd = r3_c1.text_input("Contract Demand", value=str(merged_item.get("contract_demand") or merged_item.get("Contract Demand") or ""))
+                    edit_load = r3_c2.number_input("Sanctioned Load (kW)", value=float(_clean_kpi_num(merged_item.get("sanctioned_load_kw") or merged_item.get("Sanctioned Load (KW)")) or 10.0), min_value=0.0, step=1.0)
+                    edit_meter = r3_c3.text_input("Meter Sl. No.", value=str(merged_item.get("meter_sl_no") or merged_item.get("Meter Sl. No.") or ""))
+                    edit_sd = r3_c4.number_input("Security Deposit (₹)", value=float(_clean_kpi_num(merged_item.get("security_deposit") or merged_item.get("Security Deposit"))), min_value=0.0, step=100.0)
 
-                    "bill_month": "Month",
+                    r4_c1, r4_c2, r4_c3, r4_c4 = st.columns(4)
+                    edit_md = r4_c1.number_input("MD (Maximum Demand)", value=float(_clean_kpi_num(merged_item.get("md") or merged_item.get("MD"))), min_value=0.0, step=0.01, format="%.4f")
+                    edit_cuml_kva = r4_c2.number_input("CUML MD-KVA", value=float(_clean_kpi_num(merged_item.get("cuml_md_kva") or merged_item.get("CUML MD-KVA"))), min_value=0.0, step=0.01, format="%.4f")
+                    edit_cuml_kw = r4_c3.number_input("CUML MD-KW", value=float(_clean_kpi_num(merged_item.get("cuml_md_kw") or merged_item.get("CUML MD-KW"))), min_value=0.0, step=0.01, format="%.4f")
+                    edit_dps = r4_c4.number_input("DPS (Delayed Payment Surchg ₹)", value=float(_clean_kpi_num(merged_item.get("dps_rs") or merged_item.get("DPS(Rs.)"))), min_value=0.0, step=1.0)
 
-                    "bill_number": "Bill Ref",
+                    st.markdown("###### 3. Jurisdictions, Dates & Net Payable Amounts")
+                    r5_c1, r5_c2, r5_c3, r5_c4 = st.columns(4)
+                    edit_div = r5_c1.text_input("Division", value=str(merged_item.get("division") or merged_item.get("Division") or ""))
+                    edit_subdiv = r5_c2.text_input("Sub-Division", value=str(merged_item.get("sub_division") or merged_item.get("Sub-Division") or ""))
+                    edit_sec = r5_c3.text_input("Section", value=str(merged_item.get("section") or merged_item.get("Section") or ""))
+                    edit_reb_dt = r5_c4.text_input("Rebate Date (DD/MM/YYYY)", value=str(merged_item.get("rebate_date") or merged_item.get("Rebate Date") or ""))
 
-                    "bill_basis": "Basis",
+                    r6_c1, r6_c2, r6_c3, r6_c4 = st.columns(4)
+                    edit_ec = r6_c1.number_input("Energy Charges (₹)", value=float(_clean_kpi_num(merged_item.get("energy_charges") or merged_item.get("a. Energy Charges"))), min_value=0.0, step=100.0)
+                    edit_dem = r6_c2.number_input("Demand Charge / MMFC (₹)", value=float(_clean_kpi_num(merged_item.get("demand_charge") or merged_item.get("Demand Charge / MMFC"))), min_value=0.0, step=10.0)
+                    edit_net_bef = r6_c3.number_input("Net Payable Before Rbt. Dt. (₹)", value=float(_clean_kpi_num(merged_item.get("net_payable_amount_before_rbt_dt_rs") or merged_item.get("Net Payable Amount Before Rbt. Dt.(Rs.)") or merged_item.get("total_amount_payable") or merged_item.get("amount"))), min_value=0.0, step=100.0)
+                    edit_net_aft = r6_c4.number_input("Net Payable After Rbt. Dt. (₹)", value=float(_clean_kpi_num(merged_item.get("net_payable_amount_after_rbt_dt_rs") or merged_item.get("Net Payable Amount After Rbt. Dt.(Rs.)") or merged_item.get("net_after_rebate"))), min_value=0.0, step=100.0)
 
-                    "amount": "Amount",
+                    edit_notes = st.text_input("Operator Audit Notes / Verification Remarks", value="Manually verified and modified by operator")
 
-                    "exception_reason": "Exception Reason",
+                    st.write("")
+                    act_col1, act_col2 = st.columns(2)
+                    verify_btn = act_col1.form_submit_button("✅ Verify & Post to Official Register", type="primary", width="stretch")
+                    delete_btn = act_col2.form_submit_button("🗑️ Delete Draft Candidate", width="stretch")
 
-                    "status": "Queue Status",
+                    if verify_btn:
+                        corrections = {
+                            "consumer_account_no": edit_ac,
+                            "bill_number": edit_bno,
+                            "bill_month": edit_mo,
+                            "bill_basis": edit_basis,
+                            "bill_type": edit_btype,
+                            "consumer_scope": edit_scope,
+                            "toll_plaza_id": edit_plz,
+                            "tariff_category": edit_tariff,
+                            "contract_demand": edit_cd,
+                            "sanctioned_load_kw": edit_load,
+                            "meter_sl_no": edit_meter,
+                            "security_deposit": edit_sd,
+                            "md": edit_md,
+                            "cuml_md_kva": edit_cuml_kva,
+                            "cuml_md_kw": edit_cuml_kw,
+                            "dps_rs": edit_dps,
+                            "division": edit_div,
+                            "sub_division": edit_subdiv,
+                            "section": edit_sec,
+                            "rebate_date": edit_reb_dt,
+                            "energy_charges": edit_ec,
+                            "demand_charge": edit_dem,
+                            "current_total": edit_net_bef,
+                            "total_amount_payable": edit_net_bef,
+                            "net_payable_amount_before_rbt_dt_rs": edit_net_bef,
+                            "net_payable_amount_after_rbt_dt_rs": edit_net_aft,
+                            "net_after_rebate": edit_net_aft,
+                            "edit_notes": edit_notes,
+                            "is_edited": True,
+                        }
+                        res = verify_and_post_bill(sel_cid, corrections)
+                        if res.get("status") == "SUCCESS":
+                            st.success(f"Candidate {sel_cid} ({edit_bno}) verified, arithmetic confirmed, and posted to Official Register.")
+                            st.rerun()
+                        else:
+                            st.error(f"Posting failed: {res.get('message') or res.get('error')}")
 
-                }),
-
-                width="stretch",
-
-                hide_index=True,
-
-            )
-
-
-
-            st.divider()
-
-
-
-            # Interactive Review / Resolution Box
-
-            st.markdown("##### 🛠️ Operator Review & Resolution Action")
-
-            sel_cid = st.selectbox("Select Candidate to Review / Post", queue_df["candidate_id"].tolist(), key="sel_queue_cid")
-
-
-
-            target_row = queue_df[queue_df["candidate_id"] == sel_cid].iloc[0].to_dict()
-
-
-
-            with st.form(f"review_form_{sel_cid}"):
-
-                c1, c2, c3 = st.columns(3)
-
-                edit_ac = c1.text_input("Consumer Account No", str(target_row.get("consumer_account_no", "")))
-
-                edit_amt = c2.number_input("Verified Amount (₹)", value=float(target_row.get("amount", 0.0)), min_value=0.0, step=100.0)
-
-                edit_basis = c3.selectbox("Bill Basis", ["ACTUAL", "AVERAGE", "PROVISIONAL"], index=0 if target_row.get("bill_basis") == "ACTUAL" else 1)
-
-
-
-                st.info(f"**Current Hold Reason:** {target_row.get('exception_reason', 'Unresolved validation check')}")
-
-
-
-                act_c1, act_c2 = st.columns(2)
-
-                verify_btn = act_c1.form_submit_button("✅ Verify & Post to Official Register", type="primary", width="stretch")
-
-                delete_btn = act_c2.form_submit_button("🗑️ Delete Draft Candidate", width="stretch")
-
-
-
-                if verify_btn:
-
-                    res = verify_and_post_bill(sel_cid, {
-
-                        "consumer_account_no": edit_ac,
-
-                        "total_amount_payable": edit_amt,
-
-                        "current_total": edit_amt,
-
-                        "bill_basis": edit_basis,
-
-                    })
-
-                    if res.get("status") == "SUCCESS":
-
-                        st.success(f"Candidate {sel_cid} verified and posted to Official Register successfully.")
-
+                    if delete_btn:
+                        delete_held_draft(sel_cid)
+                        st.warning(f"Candidate {sel_cid} deleted from review queue.")
                         st.rerun()
 
-                    else:
+                st.write("")
+                with st.expander("🚫 Move Candidate to Rejected Bucket (Separate Archive)", expanded=False):
+                    with st.form(f"reject_form_{sel_cid}"):
+                        st.markdown("Rejecting this candidate will move it to the **Rejected Bucket** with complete audit history so it can be reviewed or restored later.")
+                        rej_reason = st.text_input("Rejection Reason", value=f"Rejected by operator: {hold_reason}")
+                        rej_notes = st.text_area("Audit Notes", value="Moved to rejected bucket from Review Queue.")
+                        rej_submit = st.form_submit_button("🚫 Confirm & Move to Rejected Bucket", width="stretch")
+                        if rej_submit:
+                            res = move_to_rejected_bucket(sel_cid, reason=rej_reason, rejected_by=st.session_state.get("user", "OPERATOR"), notes=rej_notes)
+                            if res.get("status") == "REJECTED":
+                                st.warning(f"Candidate {sel_cid} moved to Rejected Bucket.")
+                                st.rerun()
+                            else:
+                                st.error(f"Rejection failed: {res.get('error')}")
+            else:
+                st.success("🎉 Active Review Queue is empty! All extracted bills are fully reconciled and posted.")
 
-                        st.error(res.get("message", "Posting failed"))
+        with sub_rejected:
+            st.markdown("##### 🗑️ Dedicated Rejected Bills Bucket")
+            st.caption("All rejected files, duplicates, and operator-discarded candidates are safely archived here for auditing and restoration.")
 
+            if not rejected_df.empty:
+                st.markdown(f"**{len(rejected_df)} records in Rejected Bucket:**")
+                rej_disp = rejected_df[["candidate_id", "bill_number", "consumer_account_no", "toll_plaza_id", "bill_month", "amount", "rejection_reason", "rejected_by", "rejected_at"]]
+                st.dataframe(
+                    rej_disp.rename(columns={
+                        "candidate_id": "Candidate ID",
+                        "bill_number": "Bill Ref",
+                        "consumer_account_no": "Consumer A/C",
+                        "toll_plaza_id": "Plaza",
+                        "bill_month": "Month",
+                        "amount": "Amount (₹)",
+                        "rejection_reason": "Rejection Reason",
+                        "rejected_by": "Rejected By",
+                        "rejected_at": "Timestamp",
+                    }),
+                    width="stretch",
+                    hide_index=True,
+                )
 
+                st.write("")
+                r_col1, r_col2, _ = st.columns([1.5, 1.5, 3])
+                rx_out = io.BytesIO()
+                with pd.ExcelWriter(rx_out, engine="openpyxl") as writer:
+                    rejected_df.to_excel(writer, index=False, sheet_name="Rejected_Bills")
+                r_col1.download_button(
+                    "📥 Export Rejected Bills (Excel)",
+                    data=rx_out.getvalue(),
+                    file_name=f"SRTPL_Rejected_Bills_{time.strftime('%Y%m%d_%H%M%S')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    width="stretch",
+                    key="btn_dl_rejected_xlsx",
+                )
+                rc_out = rejected_df.to_csv(index=False).encode("utf-8")
+                r_col2.download_button(
+                    "📥 Export Rejected Bills (CSV)",
+                    data=rc_out,
+                    file_name=f"SRTPL_Rejected_Bills_{time.strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    width="stretch",
+                    key="btn_dl_rejected_csv",
+                )
 
-                if delete_btn:
+                st.divider()
+                st.markdown("###### 🔍 Inspect & Restore Rejected Candidate")
+                sel_rej_id = st.selectbox(
+                    "Select Rejected Item",
+                    rejected_df["rejection_id"].tolist(),
+                    format_func=lambda rid: f"{rejected_df[rejected_df['rejection_id'] == rid].iloc[0].get('candidate_id', '')} · {rejected_df[rejected_df['rejection_id'] == rid].iloc[0].get('bill_number', '')} ({rejected_df[rejected_df['rejection_id'] == rid].iloc[0].get('rejection_reason', '')})",
+                    key="sel_rejected_item_id",
+                )
 
-                    delete_held_draft(sel_cid)
+                sel_rej_record = rejected_df[rejected_df["rejection_id"] == sel_rej_id].iloc[0].to_dict()
+                with st.container(border=True):
+                    i_c1, i_c2, i_c3 = st.columns(3)
+                    i_c1.markdown(f"**Candidate:** `{sel_rej_record.get('candidate_id')}`")
+                    i_c1.markdown(f"**Bill Number:** `{sel_rej_record.get('bill_number')}`")
+                    i_c2.markdown(f"**Consumer A/C:** `{sel_rej_record.get('consumer_account_no')}`")
+                    i_c2.markdown(f"**Plaza:** `{sel_rej_record.get('toll_plaza_id')}`")
+                    i_c3.markdown(f"**Rejected At:** `{sel_rej_record.get('rejected_at')}`")
+                    i_c3.markdown(f"**Rejected By:** `{sel_rej_record.get('rejected_by')}`")
+                    st.info(f"**Reason:** {sel_rej_record.get('rejection_reason')}")
 
-                    st.warning(f"Draft candidate {sel_cid} deleted from review queue.")
+                    act_r1, act_r2 = st.columns(2)
+                    restore_btn = act_r1.button("♻️ Restore to Active Review Queue", type="primary", width="stretch", key=f"btn_restore_{sel_rej_id}")
+                    purge_btn = act_r2.button("❌ Delete Permanently", width="stretch", key=f"btn_purge_{sel_rej_id}")
 
-                    st.rerun()
+                    if restore_btn:
+                        res = restore_rejected_bill(sel_rej_id)
+                        if res.get("status") == "RESTORED":
+                            st.success(f"Candidate {sel_rej_record.get('candidate_id')} restored to Active Review Queue.")
+                            st.rerun()
+                        else:
+                            st.error(res.get("error", "Restore failed"))
 
-        else:
-
-            st.success("🎉 Review queue is empty! All extracted bills are fully reconciled and posted.")
-
-
-
-    # =========================================================================
-
-    # TAB 4: 📑 OFFICIAL BILL REGISTER (Section 5, 8 & 10)
-
-    # Reportable, non-superseded, non-voided bills from vw_official_bill_register
-
-    # =========================================================================
+                    if purge_btn:
+                        delete_rejected_bill(sel_rej_id)
+                        st.warning(f"Record {sel_rej_record.get('candidate_id')} permanently purged.")
+                        st.rerun()
+            else:
+                st.info("The Rejected Bucket is currently empty. No rejected or discarded bills.")
 
     with tab_register:
 
@@ -1166,22 +1274,30 @@ def render():
 
 
 
-            # CSV Export
+            # Excel & CSV Export with all 13 fields guaranteed
+            export_reg = _ensure_official_register_columns(filtered_reg.copy())
+            reg_c1, reg_c2, _ = st.columns([1.5, 1.5, 3])
 
-            csv_data = filtered_reg.to_csv(index=False).encode("utf-8")
-
-            st.download_button(
-
-                "📥 Export Filtered Register CSV",
-
-                data=csv_data,
-
-                file_name=f"SRTPL_Official_Bill_Register_{time.strftime('%Y%m%d_%H%M%S')}.csv",
-
-                mime="text/csv",
-
+            reg_x_out = io.BytesIO()
+            with pd.ExcelWriter(reg_x_out, engine="openpyxl") as writer:
+                export_reg.to_excel(writer, index=False, sheet_name="Official_Energy_Bills")
+            reg_c1.download_button(
+                "📥 Export Register (Excel)",
+                data=reg_x_out.getvalue(),
+                file_name=f"SRTPL_Official_Bill_Register_{time.strftime('%Y%m%d_%H%M%S')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 width="stretch",
+                key="btn_dl_register_xlsx",
+            )
 
+            csv_data = export_reg.to_csv(index=False).encode("utf-8")
+            reg_c2.download_button(
+                "📥 Export Register (CSV)",
+                data=csv_data,
+                file_name=f"SRTPL_Official_Bill_Register_{time.strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+                width="stretch",
+                key="btn_dl_register_csv",
             )
 
 

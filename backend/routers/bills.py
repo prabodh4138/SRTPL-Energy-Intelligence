@@ -37,6 +37,11 @@ from core.db_sync import (
     get_existing_receipt_numbers,
     get_receipt_reconciliation,
     allocate_receipt_to_bill,
+    move_to_rejected_bucket,
+    get_rejected_bills_bucket,
+    restore_rejected_bill,
+    delete_rejected_bill,
+    save_rejected_bill,
     log_audit_event,
     _clean_kpi_num,
 )
@@ -53,6 +58,12 @@ class AllocateReceiptPayload(BaseModel):
 
 class ReviewResolutionPayload(BaseModel):
     corrections: dict[str, Any] | None = None
+
+
+class RejectCandidatePayload(BaseModel):
+    reason: str = "Operator rejected"
+    rejected_by: str = "OPERATOR"
+    notes: str = ""
 
 
 def _extract_single_item(item_tuple: tuple[int, Any]) -> dict[str, Any]:
@@ -528,6 +539,33 @@ def post_review_candidate(candidate_id: str, payload: ReviewResolutionPayload):
 @router.post("/review-queue/{candidate_id}/delete")
 def delete_review_candidate(candidate_id: str):
     res = delete_held_draft(candidate_id)
+    return res
+
+
+@router.post("/review-queue/{candidate_id}/reject")
+def reject_review_candidate(candidate_id: str, payload: RejectCandidatePayload | None = None):
+    p = payload or RejectCandidatePayload()
+    res = move_to_rejected_bucket(candidate_id, reason=p.reason, rejected_by=p.rejected_by, notes=p.notes)
+    return res
+
+
+@router.get("/rejected-bucket")
+def get_rejected_bucket():
+    df = get_rejected_bills_bucket()
+    if df.empty:
+        return {"count": 0, "items": []}
+    return {"count": len(df), "items": df.to_dict(orient="records")}
+
+
+@router.post("/rejected-bucket/{rejection_id}/restore")
+def restore_rejected_candidate(rejection_id: str):
+    res = restore_rejected_bill(rejection_id)
+    return res
+
+
+@router.delete("/rejected-bucket/{rejection_id}")
+def purge_rejected_candidate(rejection_id: str):
+    res = delete_rejected_bill(rejection_id)
     return res
 
 

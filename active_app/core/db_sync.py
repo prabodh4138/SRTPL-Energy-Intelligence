@@ -6,6 +6,7 @@ application with simultaneous persistence to Supabase (when connected) and local
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 from typing import Any
 import pandas as pd
 import streamlit as st
@@ -23,6 +24,8 @@ from core.demo_store import (
 # IN-MEMORY PERSISTENCE STORE FOR FASTAPI / STREAMLIT BATCHES
 # ---------------------------------------------------------------------------
 _IN_MEMORY_UPLOADED_BILLS: dict[str, dict[str, Any]] = {}
+_IN_MEMORY_REVIEW_QUEUE: dict[str, dict[str, Any]] = {}
+_IN_MEMORY_REJECTED_BILLS: dict[str, dict[str, Any]] = {}
 
 # ---------------------------------------------------------------------------
 # 1. PLAZAS CRUD (Add, Modify, Delete)
@@ -1213,8 +1216,12 @@ def format_bill_for_db(raw_bill: dict[str, Any], verifier_result: dict[str, Any]
     tariff_clean = str(raw_bill.get("Tariff Category") or raw_bill.get("tariff_category") or "").strip().upper()
     cd_clean = str(raw_bill.get("Contract Demand") or raw_bill.get("contract_demand") or "").strip()
 
+    master_acc = next((a for a in DEFAULT_CONSUMER_ACCOUNTS if str(a.get("consumer_account_no", "")).strip() == ac_clean), {})
+
     is_ht = False
-    if ac_clean in {"416000000110", "413000000002", "413000000010", "813000000281", "812001020208"}:
+    if master_acc.get("bill_type") == "HT":
+        is_ht = True
+    elif ac_clean in {"416000000110", "813000000281", "812001020208"}:
         is_ht = True
     elif bool(re.search(r'\b(HT|HIGH TENSION|EHT|LARGE INDUSTRY)\b', tariff_clean)) or bool(re.search(r'>=?\s*110', tariff_clean)) or bool(re.search(r'>\s*70', tariff_clean)):
         is_ht = True
@@ -1226,7 +1233,10 @@ def format_bill_for_db(raw_bill: dict[str, Any], verifier_result: dict[str, Any]
         is_ht = True
 
     b_type = "HT" if is_ht else "LT"
-    scope = "PLAZA" if (is_ht or ac_clean in {"416000000110", "413000000002", "413000000010", "813000000281", "812001020208"}) else "HIGHWAY"
+    if master_acc.get("consumer_scope"):
+        scope = master_acc["consumer_scope"].upper()
+    else:
+        scope = "PLAZA" if (is_ht or ac_clean in {"416000000110", "813000000281", "812001020208"}) else "HIGHWAY"
 
     load_val = None
     cd_nums = re.findall(r"(\d+(?:\.\d+)?)", cd_clean)
@@ -1235,6 +1245,12 @@ def format_bill_for_db(raw_bill: dict[str, Any], verifier_result: dict[str, Any]
             load_val = float(cd_nums[0])
         except (ValueError, TypeError):
             pass
+    if load_val is None or load_val <= 0.0:
+        if master_acc.get("sanctioned_load_kw") is not None:
+            try:
+                load_val = float(master_acc["sanctioned_load_kw"])
+            except (ValueError, TypeError):
+                pass
     if load_val is None or load_val <= 0.0:
         raw_load = raw_bill.get("sanctioned_load_kw") or raw_bill.get("Sanctioned Load (KW)") or raw_bill.get("md_kw") or raw_bill.get("MD-KW")
         if raw_load is not None:
@@ -2929,9 +2945,20 @@ def get_bill_review_queue() -> pd.DataFrame:
             except Exception:
                 pass
 
-    if "bill_review_queue" not in st.session_state:
-        st.session_state["bill_review_queue"] = []
-    return pd.DataFrame(st.session_state["bill_review_queue"])
+    records = list(_IN_MEMORY_REVIEW_QUEUE.values())
+    if "bill_review_queue" in st.session_state and st.session_state["bill_review_queue"]:
+        for c in st.session_state["bill_review_queue"]:
+            cid = c.get("candidate_id")
+            if cid and cid not in {r.get("candidate_id") for r in records}:
+                records.append(c)
+
+    if records:
+        return pd.DataFrame(records)
+    return pd.DataFrame(columns=[
+        "candidate_id", "bill_number", "consumer_account_no", "toll_plaza_id",
+        "bill_type", "bill_month", "bill_basis", "amount", "units",
+        "exception_reason", "hold_reason_code", "status", "source_filename", "raw_payload"
+    ])
 
 
 def save_to_review_queue(candidate: dict[str, Any], prevent_duplicates: bool = True) -> dict[str, Any]:
@@ -2956,6 +2983,7 @@ def save_to_review_queue(candidate: dict[str, Any], prevent_duplicates: bool = T
         except Exception:
             pass
 
+    _IN_MEMORY_REVIEW_QUEUE[cid] = candidate
     q = st.session_state.setdefault("bill_review_queue", [])
     if any(str(c.get("bill_number") or "").strip() == b_no for c in q if b_no):
         return {
@@ -2969,6 +2997,7 @@ def save_to_review_queue(candidate: dict[str, Any], prevent_duplicates: bool = T
 
 def verify_and_post_bill(candidate_id: str, corrections: dict[str, Any] | None = None) -> dict[str, Any]:
     """Atomically validates, checks duplicate constraint, handles Average-to-Actual supersession,
+    merges all raw_payload fields with operator corrections, re-audits formulas,
     and posts candidate to official register.
     """
     queue_df = get_bill_review_queue()
@@ -2980,13 +3009,27 @@ def verify_and_post_bill(candidate_id: str, corrections: dict[str, Any] | None =
         return {"status": "ERROR", "message": f"Candidate {candidate_id} not found in review queue"}
 
     cand = matches.iloc[0].to_dict()
+
+    # Unpack raw_payload if present so that all 13 fields and slab details are present
+    raw_p = cand.get("raw_payload")
+    if isinstance(raw_p, dict):
+        base_bill = dict(raw_p)
+        base_bill.update(cand)
+        cand = base_bill
+
     if corrections:
         cand.update(corrections)
+        cand["is_edited"] = True
+        cand["edited_by"] = corrections.get("edited_by", "Operator")
+        cand["edited_at"] = datetime.now(timezone.utc).isoformat()
+        cand["edit_notes"] = corrections.get("edit_notes", "Verified and posted via Review Queue")
+        cand["verification_status"] = "MANUALLY_VERIFIED"
+        cand["audit_verdict"] = "MANUALLY_VERIFIED ✓"
 
-    b_no = cand.get("bill_number")
-    ac_no = cand.get("consumer_account_no")
-    b_mo = cand.get("bill_month")
-    b_basis = cand.get("bill_basis", "ACTUAL").upper()
+    b_no = str(cand.get("bill_number") or "").strip()
+    ac_no = str(cand.get("consumer_account_no") or "").strip()
+    b_mo = str(cand.get("bill_month") or "").strip()
+    b_basis = str(cand.get("bill_basis", "ACTUAL")).strip().upper()
 
     # Duplicate check: normalized consumer + month + basis
     existing_bills = get_all_energy_bills()
@@ -2996,9 +3039,8 @@ def verify_and_post_bill(candidate_id: str, corrections: dict[str, Any] | None =
             (existing_bills["bill_month"].astype(str).str.strip() == str(b_mo).strip())
         ]
         if not dups.empty and b_basis == "ACTUAL":
-            # If an existing ACTUAL bill is already posted, reject duplicate
             act_dups = dups[dups.get("bill_basis", "ACTUAL") == "ACTUAL"] if "bill_basis" in dups.columns else dups
-            if not act_dups.empty and any(act_dups["bill_number"] != b_no):
+            if not act_dups.empty and any(str(bn).strip() != b_no for bn in act_dups["bill_number"]):
                 log_audit_event("DUPLICATE_REJECTED", f"Attempted duplicate bill for {ac_no} {b_mo} ({b_no})", "BILL", b_no, "DUPLICATE_REJECTED")
                 return {"status": "ERROR", "message": f"Duplicate bill rejected: {ac_no} for {b_mo} already has official bill {act_dups.iloc[0]['bill_number']}"}
 
@@ -3014,14 +3056,14 @@ def verify_and_post_bill(candidate_id: str, corrections: dict[str, Any] | None =
                 avg_b_no = avg_match.iloc[0]["bill_number"]
                 replace_average_with_actual(avg_b_no, cand)
 
-    # Post to energy_bills
-    save_res = save_energy_bill(cand)
+    # Post to energy_bills with verification status
+    save_res = save_energy_bill(cand, prevent_duplicates=False)
 
     # Remove from review queue
     delete_held_draft(candidate_id)
 
     log_audit_event("BILL_VERIFIED_AND_POSTED", f"Bill {b_no} ({ac_no} {b_mo}) verified and posted to official register", "BILL", b_no, "POSTED")
-    return {"status": "SUCCESS", "bill_number": b_no, "message": f"Bill {b_no} officially posted"}
+    return {"status": "SUCCESS", "bill_number": b_no, "is_edited": bool(cand.get("is_edited", False)), "payload": save_res.get("payload", cand), "message": f"Bill {b_no} officially verified and posted to register"}
 
 
 def delete_held_draft(candidate_id: str) -> dict[str, Any]:
@@ -3033,13 +3075,186 @@ def delete_held_draft(candidate_id: str) -> dict[str, Any]:
         except Exception:
             pass
 
+    _IN_MEMORY_REVIEW_QUEUE.pop(candidate_id, None)
     if "bill_review_queue" in st.session_state:
         st.session_state["bill_review_queue"] = [
             c for c in st.session_state["bill_review_queue"]
             if c.get("candidate_id") != candidate_id
         ]
-    log_audit_event("HELD_DRAFT_DELETED", f"Candidate {candidate_id} deleted from review queue", "CANDIDATE", candidate_id, "DELETED")
+    log_audit_event("HELD_DRAFT_DELETED", f"Candidate {candidate_id} removed from review queue", "CANDIDATE", candidate_id, "DELETED")
     return {"status": "SUCCESS", "candidate_id": candidate_id}
+
+
+# ---------------------------------------------------------------------------
+# REJECTED BUCKET PERSISTENCE & MANAGEMENT (Dedicated Rejected Archive)
+# ---------------------------------------------------------------------------
+
+def get_rejected_bills_bucket() -> pd.DataFrame:
+    """Returns all rejected candidate bills and rejected source files."""
+    client = get_supabase_client()
+    if client:
+        try:
+            res = client.table("bill_rejected_bucket").select("*").order("created_at", desc=True).execute()
+            if res.data:
+                return pd.DataFrame(res.data)
+        except Exception:
+            pass
+
+    records = list(_IN_MEMORY_REJECTED_BILLS.values())
+    if "rejected_bills_bucket" in st.session_state and st.session_state["rejected_bills_bucket"]:
+        for r in st.session_state["rejected_bills_bucket"]:
+            if r.get("rejection_id") and r["rejection_id"] not in {x.get("rejection_id") for x in records}:
+                records.append(r)
+
+    if records:
+        return pd.DataFrame(records)
+    return pd.DataFrame(columns=[
+        "rejection_id", "candidate_id", "bill_number", "consumer_account_no",
+        "bill_month", "amount", "source_filename", "rejection_reason",
+        "rejection_notes", "rejected_by", "rejected_at", "status"
+    ])
+
+
+def move_to_rejected_bucket(
+    candidate_id: str,
+    reason: str = "Rejected by Operator",
+    rejected_by: str = "Operator",
+    notes: str = ""
+) -> dict[str, Any]:
+    """Moves a held candidate from review queue into the durable rejected bucket."""
+    queue_df = get_bill_review_queue()
+    target_dict = {}
+    if not queue_df.empty:
+        matches = queue_df[queue_df["candidate_id"] == candidate_id]
+        if not matches.empty:
+            target_dict = matches.iloc[0].to_dict()
+
+    if not target_dict and candidate_id in _IN_MEMORY_REVIEW_QUEUE:
+        target_dict = dict(_IN_MEMORY_REVIEW_QUEUE[candidate_id])
+
+    if not target_dict and "bill_review_queue" in st.session_state:
+        for c in st.session_state["bill_review_queue"]:
+            if c.get("candidate_id") == candidate_id:
+                target_dict = dict(c)
+                break
+
+    if not target_dict:
+        return {"status": "ERROR", "message": f"Candidate {candidate_id} not found in review queue"}
+
+    rejection_id = f"REJ-{int(time.time()*1000)}"
+    b_no = str(target_dict.get("bill_number") or target_dict.get("identifier") or "UNKNOWN").strip()
+    ac_no = str(target_dict.get("consumer_account_no") or target_dict.get("consumer") or "—").strip()
+    b_mo = str(target_dict.get("bill_month") or target_dict.get("month") or "—").strip()
+    amt = _clean_kpi_num(target_dict.get("amount") or target_dict.get("total_amount_payable"))
+    fname = str(target_dict.get("source_filename") or target_dict.get("file") or "Uploaded_Document.pdf").strip()
+
+    rej_record = {
+        "rejection_id": rejection_id,
+        "candidate_id": candidate_id,
+        "bill_number": b_no,
+        "consumer_account_no": ac_no,
+        "bill_month": b_mo,
+        "amount": amt,
+        "source_filename": fname,
+        "rejection_reason": reason,
+        "rejection_notes": notes,
+        "rejected_by": rejected_by,
+        "rejected_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "raw_payload": target_dict.get("raw_payload") or target_dict,
+        "status": "REJECTED",
+    }
+
+    client = get_supabase_client()
+    if client:
+        try:
+            client.table("bill_rejected_bucket").upsert(rej_record).execute()
+        except Exception:
+            pass
+
+    _IN_MEMORY_REJECTED_BILLS[rejection_id] = rej_record
+    if "rejected_bills_bucket" not in st.session_state:
+        st.session_state["rejected_bills_bucket"] = []
+    st.session_state["rejected_bills_bucket"].append(rej_record)
+
+    # Remove from review queue
+    delete_held_draft(candidate_id)
+
+    log_audit_event("BILL_REJECTED_TO_BUCKET", f"Bill {b_no} ({ac_no} {b_mo}) moved to Rejected Bucket: {reason}", "BILL", b_no, "REJECTED")
+    return {"status": "SUCCESS", "rejection_id": rejection_id, "bill_number": b_no, "message": f"Bill {b_no} moved to Rejected Bucket"}
+
+
+def save_rejected_bill(record: dict[str, Any]) -> dict[str, Any]:
+    """Records any rejected bill or duplicate file directly to rejected bucket."""
+    rejection_id = record.get("rejection_id") or f"REJ-{int(time.time()*1000)}"
+    record["rejection_id"] = rejection_id
+    record["status"] = "REJECTED"
+    if "rejected_at" not in record:
+        record["rejected_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    client = get_supabase_client()
+    if client:
+        try:
+            client.table("bill_rejected_bucket").upsert(record).execute()
+        except Exception:
+            pass
+
+    _IN_MEMORY_REJECTED_BILLS[rejection_id] = record
+    if "rejected_bills_bucket" not in st.session_state:
+        st.session_state["rejected_bills_bucket"] = []
+    st.session_state["rejected_bills_bucket"].append(record)
+    return {"status": "SUCCESS", "rejection_id": rejection_id}
+
+
+def restore_rejected_bill(rejection_id: str) -> dict[str, Any]:
+    """Restores a rejected bill back to the active Review Queue for re-audit."""
+    rej_df = get_rejected_bills_bucket()
+    if rej_df.empty:
+        return {"status": "ERROR", "message": "Rejected bucket is empty"}
+
+    matches = rej_df[rej_df["rejection_id"] == rejection_id]
+    if matches.empty:
+        return {"status": "ERROR", "message": f"Rejection {rejection_id} not found in bucket"}
+
+    rej_item = matches.iloc[0].to_dict()
+    raw_p = rej_item.get("raw_payload") or {}
+    cand_data = dict(raw_p) if isinstance(raw_p, dict) else {}
+
+    cand_data["candidate_id"] = rej_item.get("candidate_id") or f"REV-{int(time.time()*1000)}"
+    cand_data["bill_number"] = rej_item.get("bill_number") or cand_data.get("bill_number")
+    cand_data["consumer_account_no"] = rej_item.get("consumer_account_no") or cand_data.get("consumer_account_no")
+    cand_data["bill_month"] = rej_item.get("bill_month") or cand_data.get("bill_month")
+    cand_data["amount"] = rej_item.get("amount") or cand_data.get("amount")
+    cand_data["source_filename"] = rej_item.get("source_filename") or cand_data.get("source_filename")
+    cand_data["exception_reason"] = f"Restored from Rejected Bucket (Prior reason: {rej_item.get('rejection_reason')})"
+    cand_data["status"] = "REVIEW"
+
+    # Put back into review queue
+    save_to_review_queue(cand_data, prevent_duplicates=False)
+
+    # Delete from rejected bucket
+    delete_rejected_bill(rejection_id)
+
+    log_audit_event("BILL_RESTORED_FROM_REJECTED", f"Bill {cand_data.get('bill_number')} restored to Review Queue", "BILL", cand_data.get("bill_number", ""), "RESTORED")
+    return {"status": "SUCCESS", "message": f"Bill {cand_data.get('bill_number')} restored to Review Queue successfully"}
+
+
+def delete_rejected_bill(rejection_id: str) -> dict[str, Any]:
+    """Permanently deletes a record from the rejected bucket."""
+    client = get_supabase_client()
+    if client:
+        try:
+            client.table("bill_rejected_bucket").delete().eq("rejection_id", rejection_id).execute()
+        except Exception:
+            pass
+
+    _IN_MEMORY_REJECTED_BILLS.pop(rejection_id, None)
+    if "rejected_bills_bucket" in st.session_state:
+        st.session_state["rejected_bills_bucket"] = [
+            r for r in st.session_state["rejected_bills_bucket"]
+            if r.get("rejection_id") != rejection_id
+        ]
+    log_audit_event("REJECTED_BILL_PURGED", f"Rejection {rejection_id} purged permanently", "REJECTED_RECORD", rejection_id, "PURGED")
+    return {"status": "SUCCESS", "rejection_id": rejection_id}
 
 
 def void_posted_bill(bill_number: str, void_reason: str) -> dict[str, Any]:
