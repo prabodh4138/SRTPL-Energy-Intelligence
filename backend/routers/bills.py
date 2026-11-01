@@ -375,8 +375,11 @@ async def upload_and_process_bills(files: list[UploadFile] = File(...)):
         results = []
         stats = {"verified": 0, "review": 0, "duplicates_rejected": 0, "failed": 0}
 
-        for idx, item in enumerate(unpacked_items):
-            extracted_item = _extract_single_item((idx, item))
+        max_workers = min(8, max(1, len(unpacked_items)))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            extracted_items = list(executor.map(_extract_single_item, enumerate(unpacked_items)))
+
+        for extracted_item in extracted_items:
             cand = _process_candidate(
                 extracted_item, existing_bills, existing_receipts, seen_bills_in_batch, seen_receipts_in_batch, stats
             )

@@ -45,6 +45,12 @@ def download_bills_excel():
             detail="Cannot download or export: No bill records are present in the Supabase database. Please upload and verify bills first."
         )
 
+    # Guarantee all 13 fields are available
+    if "net_payable_amount_before_rbt_dt_rs" not in df.columns:
+        df["net_payable_amount_before_rbt_dt_rs"] = df.get("total_amount_payable", 0.0)
+    if "net_payable_amount_after_rbt_dt_rs" not in df.columns:
+        df["net_payable_amount_after_rbt_dt_rs"] = df.get("net_after_rebate", 0.0)
+
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         # Sheet 1: Comprehensive official data (includes bill_type, consumer_scope, sanctioned_load_kw & all 13 fields)
@@ -100,6 +106,11 @@ def download_bills_csv():
             status_code=400,
             detail="Cannot download or export: No bill records are present in the Supabase database. Please upload and verify bills first."
         )
+
+    if "net_payable_amount_before_rbt_dt_rs" not in df.columns:
+        df["net_payable_amount_before_rbt_dt_rs"] = df.get("total_amount_payable", 0.0)
+    if "net_payable_amount_after_rbt_dt_rs" not in df.columns:
+        df["net_payable_amount_after_rbt_dt_rs"] = df.get("net_after_rebate", 0.0)
 
     csv_data = df.to_csv(index=False).encode("utf-8")
     headers = {"Content-Disposition": 'attachment; filename="SRTPL_Official_Energy_Bills.csv"'}
