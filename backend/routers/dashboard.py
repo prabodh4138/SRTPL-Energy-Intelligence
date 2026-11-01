@@ -92,14 +92,17 @@ def get_dashboard_summary(
             "total_kwh": round(p_units, 2),
         })
 
-    # Trend dataset for charts
-    trend = [
-        {"month": "May 2026", "eb_units": 18450, "dg_units": 3200, "solar_units": 4100, "billed_amount": 142000},
-        {"month": "Jun 2026", "eb_units": 21300, "dg_units": 2800, "solar_units": 4800, "billed_amount": 165000},
-        {"month": "Jul 2026", "eb_units": 24500, "dg_units": 1900, "solar_units": 5200, "billed_amount": 189000},
-        {"month": "Aug 2026", "eb_units": 26800, "dg_units": 2100, "solar_units": 4900, "billed_amount": 208000},
-        {"month": "Sep 2026", "eb_units": 25200, "dg_units": 1800, "solar_units": 5100, "billed_amount": 194000},
-    ]
+    # Dynamic trend dataset for charts (returns empty list if no bills uploaded)
+    trend = []
+    if not official_posted.empty and "bill_month" in official_posted.columns:
+        for m, grp in official_posted.groupby("bill_month", sort=False):
+            trend.append({
+                "month": str(m),
+                "eb_units": round(float(grp["total_billed_kwh"].sum()) if "total_billed_kwh" in grp.columns else 0.0, 2),
+                "dg_units": 0.0,
+                "solar_units": 0.0,
+                "billed_amount": round(float(grp["total_amount_payable"].sum()) if "total_amount_payable" in grp.columns else 0.0, 2),
+            })
 
     return {
         "kpis": {

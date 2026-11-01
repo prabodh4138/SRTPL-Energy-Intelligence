@@ -404,8 +404,19 @@ def remove_all_database_data() -> dict[str, Any]:
         pass
 
     try:
+        from core.db_sync import _IN_MEMORY_UPLOADED_BILLS
+        _IN_MEMORY_UPLOADED_BILLS.clear()
+    except Exception:
+        pass
+
+    try:
         import streamlit as st
         st.session_state["demo_mode_active"] = False
+        st.session_state["saved_energy_bills"] = {}
+        st.session_state["saved_provisional_bills"] = {}
+        st.session_state["saved_payment_receipts"] = {}
+        st.session_state["bill_review_queue"] = []
+        st.session_state["receipt_allocations"] = {}
         if "imported_file_hashes" in st.session_state:
             st.session_state["imported_file_hashes"].clear()
     except Exception:
@@ -453,12 +464,23 @@ def remove_all_database_data() -> dict[str, Any]:
                     pass
 
             # 3. Public tables deletes
-            public_tables = ["energy_bills", "energy_bills_provisional", "payment_receipts"]
+            public_tables = [
+                "energy_bills", 
+                "energy_bills_provisional", 
+                "payment_receipts",
+                "receipt_allocations",
+                "bill_review_queue",
+                "monthly_budgets",
+                "audit_events"
+            ]
             for t in public_tables:
                 try:
                     client.table(t).delete().neq("created_at", "1970-01-01").execute()
                 except Exception:
-                    pass
+                    try:
+                        client.table(t).delete().neq("id", "00000000-0000-0000-0000-000000000000").execute()
+                    except Exception:
+                        pass
             summary["cloud_wiped"] = True
 
     return summary
