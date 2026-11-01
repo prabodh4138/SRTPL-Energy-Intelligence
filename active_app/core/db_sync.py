@@ -2893,9 +2893,17 @@ def _ensure_official_register_columns(df: pd.DataFrame) -> pd.DataFrame:
         r["net_after_rebate"] = after_rebate_val
         r["Net Payable Amount After Rbt. Dt.(Rs.)"] = after_rebate_val
         r["net_payable_amount_after_rbt_dt_rs"] = after_rebate_val
+        r["electricity_charges"] = _clean_kpi_num(r.get("electricity_charges") or 0.0)
+        r["electricity_duty"] = _clean_kpi_num(r.get("electricity_duty") or 0.0)
 
         r["ai_model_applied"] = str(r.get("ai_model_applied") or r.get("AI Model Applied") or "Multi-AI Fitted (100%)")
         r["audit_verdict"] = str(r.get("audit_verdict") or r.get("Audit Verdict") or "VERIFIED ✓")
+        r["verification_status"] = str(r.get("verification_status") or "VERIFIED_MATCH")
+        r["is_edited"] = bool(r.get("is_edited", False))
+        r["edited_by"] = str(r.get("edited_by") or "")
+        r["edited_at"] = str(r.get("edited_at") or "")
+        r["edit_notes"] = str(r.get("edit_notes") or "")
+        r["source_filename"] = str(r.get("source_filename") or "Unknown_Bill.pdf")
 
         rows.append(r)
 

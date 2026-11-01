@@ -1,5 +1,16 @@
+"""SRTPL Power Intelligence — Reports module entrypoint.
+Delegates to the Custom View Builder and Report Studio.
+"""
+from __future__ import annotations
+
 import streamlit as st
-def render():
-    st.title("Reports")
-    st.write("Daily Energy • Monthly Energy • EB • DG • Solar • UPS • Transformer • Cost • Saving • Exception • Audit")
-    st.info("Report generation/export will be connected in the reporting phase.")
+from pages.reports_export_center import render as render_reports_studio
+
+
+def render() -> None:
+    """Renders the comprehensive Report Center and Custom View Studio."""
+    render_reports_studio()
+
+
+if __name__ == "__main__":
+    render()

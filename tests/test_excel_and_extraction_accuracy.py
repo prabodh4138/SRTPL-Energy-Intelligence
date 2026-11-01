@@ -1,4 +1,5 @@
 import io
+import streamlit as st
 import pandas as pd
 import pytest
 from fastapi import HTTPException
@@ -14,6 +15,8 @@ from active_app.core.db_sync import (
     get_bill_review_queue,
     KNOWN_CONSUMER_EXTRACTION_PROFILES,
     _IN_MEMORY_UPLOADED_BILLS,
+    _IN_MEMORY_REVIEW_QUEUE,
+    _IN_MEMORY_REJECTED_BILLS,
     save_energy_bill,
 )
 
@@ -21,6 +24,11 @@ from active_app.core.db_sync import (
 def test_empty_database_and_schema_purity():
     """Verify that when no data is in database, all endpoints return 0/clean state and export is strictly blocked."""
     _IN_MEMORY_UPLOADED_BILLS.clear()
+    _IN_MEMORY_REVIEW_QUEUE.clear()
+    _IN_MEMORY_REJECTED_BILLS.clear()
+    for k in ["saved_energy_bills", "bill_review_queue", "rejected_bills_bucket"]:
+        if k in st.session_state:
+            st.session_state[k].clear()
 
     # 1. Register is completely empty
     reg_df = get_official_bill_register()
@@ -79,6 +87,11 @@ def test_empty_database_and_schema_purity():
 def test_uploaded_bills_extraction_accuracy_and_all_13_fields():
     """Verify that when authentic bills are ingested, all 13 fields, HT/LT, and PLAZA/HIGHWAY are 100% accurate."""
     _IN_MEMORY_UPLOADED_BILLS.clear()
+    _IN_MEMORY_REVIEW_QUEUE.clear()
+    _IN_MEMORY_REJECTED_BILLS.clear()
+    for k in ["saved_energy_bills", "bill_review_queue", "rejected_bills_bucket"]:
+        if k in st.session_state:
+            st.session_state[k].clear()
 
     # Ingest 14 test bills matching the real corridor profiles (3 HT Toll Plaza + 11 LT Highway)
     test_bills = [

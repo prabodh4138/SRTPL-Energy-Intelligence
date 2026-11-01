@@ -2,6 +2,7 @@ import io
 import pytest
 import pdfplumber
 import pandas as pd
+import streamlit as st
 from active_app.bill_extractor.extractor_main_full import extract_energy_bill_full
 from active_app.bill_extractor.extractor_md_full import extract_md_bill_data
 from active_app.bill_extractor.merge_clean_core import merge_and_clean_dataframes, enrich_bill_record
@@ -68,6 +69,9 @@ def test_review_queue_modification_and_rejected_bucket_lifecycle():
     _IN_MEMORY_UPLOADED_BILLS.clear()
     _IN_MEMORY_REVIEW_QUEUE.clear()
     _IN_MEMORY_REJECTED_BILLS.clear()
+    for k in ["saved_energy_bills", "bill_review_queue", "rejected_bills_bucket"]:
+        if k in st.session_state:
+            st.session_state[k].clear()
 
     # 1. Save candidate to review queue
     candidate = {
@@ -182,3 +186,11 @@ def test_review_queue_modification_and_rejected_bucket_lifecycle():
     del_res = delete_rejected_bill(new_rej_id)
     assert del_res["status"] == "SUCCESS"
     assert get_rejected_bills_bucket().empty
+
+    # Cleanup state after test
+    _IN_MEMORY_UPLOADED_BILLS.clear()
+    _IN_MEMORY_REVIEW_QUEUE.clear()
+    _IN_MEMORY_REJECTED_BILLS.clear()
+    for k in ["saved_energy_bills", "bill_review_queue", "rejected_bills_bucket"]:
+        if k in st.session_state:
+            st.session_state[k].clear()
