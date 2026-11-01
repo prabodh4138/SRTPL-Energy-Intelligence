@@ -1,5 +1,5 @@
 import io
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, Response, HTTPException
 from fastapi.responses import StreamingResponse
 import pandas as pd
 import sys
@@ -28,7 +28,7 @@ def get_reports_summary():
     budget_df = get_budget_vs_actual()
 
     reports = [
-        {"id": "REP-01", "name": "Authoritative Official Bill Register", "format": "Excel / CSV / PDF", "rows": len(bills_df), "category": "Financial Controls"},
+        {"id": "REP-01", "name": "Authoritative Official Bill Register", "format": "Excel / CSV", "rows": len(bills_df), "category": "Financial Controls"},
         {"id": "REP-02", "name": "60 Consumer Master Roster (3 HT / 57 LT)", "format": "Excel / CSV", "rows": len(consumers_df), "category": "Master Data"},
         {"id": "REP-03", "name": "Payment Receipts Reconciliation & Allocations", "format": "Excel / CSV", "rows": len(receipts_df), "category": "Audit & Clearance"},
         {"id": "REP-04", "name": "Corridor Monthly Budget vs Actual Expenditure", "format": "Excel / CSV", "rows": len(budget_df), "category": "Executive"},
@@ -40,7 +40,10 @@ def get_reports_summary():
 def download_bills_excel():
     df = get_official_bill_register()
     if df.empty:
-        df = pd.DataFrame([{"Message": "Official Bill Register is currently empty."}])
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot download or export: No bill records are present in the Supabase database. Please upload and verify bills first."
+        )
 
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
@@ -93,7 +96,10 @@ def download_bills_excel():
 def download_bills_csv():
     df = get_official_bill_register()
     if df.empty:
-        df = pd.DataFrame([{"Message": "Official Bill Register is currently empty."}])
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot download or export: No bill records are present in the Supabase database. Please upload and verify bills first."
+        )
 
     csv_data = df.to_csv(index=False).encode("utf-8")
     headers = {"Content-Disposition": 'attachment; filename="SRTPL_Official_Energy_Bills.csv"'}

@@ -1,15 +1,18 @@
 import streamlit as st
 from datetime import date, timedelta
+import pandas as pd
 from dashboard.services import DashboardService
 from dashboard.components import (
     metric_row, energy_mix, trend_chart, plaza_table,
     exception_panel, data_quality_panel
 )
 from core.demo_store import (
+    is_demo_mode,
     get_demo_bills,
     get_demo_operator_tracking,
     get_demo_plaza_monitoring_compliance,
 )
+from core.db_sync import get_official_bill_register
 from ui.navigation import navigate_to
 
 
@@ -44,29 +47,23 @@ def render():
         st.subheader("Energy Trend · Last 30 Days")
         st.caption("Combined daily energy activity across EB, DG, and Solar")
         trend_chart(summary)
+
     with g2:
-        st.subheader("Energy Mix & Data Reliability")
-        energy_mix(summary)
-        st.divider()
-        data_quality_panel(summary)
+        st.subheader("Plaza Comparison")
+        st.caption("Side-by-side consumption, cost, and exception distribution")
+        plaza_table(summary)
 
     st.divider()
 
-    st.subheader("Toll Plaza Operational Comparison")
-    st.caption("Relative performance, energy consumption, and exception tally by toll plaza.")
-    plaza_table(summary)
-
-    st.divider()
-
-    # 2. Interconnected Intelligence Modules matching HTML Prototype
-    st.markdown('<div class="eyebrow">INTERCONNECTED OPERATIONAL INTELLIGENCE</div>', unsafe_allow_html=True)
-    st.subheader("Actionable Controls & Exception Queues")
-
+    # 2. Lower Split: Data Quality, Financial Controls, Accountability & Monitoring Compliance
     grid_left, grid_right = st.columns(2)
 
     with grid_left:
         with st.container(border=True):
-            st.markdown("#### 🚨 Data Quality & Raw Exception Queue")
+            st.markdown("#### ⚡ Real-Time Data Pipeline Reliability")
+            data_quality_panel(summary)
+            st.divider()
+            st.markdown("#### 🔍 Active Verification & Validation Exceptions")
             exception_panel(summary)
             st.caption("Inspect raw CSV records, pinpoint transcription typos, and correct offending data.")
             if st.button("Open Validation & Exceptions Center →", type="primary", width="stretch", key="exec_btn_val"):
@@ -75,11 +72,20 @@ def render():
     with grid_right:
         with st.container(border=True):
             st.markdown("#### ▤ Financial Controls (Bills & Receipts)")
-            bills = get_demo_bills()
-            elec = bills[bills["Type"] == "Electricity Bill"]
-            b_tot = float(elec["Amount"].sum())
-            p_tot = float(elec["Paid"].sum())
-            o_tot = b_tot - p_tot
+            if is_demo_mode():
+                bills = get_demo_bills()
+                elec = bills[bills["Type"] == "Electricity Bill"]
+                b_tot = float(elec["Amount"].sum())
+                p_tot = float(elec["Paid"].sum())
+                o_tot = b_tot - p_tot
+            else:
+                reg_df = get_official_bill_register()
+                if not reg_df.empty:
+                    b_tot = float(reg_df["total_amount_payable"].sum())
+                    p_tot = float(reg_df["amount_paid"].sum())
+                    o_tot = float(reg_df["outstanding_balance"].sum())
+                else:
+                    b_tot, p_tot, o_tot = 0.0, 0.0, 0.0
 
             f1, f2, f3 = st.columns(3)
             f1.metric("Billed", f"₹{b_tot/100000:.2f}L")
@@ -95,8 +101,11 @@ def render():
     with row2_left:
         with st.container(border=True):
             st.markdown("#### 👤 Raw CSV Data Entry Tracking (Who Entered Wrong Data)")
-            op_data = get_demo_operator_tracking()
-            active_errors = int(op_data["Active Errors"].sum())
+            if is_demo_mode():
+                op_data = get_demo_operator_tracking()
+                active_errors = int(op_data["Active Errors"].sum())
+            else:
+                active_errors = 0
             if active_errors > 0:
                 st.warning(f"⚠️ **{active_errors} raw data transcription error(s)** logged by shift operators requiring review.")
             else:
@@ -108,8 +117,11 @@ def render():
     with row2_right:
         with st.container(border=True):
             st.markdown("#### 📋 Plaza Energy Monitoring Compliance (Who Has Not Monitored)")
-            comp_data = get_demo_plaza_monitoring_compliance()
-            overdue = comp_data[comp_data["Inspection Status"] == "MISSED / OVERDUE"]
+            if is_demo_mode():
+                comp_data = get_demo_plaza_monitoring_compliance()
+                overdue = comp_data[comp_data["Inspection Status"] == "MISSED / OVERDUE"]
+            else:
+                overdue = pd.DataFrame()
             if not overdue.empty:
                 st.error(f"🚨 **1 Critical Inactivity Alert:** {overdue.iloc[0]['Supervisor Name']} ({overdue.iloc[0]['Plaza']}) has **NOT monitored energy in over 28 hrs**!")
             else:

@@ -47,24 +47,45 @@ export const ReportsView: React.FC = () => {
               </div>
 
               <div className="flex items-center gap-2 mt-5 pt-4 border-t border-slate-700/60">
-                <a
-                  href={rep.id === 'REP-02' ? api.downloadConsumersExcelUrl : api.downloadBillsExcelUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs transition"
+                <button
+                  onClick={() => {
+                    if (rep.rows === 0) {
+                      alert(`Cannot export ${rep.name}: No records are present in the Supabase database.`);
+                      return;
+                    }
+                    const url = rep.id === 'REP-02' ? api.downloadConsumersExcelUrl : api.downloadBillsExcelUrl;
+                    window.open(url, '_blank');
+                  }}
+                  disabled={rep.rows === 0}
+                  className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl font-bold text-xs transition ${
+                    rep.rows > 0
+                      ? 'bg-emerald-600 hover:bg-emerald-500 text-slate-950 cursor-pointer'
+                      : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700/50 opacity-60'
+                  }`}
+                  title={rep.rows === 0 ? "Cannot export: No records in database" : "Export Excel (.xlsx)"}
                 >
                   <Download className="w-3.5 h-3.5" />
                   Excel (.xlsx)
-                </a>
-                <a
-                  href={api.downloadBillsCsvUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-slate-200 font-medium text-xs transition"
+                </button>
+                <button
+                  onClick={() => {
+                    if (rep.rows === 0) {
+                      alert(`Cannot export ${rep.name}: No records are present in the Supabase database.`);
+                      return;
+                    }
+                    window.open(api.downloadBillsCsvUrl, '_blank');
+                  }}
+                  disabled={rep.rows === 0}
+                  className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl font-medium text-xs transition ${
+                    rep.rows > 0
+                      ? 'bg-slate-700 hover:bg-slate-600 text-slate-200 cursor-pointer'
+                      : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700/50 opacity-60'
+                  }`}
+                  title={rep.rows === 0 ? "Cannot export: No records in database" : "Export CSV (.csv)"}
                 >
                   <Download className="w-3.5 h-3.5 text-sky-400" />
                   CSV (.csv)
-                </a>
+                </button>
               </div>
             </div>
           ))}

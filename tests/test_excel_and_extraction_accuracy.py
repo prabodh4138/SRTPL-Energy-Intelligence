@@ -1,9 +1,13 @@
 import io
 import pandas as pd
 import pytest
-from backend.routers.reports import download_bills_excel
+from fastapi import HTTPException
+from backend.routers.reports import download_bills_excel, download_bills_csv
 from backend.routers.dashboard import get_dashboard_summary
 from backend.routers.bills import get_register, get_review_queue
+from backend.routers.readings import get_readings
+from backend.routers.validation import get_validation_summary
+from backend.routers.juno import get_import_batches
 from active_app.core.db_sync import (
     get_official_bill_register,
     get_all_energy_bills,
@@ -15,7 +19,7 @@ from active_app.core.db_sync import (
 
 
 def test_empty_database_and_schema_purity():
-    """Verify that when no bills have been uploaded, all endpoints return 0 rows without dummy data."""
+    """Verify that when no data is in database, all endpoints return 0/clean state and export is strictly blocked."""
     _IN_MEMORY_UPLOADED_BILLS.clear()
 
     # 1. Register is completely empty
@@ -46,11 +50,30 @@ def test_empty_database_and_schema_purity():
     assert summary["kpis"]["held_for_review"] == 0
     assert summary["trend"] == [], f"Expected empty trend list, got {summary['trend']}"
 
-    # 6. Excel download handles empty state gracefully
-    res = download_bills_excel()
-    assert res.status_code == 200
-    xls = pd.ExcelFile(io.BytesIO(res.body))
-    assert "Official_Energy_Bills" in xls.sheet_names
+    # 6. Readings endpoint returns 0 telemetry records when database is empty
+    eb_readings = get_readings("eb")
+    assert eb_readings["records"] == []
+    assert eb_readings["kpis"][0]["value"] == "0 Meters"
+    assert eb_readings["kpis"][1]["value"] == "0 kWh"
+
+    # 7. Validation endpoint returns 0 open exceptions
+    val_summary = get_validation_summary()
+    assert val_summary["kpis"]["total_open_exceptions"] == 0
+    assert val_summary["exceptions"] == []
+
+    # 8. Juno import batches returns 0 batches
+    batches = get_import_batches()
+    assert batches == []
+
+    # 9. Excel and CSV export STRICTLY BLOCKED with HTTP 400 when database is empty (no dummy file created)
+    with pytest.raises(HTTPException) as exc_info:
+        download_bills_excel()
+    assert exc_info.value.status_code == 400
+    assert "No bill records are present in the Supabase database" in exc_info.value.detail
+
+    with pytest.raises(HTTPException) as exc_info_csv:
+        download_bills_csv()
+    assert exc_info_csv.value.status_code == 400
 
 
 def test_uploaded_bills_extraction_accuracy_and_all_13_fields():
@@ -217,7 +240,7 @@ def test_uploaded_bills_extraction_accuracy_and_all_13_fields():
     empty_meter = (df["meter_sl_no"] == "—").sum()
     assert empty_meter == 0, f"Expected zero bills with empty meter serial no, got {empty_meter}"
 
-    # 8. Excel export contains both sheets with 100% accurate data
+    # 8. Excel export succeeds with status 200 and contains both sheets with 100% accurate data
     res = download_bills_excel()
     assert res.status_code == 200
     xls = pd.ExcelFile(io.BytesIO(res.body))

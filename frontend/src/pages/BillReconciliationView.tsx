@@ -232,26 +232,46 @@ export const BillReconciliationView: React.FC = () => {
           </button>
         </div>
 
-        {/* Quick export buttons */}
+        {/* Quick export buttons (strictly disabled if no bills in database) */}
         <div className="flex items-center gap-2">
-          <a
-            href={api.downloadBillsExcelUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium transition"
+          <button
+            onClick={() => {
+              if (officialBills.length === 0) {
+                alert("Cannot export: No bill records are present in the Supabase database. Please upload and verify bills first.");
+                return;
+              }
+              window.open(api.downloadBillsExcelUrl, '_blank');
+            }}
+            disabled={officialBills.length === 0}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition ${
+              officialBills.length > 0
+                ? "bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700 cursor-pointer"
+                : "bg-slate-900 text-slate-500 border-slate-800 cursor-not-allowed opacity-60"
+            }`}
+            title={officialBills.length === 0 ? "Cannot export: No bills present in database" : "Export Official Bills as Excel (.xlsx)"}
           >
             <Download className="w-3.5 h-3.5 text-emerald-400" />
             Export Excel
-          </a>
-          <a
-            href={api.downloadBillsCsvUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium transition"
+          </button>
+          <button
+            onClick={() => {
+              if (officialBills.length === 0) {
+                alert("Cannot export: No bill records are present in the Supabase database. Please upload and verify bills first.");
+                return;
+              }
+              window.open(api.downloadBillsCsvUrl, '_blank');
+            }}
+            disabled={officialBills.length === 0}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition ${
+              officialBills.length > 0
+                ? "bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700 cursor-pointer"
+                : "bg-slate-900 text-slate-500 border-slate-800 cursor-not-allowed opacity-60"
+            }`}
+            title={officialBills.length === 0 ? "Cannot export: No bills present in database" : "Export Official Bills as CSV (.csv)"}
           >
             <Download className="w-3.5 h-3.5 text-sky-400" />
             Export CSV
-          </a>
+          </button>
         </div>
       </div>
 
