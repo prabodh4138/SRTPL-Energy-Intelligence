@@ -313,6 +313,32 @@ export const api = {
     const res = await fetch(`${getApiBase()}/reports/summary`);
     return await res.json();
   },
+  exportCustomReport: async (payload: {
+    format: 'xlsx' | 'csv';
+    title: string;
+    columns: string[];
+    labels: Record<string, string>;
+    rows: any[];
+  }) => {
+    const res = await fetch(`${getApiBase()}/reports/custom-export`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to export custom report');
+    }
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `SRTPL_${payload.title.replace(/\s+/g, '_')}.${payload.format}`;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+  },
   get downloadBillsExcelUrl() {
     return `${getApiBase()}/reports/download-bills-excel`;
   },

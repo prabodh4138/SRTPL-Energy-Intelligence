@@ -1,9 +1,14 @@
 import io
 from fastapi import APIRouter, Response, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 import pandas as pd
+import openpyxl
+from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 import sys
 import os
+from typing import Any
 
 APP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "active_app"))
 if APP_DIR not in sys.path:
@@ -126,3 +131,97 @@ def download_consumers_excel():
         df.to_excel(writer, index=False, sheet_name="Consumer_Master_60")
     headers = {"Content-Disposition": 'attachment; filename="SRTPL_Consumer_Master_60.xlsx"'}
     return Response(content=output.getvalue(), headers=headers, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+class CustomExportPayload(BaseModel):
+    format: str = "xlsx"
+    title: str = "Custom_Report"
+    columns: list[str]
+    labels: dict[str, str] = {}
+    rows: list[dict[str, Any]]
+
+
+@router.post("/custom-export")
+def export_custom_report(payload: CustomExportPayload):
+    """Generates a professional styled Excel (.xlsx) or UTF-8 CSV matching the user's custom created view."""
+    if not payload.rows:
+        raise HTTPException(status_code=400, detail="Cannot export empty dataset.")
+
+    chosen_cols = payload.columns if payload.columns else list(payload.rows[0].keys())
+    labels = payload.labels or {}
+
+    # Build clean DataFrame with requested columns in order
+    data_list = []
+    for r in payload.rows:
+        row_dict = {}
+        for c in chosen_cols:
+            display_name = labels.get(c, c)
+            row_dict[display_name] = r.get(c, "")
+        data_list.append(row_dict)
+
+    df = pd.DataFrame(data_list)
+    clean_title = (payload.title or "Custom_Report").replace(" ", "_")[:30]
+
+    if payload.format.lower() == "csv":
+        csv_bytes = df.to_csv(index=False).encode("utf-8-sig")
+        headers = {"Content-Disposition": f'attachment; filename="SRTPL_{clean_title}.csv"'}
+        return Response(content=csv_bytes, headers=headers, media_type="text/csv")
+
+    # Build styled Excel with OpenPyXL
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = clean_title
+    ws.views.sheetView[0].showGridLines = True
+
+    header_fill = PatternFill(start_color="0A192F", end_color="0A192F", fill_type="solid")
+    header_font = Font(name="Segoe UI", size=10, bold=True, color="FFFFFF")
+    data_font = Font(name="Segoe UI", size=9)
+    thin_border = Border(
+        left=Side(style="thin", color="CBD5E1"),
+        right=Side(style="thin", color="CBD5E1"),
+        top=Side(style="thin", color="CBD5E1"),
+        bottom=Side(style="thin", color="CBD5E1"),
+    )
+
+    ws.append(list(df.columns))
+    for col_idx in range(1, len(df.columns) + 1):
+        cell = ws.cell(row=1, column=col_idx)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    for r_idx, row_values in enumerate(df.itertuples(index=False), start=2):
+        ws.append(list(row_values))
+        for c_idx in range(1, len(df.columns) + 1):
+            cell = ws.cell(row=r_idx, column=c_idx)
+            cell.font = data_font
+            cell.border = thin_border
+            val = cell.value
+
+            col_name = str(df.columns[c_idx - 1]).lower()
+            if any(k in col_name for k in ["amount", "charges", "duty", "payable", "paid", "balance", "total", "deposit", "dps", "₹", "rs."]):
+                if isinstance(val, (int, float)):
+                    cell.number_format = "#,##0.00"
+                    cell.alignment = Alignment(horizontal="right")
+            elif any(k in col_name for k in ["units", "kwh", "kvah", "load", "demand", "md"]):
+                if isinstance(val, (int, float)):
+                    cell.number_format = "#,##0.00"
+                    cell.alignment = Alignment(horizontal="right")
+
+    for col in ws.columns:
+        max_len = 0
+        col_letter = get_column_letter(col[0].column)
+        for cell in col:
+            val_str = str(cell.value or "")
+            if len(val_str) > max_len:
+                max_len = len(val_str)
+        ws.column_dimensions[col_letter].width = max(12, min(max_len + 4, 45))
+
+    out = io.BytesIO()
+    wb.save(out)
+    headers = {"Content-Disposition": f'attachment; filename="SRTPL_{clean_title}.xlsx"'}
+    return Response(
+        content=out.getvalue(),
+        headers=headers,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
