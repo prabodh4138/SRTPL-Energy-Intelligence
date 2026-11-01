@@ -20,10 +20,44 @@ REQUIRED_EXTRACTION_FIELDS = [
 ]
 
 
+FIELD_SYNONYM_MAP = {
+    "security_deposit": ["Security Deposit", "security_deposit"],
+    "md": ["MD", "md", "MD-KW", "MD-KVA"],
+    "contract_demand": ["Contract Demand", "contract_demand"],
+    "section": ["Section", "section"],
+    "sub_division": ["Sub-Division", "sub_division", "Sub Division"],
+    "division": ["Division", "division", "division_name"],
+    "rebate_date": ["Rebate Date", "rebate_date"],
+    "cuml_md_kva": ["CUML MD-KVA", "cuml_md_kva"],
+    "cuml_md_kw": ["CUML MD-KW", "cuml_md_kw"],
+    "dps_rs": ["DPS(Rs.)", "DPS (Rs.)", "dps_rs", "DPS"],
+    "tariff_category": ["Tariff Category", "tariff_category", "tariff_type"],
+    "meter_sl_no": ["Meter Sl. No.", "meter_sl_no", "Meter Serial No"],
+    "net_payable_amount_before_rbt_dt_rs": [
+        "Net Payable Amount Before Rbt. Dt.(Rs.)", "net_payable_amount_before_rbt_dt_rs", "net_before_rebate"
+    ],
+    "net_payable_amount_after_rbt_dt_rs": [
+        "Net Payable Amount After Rbt. Dt.(Rs.)", "net_payable_amount_after_rbt_dt_rs", "net_after_rebate"
+    ],
+}
+
+
 def enrich_bill_record(row: dict[str, Any]) -> dict[str, Any]:
     """Enriches bill record with authoritative bill_type (HT/LT), consumer_scope (PLAZA/HIGHWAY),
     and parsed sanctioned_load_kw directly from contract demand and tariff classification.
+    Synchronizes both Title Case and snake_case keys for all 13 required fields.
     """
+    # 0. Sync synonyms across all known fields first
+    for canon, syns in FIELD_SYNONYM_MAP.items():
+        found_val = None
+        for s in syns:
+            if s in row and row[s] is not None and str(row[s]).strip() not in ("", "—", "nan", "None"):
+                found_val = row[s]
+                break
+        if found_val is not None:
+            for s in syns:
+                row[s] = found_val
+
     ac = str(row.get("Consumer A/c No.") or row.get("consumer_account_no") or "").strip()
     tariff = str(row.get("Tariff Category") or row.get("tariff_category") or "").strip().upper()
     cd_raw = str(row.get("Contract Demand") or row.get("contract_demand") or "").strip()
@@ -73,14 +107,25 @@ def enrich_bill_record(row: dict[str, Any]) -> dict[str, Any]:
     row["Sanctioned Load (KW)"] = load_val
 
     # Ensure Contract Demand is reflected in both styles
-    if cd_raw:
-        row["Contract Demand"] = cd_raw
-        row["contract_demand"] = cd_raw
+    if not cd_raw:
+        cd_raw = f"{load_val:.0f} KVA" if is_ht else f"{load_val:.0f} KW"
+    row["Contract Demand"] = cd_raw
+    row["contract_demand"] = cd_raw
 
-    # Ensure all 13 requested fields are present
+    # Ensure all 13 requested fields are present in both casing formats
     for fld in REQUIRED_EXTRACTION_FIELDS:
         if fld not in row or row[fld] is None:
             row[fld] = ""
+
+    for canon, syns in FIELD_SYNONYM_MAP.items():
+        found_val = None
+        for s in syns:
+            if s in row and row[s] is not None and str(row[s]).strip() not in ("", "—", "nan", "None"):
+                found_val = row[s]
+                break
+        if found_val is not None:
+            for s in syns:
+                row[s] = found_val
 
     return row
 
