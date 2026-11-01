@@ -199,7 +199,12 @@ def export_custom_report(payload: CustomExportPayload):
             val = cell.value
 
             col_name = str(df.columns[c_idx - 1]).lower()
-            if any(k in col_name for k in ["amount", "charges", "duty", "payable", "paid", "balance", "total", "deposit", "dps", "₹", "rs."]):
+            # Explicit text formatting for bill numbers, meter serials, consumer accounts, and codes (NEVER comma separated)
+            if any(k in col_name for k in ["number", "bill_number", "account", "meter", "code", "sl_no", "id", "batch", "ref", "receipt", "plaza", "scope", "type", "basis", "status", "category", "section", "division", "date", "month", "period", "file", "location"]):
+                cell.number_format = "@"
+                cell.value = str(val) if val is not None and val != "" else "—"
+                cell.alignment = Alignment(horizontal="left")
+            elif any(k in col_name for k in ["amount", "charges", "duty", "payable", "paid", "balance", "total", "deposit", "dps", "₹", "rs."]):
                 if isinstance(val, (int, float)):
                     cell.number_format = "#,##0.00"
                     cell.alignment = Alignment(horizontal="right")
