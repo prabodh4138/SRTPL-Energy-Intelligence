@@ -287,7 +287,7 @@ def render():
 
     # -------------------------------------------------------------------------
 
-    tab_dash, tab_extract, tab_review, tab_register, tab_receipts, tab_reconcile, tab_audit, tab_roadmap = st.tabs([
+    tab_dash, tab_extract, tab_review, tab_register, tab_receipts, tab_month_clearance, tab_reconcile, tab_audit, tab_roadmap = st.tabs([
 
         "📊 Dashboard",
 
@@ -298,6 +298,8 @@ def render():
         f"📑 Official Bill Register ({posted_count})",
 
         "💳 Receipt Register & Allocation",
+
+        "📊 Month-Wise Clearance & Ledger",
 
         "⚖️ Discrepancy & Meter Reconciliation",
 
@@ -1789,6 +1791,13 @@ def render_month_wise_clearance_tracker():
     
         with subtab_rec_month:
             render_month_wise_clearance_tracker()
+
+
+    # =========================================================================
+    # TAB 5B: 📊 MONTH-WISE CLEARANCE & LEDGER
+    # =========================================================================
+    with tab_month_clearance:
+        render_month_wise_clearance_tracker()
 
 
     # =========================================================================

@@ -164,7 +164,7 @@ export const BillReconciliationView: React.FC = () => {
 
       // Eagerly load official bills, review queue, and receipts so tab badges and export work immediately
 
-      const [regRes, revRes, rcpRes, mrgRes] = await Promise.all([
+      const [regRes, revRes, rcpRes, mrgRes, clrRes] = await Promise.all([
 
         api.getOfficialRegister().catch(() => ({ bills: [] })),
 
@@ -174,6 +174,7 @@ export const BillReconciliationView: React.FC = () => {
 
         api.getMergedReconciliation().catch(() => ({ records: [] })),
 
+        api.getMonthWiseClearance().catch(() => ({ summary: [] })),
       ]);
 
       setOfficialBills(regRes.bills || []);
@@ -183,6 +184,7 @@ export const BillReconciliationView: React.FC = () => {
       setReceipts(rcpRes.receipts || []);
 
       setMergedRecon(mrgRes.records || []);
+      setMonthWiseSummary(clrRes.summary || []);
 
 
 
@@ -659,6 +661,18 @@ export const BillReconciliationView: React.FC = () => {
 
 
           <button
+            onClick={() => setActiveSubtab('monthwise')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition ${
+              activeSubtab === 'monthwise'
+                ? 'bg-emerald-500 text-slate-950 shadow-md'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            6. Month-Wise Clearance ({monthWiseSummary.length})
+          </button>
+
+          <button
 
             onClick={() => setActiveSubtab('consumers')}
 
@@ -692,7 +706,9 @@ export const BillReconciliationView: React.FC = () => {
 
             onClick={() => {
 
-              if (activeSubtab === 'receipts' && receipts.length > 0) {
+              if (activeSubtab === 'monthwise' && monthWiseSummary.length > 0) {
+                window.open(api.downloadMonthWiseExcelUrl, '_blank');
+              } else if (activeSubtab === 'receipts' && receipts.length > 0) {
 
                 window.open(api.downloadReceiptsExcelUrl, '_blank');
 
@@ -732,7 +748,9 @@ export const BillReconciliationView: React.FC = () => {
 
             onClick={() => {
 
-              if (activeSubtab === 'receipts' && receipts.length > 0) {
+              if (activeSubtab === 'monthwise' && monthWiseSummary.length > 0) {
+                window.open(api.downloadMonthWiseCsvUrl, '_blank');
+              } else if (activeSubtab === 'receipts' && receipts.length > 0) {
 
                 window.open(api.downloadReceiptsCsvUrl, '_blank');
 
