@@ -80,6 +80,7 @@ from core.db_sync import (
     restore_rejected_bill,
     delete_rejected_bill,
     _ensure_official_register_columns,
+    get_merged_bill_receipt_reconciliation,
 )
 
 
@@ -1373,116 +1374,162 @@ def render():
 
 
     # =========================================================================
-
     # TAB 5: 💳 RECEIPT REGISTER & ALLOCATION (Section 9 & 10)
-
     # Zero double-counting of receipt amounts
-
     # =========================================================================
-
     with tab_receipts:
 
-        st.subheader("Receipt Register & Payment Reconciliation")
+        st.subheader("Payment Receipts Register & Unified Reconciliation")
 
-        st.caption("Reconciles DISCOM payment receipts with official energy bills without duplicate receipt summation or join inflation.")
+        st.caption("Extracts 8 authoritative receipt fields, normalizes bill month (MM/YYYY), and merges DISCOM receipts with official bills.")
 
 
+
+        subtab_rec_reg, subtab_rec_merge = st.tabs([
+            "💳 Payment Receipts Register (8 Fields)",
+            "🔄 Merged Bill & Receipts Reconciliation",
+        ])
 
         receipts_df = get_receipt_reconciliation()
 
+        with subtab_rec_reg:
+            if not receipts_df.empty:
+                rec_cols_to_show = [c for c in [
+                    "receipt_no", "consumer_no", "payment_type", "amount_paid", 
+                    "collections_date", "bill_month", "category", "office_name",
+                    "allocated_amount", "unallocated_balance", "allocation_status"
+                ] if c in receipts_df.columns]
+                
+                disp_rec = receipts_df[rec_cols_to_show].rename(columns={
+                    "receipt_no": "Receipt No / UTR",
+                    "consumer_no": "Consumer No",
+                    "payment_type": "Payment Type",
+                    "amount_paid": "Amount Paid (₹)",
+                    "collections_date": "Collections Date",
+                    "bill_month": "Bill Month",
+                    "category": "Category",
+                    "office_name": "Office Name",
+                    "allocated_amount": "Allocated (₹)",
+                    "unallocated_balance": "Unallocated (₹)",
+                    "allocation_status": "Status",
+                })
+                # Ensure receipt_no and consumer_no are formatted as text
+                disp_rec["Receipt No / UTR"] = disp_rec["Receipt No / UTR"].astype(str)
+                disp_rec["Consumer No"] = disp_rec["Consumer No"].astype(str)
+                st.dataframe(disp_rec, width="stretch", hide_index=True)
 
+                st.write("")
+                r_exp1, r_exp2, _ = st.columns([1.5, 1.5, 3])
+                rx_buf = io.BytesIO()
+                with pd.ExcelWriter(rx_buf, engine="openpyxl") as writer:
+                    receipts_df.to_excel(writer, index=False, sheet_name="Payment_Receipts")
+                r_exp1.download_button(
+                    "📥 Export Receipts (Excel)",
+                    data=rx_buf.getvalue(),
+                    file_name="SRTPL_Payment_Receipts_Register.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )
+                r_exp2.download_button(
+                    "📥 Export Receipts (CSV)",
+                    data=receipts_df.to_csv(index=False),
+                    file_name="SRTPL_Payment_Receipts_Register.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                )
 
-        if not receipts_df.empty:
+                st.divider()
 
-            st.dataframe(
+                # Interactive Allocation Tool
+                st.markdown("##### 🔗 Allocate Payment Receipt to Unpaid Bill")
+                alloc_r_col, alloc_b_col, alloc_a_col, alloc_btn_col = st.columns([1.2, 1.4, 1, 1])
 
-                receipts_df[["receipt_no", "consumer_no", "collections_date", "receipt_amount", "allocated_amount", "unallocated_balance", "allocation_status"]].rename(columns={
+                unallocated_receipts = receipts_df[receipts_df["unallocated_balance"] > 0] if "unallocated_balance" in receipts_df.columns else pd.DataFrame()
+                if not unallocated_receipts.empty:
+                    sel_rec_no = alloc_r_col.selectbox("Available Receipt", unallocated_receipts["receipt_no"].tolist(), key="alloc_sel_r")
+                    unalloc_max = float(unallocated_receipts[unallocated_receipts["receipt_no"] == sel_rec_no]["unallocated_balance"].iloc[0])
 
-                    "receipt_no": "Receipt Ref / UTR",
+                    unpaid_bills = filtered_reg[filtered_reg["outstanding_balance"] > 0] if not filtered_reg.empty else pd.DataFrame()
+                    if not unpaid_bills.empty:
+                        sel_target_bill = alloc_b_col.selectbox("Target Bill", unpaid_bills["bill_number"].tolist(), key="alloc_sel_b")
+                        bill_out = float(unpaid_bills[unpaid_bills["bill_number"] == sel_target_bill]["outstanding_balance"].iloc[0])
 
-                    "consumer_no": "Consumer A/C",
+                        max_alloc = min(unalloc_max, bill_out)
+                        alloc_amt = alloc_a_col.number_input("Amount (₹)", value=max_alloc, min_value=1.0, max_value=unalloc_max, step=100.0)
 
-                    "collections_date": "Payment Date",
-
-                    "receipt_amount": "Receipt Amount",
-
-                    "allocated_amount": "Allocated to Bills",
-
-                    "unallocated_balance": "Unallocated Balance",
-
-                    "allocation_status": "Allocation Status",
-
-                }),
-
-                width="stretch",
-
-                hide_index=True,
-
-            )
-
-
-
-            st.divider()
-
-
-
-            # Interactive Allocation Tool
-
-            st.markdown("##### 🔗 Allocate Payment Receipt to Unpaid Bill")
-
-            alloc_r_col, alloc_b_col, alloc_a_col, alloc_btn_col = st.columns([1.2, 1.4, 1, 1])
-
-
-
-            unallocated_receipts = receipts_df[receipts_df["unallocated_balance"] > 0]
-
-            if not unallocated_receipts.empty:
-
-                sel_rec_no = alloc_r_col.selectbox("Available Receipt", unallocated_receipts["receipt_no"].tolist(), key="alloc_sel_r")
-
-                unalloc_max = float(unallocated_receipts[unallocated_receipts["receipt_no"] == sel_rec_no]["unallocated_balance"].iloc[0])
-
-
-
-                unpaid_bills = filtered_reg[filtered_reg["outstanding_balance"] > 0] if not filtered_reg.empty else pd.DataFrame()
-
-                if not unpaid_bills.empty:
-
-                    sel_target_bill = alloc_b_col.selectbox("Target Bill", unpaid_bills["bill_number"].tolist(), key="alloc_sel_b")
-
-                    bill_out = float(unpaid_bills[unpaid_bills["bill_number"] == sel_target_bill]["outstanding_balance"].iloc[0])
-
-
-
-                    max_alloc = min(unalloc_max, bill_out)
-
-                    alloc_amt = alloc_a_col.number_input("Amount (₹)", value=max_alloc, min_value=1.0, max_value=unalloc_max, step=100.0)
-
-
-
-                    alloc_btn_col.write("")
-
-                    alloc_btn_col.write("")
-
-                    if alloc_btn_col.button("✅ Allocate", type="primary", width="stretch"):
-
-                        allocate_receipt_to_bill(sel_rec_no, sel_target_bill, alloc_amt)
-
-                        st.success(f"Allocated ₹{alloc_amt:,.2f} from Receipt {sel_rec_no} to Bill {sel_target_bill}.")
-
-                        st.rerun()
-
+                        alloc_btn_col.write("")
+                        alloc_btn_col.write("")
+                        if alloc_btn_col.button("✅ Allocate", type="primary", width="stretch"):
+                            allocate_receipt_to_bill(sel_rec_no, sel_target_bill, alloc_amt)
+                            st.success(f"Allocated ₹{alloc_amt:,.2f} from Receipt {sel_rec_no} to Bill {sel_target_bill}.")
+                            st.rerun()
+                    else:
+                        st.info("No unpaid bills requiring allocation.")
                 else:
-
-                    st.info("No unpaid bills requiring allocation.")
-
+                    st.success("All receipts are fully allocated.")
             else:
+                st.info("No payment receipts recorded yet. Upload receipts or import CSV records.")
 
-                st.success("All receipts are fully allocated.")
+        with subtab_rec_merge:
+            st.markdown("##### 🔄 Unified Merged Bill & Receipts Reconciliation")
+            st.caption("Primary Key: Consumer No + Normalized Bill Month (MM/YYYY e.g., 02/2026). Correlates bills with receipts to reflect amount paid and outstanding balance.")
+            
+            merged_recon_df = get_merged_bill_receipt_reconciliation()
+            if not merged_recon_df.empty:
+                disp_merge = merged_recon_df.copy()
+                disp_merge["consumer_account_no"] = disp_merge["consumer_account_no"].astype(str)
+                disp_merge["bill_number"] = disp_merge["bill_number"].astype(str)
+                disp_merge["receipt_no"] = disp_merge["receipt_no"].astype(str)
+                
+                show_cols = [c for c in [
+                    "consumer_account_no", "bill_month", "bill_number", "toll_plaza_id",
+                    "total_amount_payable", "net_payable_amount_after_rbt_dt_rs",
+                    "receipt_no", "payment_type", "amount_paid", "collections_date", 
+                    "category", "office_name", "outstanding_balance", "payment_status"
+                ] if c in disp_merge.columns]
+                
+                st.dataframe(
+                    disp_merge[show_cols].rename(columns={
+                        "consumer_account_no": "Consumer No",
+                        "bill_month": "Bill Month (MM/YYYY)",
+                        "bill_number": "Bill Ref",
+                        "toll_plaza_id": "Plaza",
+                        "total_amount_payable": "Total Payable (₹)",
+                        "net_payable_amount_after_rbt_dt_rs": "Net Payable (₹)",
+                        "receipt_no": "Receipt No",
+                        "payment_type": "Payment Type",
+                        "amount_paid": "Amount Paid (₹)",
+                        "collections_date": "Collections Date",
+                        "category": "Category",
+                        "office_name": "Office Name",
+                        "outstanding_balance": "Outstanding (₹)",
+                        "payment_status": "Payment Status",
+                    }),
+                    width="stretch",
+                    hide_index=True,
+                )
 
-        else:
-
-            st.info("No payment receipts recorded yet. Upload receipts or import CSV records.")
+                st.write("")
+                m_exp1, m_exp2, _ = st.columns([1.5, 1.5, 3])
+                mx_buf = io.BytesIO()
+                with pd.ExcelWriter(mx_buf, engine="openpyxl") as writer:
+                    merged_recon_df.to_excel(writer, index=False, sheet_name="Unified_Reconciliation")
+                m_exp1.download_button(
+                    "📥 Export Merged Reconciliation (Excel)",
+                    data=mx_buf.getvalue(),
+                    file_name="SRTPL_Unified_Bill_Receipts_Reconciliation.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )
+                m_exp2.download_button(
+                    "📥 Export Merged Reconciliation (CSV)",
+                    data=merged_recon_df.to_csv(index=False),
+                    file_name="SRTPL_Unified_Bill_Receipts_Reconciliation.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                )
+            else:
+                st.info("No bills or receipts available for unified reconciliation.")
 
 
 

@@ -348,4 +348,21 @@ export const api = {
   get downloadConsumersExcelUrl() {
     return `${getApiBase()}/reports/download-consumers-excel`;
   },
+  get downloadReceiptsExcelUrl() {
+    return `${getApiBase()}/reports/download-receipts-excel`;
+  },
+  get downloadReceiptsCsvUrl() {
+    return `${getApiBase()}/reports/download-receipts-csv`;
+  },
+  get downloadMergedReconciliationExcelUrl() {
+    return `${getApiBase()}/reports/download-merged-reconciliation-excel`;
+  },
+  get downloadMergedReconciliationCsvUrl() {
+    return `${getApiBase()}/reports/download-merged-reconciliation-csv`;
+  },
+  getMergedReconciliation: async (): Promise<{ records: any[] }> => {
+    const res = await fetch(`${getApiBase()}/reports/merged-reconciliation`);
+    if (!res.ok) throw new Error('Failed to fetch merged reconciliation');
+    return res.json();
+  },
 };

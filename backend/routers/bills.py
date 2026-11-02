@@ -113,7 +113,7 @@ def _extract_single_item(item_tuple: tuple[int, Any]) -> dict[str, Any]:
             rec = extract_energy_receipt_data(stream_receipt, fname, extracted_text=extracted_text)
             rec_no = str(rec.get("receipt_no") or rec.get("Receipt No") or f"RCP-{idx}").strip()
             amt = _clean_kpi_num(rec.get("amount_paid") or rec.get("Amount Paid") or rec.get("amount"))
-            consumer = str(rec.get("account_no") or rec.get("Account NO") or rec.get("consumer_no") or rec.get("Consumer No") or "—").strip()
+            consumer = str(rec.get("consumer_no") or rec.get("Consumer No") or rec.get("account_no") or rec.get("Account NO") or "—").strip()
             month = str(rec.get("bill_month") or rec.get("Bill Month") or "—").strip()
 
             # Ensure all required snake_case database columns exist in payload
@@ -127,6 +127,7 @@ def _extract_single_item(item_tuple: tuple[int, Any]) -> dict[str, Any]:
             rec["transaction_id"] = str(rec.get("transaction_id") or rec.get("Transaction ID") or "")
             rec["bill_month"] = month
             rec["category"] = str(rec.get("category") or rec.get("Category") or "")
+            rec["office_name"] = str(rec.get("office_name") or rec.get("Office Name") or "")
             rec["source_pdf"] = fname
 
             return {

@@ -17,9 +17,11 @@ if APP_DIR not in sys.path:
 from core.db_sync import (
     get_official_bill_register,
     get_all_consumer_accounts,
+    get_all_payment_receipts,
     get_receipt_reconciliation,
     get_budget_vs_actual,
     get_unified_billing_kpi_dataset,
+    get_merged_bill_receipt_reconciliation,
     _ensure_official_register_columns,
 )
 
@@ -33,11 +35,13 @@ def get_reports_summary():
     receipts_df = get_receipt_reconciliation()
     budget_df = get_budget_vs_actual()
 
+    merged_df = get_merged_bill_receipt_reconciliation()
     reports = [
         {"id": "REP-01", "name": "Authoritative Official Bill Register", "format": "Excel / CSV", "rows": len(bills_df), "category": "Financial Controls"},
         {"id": "REP-02", "name": "60 Consumer Master Roster (3 HT / 57 LT)", "format": "Excel / CSV", "rows": len(consumers_df), "category": "Master Data"},
         {"id": "REP-03", "name": "Payment Receipts Reconciliation & Allocations", "format": "Excel / CSV", "rows": len(receipts_df), "category": "Audit & Clearance"},
         {"id": "REP-04", "name": "Corridor Monthly Budget vs Actual Expenditure", "format": "Excel / CSV", "rows": len(budget_df), "category": "Executive"},
+        {"id": "REP-05", "name": "Unified Bill & Receipts Reconciliation Register", "format": "Excel / CSV", "rows": len(merged_df), "category": "Financial Controls"},
     ]
     return {"reports": reports}
 
@@ -131,6 +135,69 @@ def download_consumers_excel():
         df.to_excel(writer, index=False, sheet_name="Consumer_Master_60")
     headers = {"Content-Disposition": 'attachment; filename="SRTPL_Consumer_Master_60.xlsx"'}
     return Response(content=output.getvalue(), headers=headers, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+
+@router.get("/merged-reconciliation")
+def get_merged_reconciliation_endpoint():
+    df = get_merged_bill_receipt_reconciliation()
+    return {"records": df.to_dict(orient="records")}
+
+
+@router.get("/download-merged-reconciliation-excel")
+def download_merged_reconciliation_excel():
+    df = get_merged_bill_receipt_reconciliation()
+    if df.empty:
+        raise HTTPException(status_code=400, detail="Cannot export: No bill or receipt records are available.")
+
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Unified_Reconciliation")
+        ws = writer.sheets["Unified_Reconciliation"]
+        hdr_fill = PatternFill(start_color="0F172A", end_color="0F172A", fill_type="solid")
+        hdr_font = Font(name="Arial", size=10, bold=True, color="F8FAFC")
+        for col_idx in range(1, len(df.columns) + 1):
+            cell = ws.cell(row=1, column=col_idx)
+            cell.fill = hdr_fill
+            cell.font = hdr_font
+            col_letter = get_column_letter(col_idx)
+            max_len = max(len(str(val or "")) for val in df.iloc[:, col_idx - 1])
+            ws.column_dimensions[col_letter].width = max(max_len + 3, 14)
+
+    headers = {"Content-Disposition": 'attachment; filename="SRTPL_Unified_Bill_Receipts_Reconciliation.xlsx"'}
+    return Response(content=output.getvalue(), headers=headers, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@router.get("/download-merged-reconciliation-csv")
+def download_merged_reconciliation_csv():
+    df = get_merged_bill_receipt_reconciliation()
+    if df.empty:
+        raise HTTPException(status_code=400, detail="Cannot export: No bill or receipt records are available.")
+    csv_data = df.to_csv(index=False).encode("utf-8")
+    headers = {"Content-Disposition": 'attachment; filename="SRTPL_Unified_Bill_Receipts_Reconciliation.csv"'}
+    return Response(content=csv_data, headers=headers, media_type="text/csv")
+
+
+@router.get("/download-receipts-excel")
+def download_receipts_excel():
+    df = get_all_payment_receipts()
+    if df.empty:
+        raise HTTPException(status_code=400, detail="Cannot export: No payment receipts are recorded in database.")
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Payment_Receipts")
+    headers = {"Content-Disposition": 'attachment; filename="SRTPL_Payment_Receipts_Register.xlsx"'}
+    return Response(content=output.getvalue(), headers=headers, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@router.get("/download-receipts-csv")
+def download_receipts_csv():
+    df = get_all_payment_receipts()
+    if df.empty:
+        raise HTTPException(status_code=400, detail="Cannot export: No payment receipts are recorded in database.")
+    csv_data = df.to_csv(index=False).encode("utf-8")
+    headers = {"Content-Disposition": 'attachment; filename="SRTPL_Payment_Receipts_Register.csv"'}
+    return Response(content=csv_data, headers=headers, media_type="text/csv")
 
 
 class CustomExportPayload(BaseModel):

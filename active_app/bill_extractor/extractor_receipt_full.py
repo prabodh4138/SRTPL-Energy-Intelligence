@@ -15,20 +15,76 @@ except ImportError:
     HAS_PDFPLUMBER = False
 
 
+MONTH_NAME_TO_NUM = {
+    "jan": "01", "january": "01",
+    "feb": "02", "february": "02",
+    "mar": "03", "march": "03",
+    "apr": "04", "april": "04",
+    "may": "05",
+    "jun": "06", "june": "06",
+    "jul": "07", "july": "07",
+    "aug": "08", "august": "08",
+    "sep": "09", "sept": "09", "september": "09",
+    "oct": "10", "october": "10",
+    "nov": "11", "november": "11",
+    "dec": "12", "december": "12",
+}
+
+
+def normalize_bill_month(bm: str) -> str:
+    """
+    Standardizes any bill/receipt month representation into MM/YYYY format.
+    E.g.:
+      'February - 2026' -> '02/2026'
+      'February 2026'   -> '02/2026'
+      'Feb 2026'        -> '02/2026'
+      'Aug-2025'        -> '08/2025'
+      'November - 2025' -> '11/2025'
+      '02/2026'         -> '02/2026'
+      '2/2026'          -> '02/2026'
+      '2026-02'         -> '02/2026'
+    """
+    if not bm or not isinstance(bm, str):
+        return ""
+    raw = bm.strip()
+    # Already MM/YYYY?
+    m_std = re.match(r"^(\d{1,2})/(\d{4})$", raw)
+    if m_std:
+        return f"{int(m_std.group(1)):02d}/{m_std.group(2)}"
+    # YYYY-MM?
+    m_iso = re.match(r"^(\d{4})-(\d{1,2})", raw)
+    if m_iso:
+        return f"{int(m_iso.group(2)):02d}/{m_iso.group(1)}"
+    # MM-YYYY?
+    m_dash = re.match(r"^(\d{1,2})-(\d{4})$", raw)
+    if m_dash:
+        return f"{int(m_dash.group(1)):02d}/{m_dash.group(2)}"
+    # Textual Month + Year: "February - 2026", "Feb 2026", "Aug-2025", "Sep 2026"
+    m_txt = re.search(r"([A-Za-z]+)\s*(?:[-/,\s]+)?\s*(\d{4})", raw)
+    if m_txt:
+        mon_str = m_txt.group(1).lower()
+        yyyy = m_txt.group(2)
+        for prefix, num in MONTH_NAME_TO_NUM.items():
+            if mon_str.startswith(prefix):
+                return f"{num}/{yyyy}"
+    return raw
+
+
 def extract_energy_receipt_data(pdf_file, source_name: str, extracted_text: str = "") -> dict:
     """
     Extracts Energy Receipt data from ONE PDF file or BytesIO stream.
 
-    pdf_file       : file path (str/Path) or file-like object (BytesIO / uploaded file)
-    source_name    : original PDF filename
-    extracted_text : optional pre-extracted text to avoid re-parsing PDF
+    Required fields:
+    - Receipt No (receipt_no)
+    - Consumer No (consumer_no)
+    - Payment Type (payment_type)
+    - Amount Paid (amount_paid)
+    - Collections Date (collections_date)
+    - Bill Month (bill_month, normalized to MM/YYYY, e.g. 02/2026)
+    - Category (category)
+    - Office Name (office_name)
 
-    Returns: dict with dual Title Case & snake_case keys:
-             Receipt No / receipt_no, Consumer No / consumer_no, Account NO / account_no,
-             Amount Paid / amount_paid, Collections Date / collections_date,
-             Consumer Name / consumer_name, Payment Type / payment_type,
-             Transaction ID / transaction_id, Bill Month / bill_month,
-             Category / category, Source PDF / source_pdf
+    Returns: dict with dual Title Case & snake_case keys for all required and auxiliary fields.
     """
     receipt_data = {
         "Receipt No": "",
@@ -41,6 +97,7 @@ def extract_energy_receipt_data(pdf_file, source_name: str, extracted_text: str 
         "Transaction ID": "",
         "Bill Month": "",
         "Category": "",
+        "Office Name": "",
         "Source PDF": source_name,
     }
 
@@ -112,7 +169,9 @@ def extract_energy_receipt_data(pdf_file, source_name: str, extracted_text: str 
                 or re.search(r"Account\s*NO\s*\n\s*(M/S[^\n]+)", text, re.IGNORECASE)
             )
             if match_name and not receipt_data["Consumer Name"]:
-                receipt_data["Consumer Name"] = match_name.group(1).strip()
+                cname = match_name.group(1).strip()
+                cname = re.sub(r"\s*Bill\s*Month.*$", "", cname, flags=re.IGNORECASE).strip()
+                receipt_data["Consumer Name"] = cname
 
             # ---------- Amount Paid ----------
             match_amt = re.search(r"Amount\s+Paid[^\d\n]*[:\s\n]+([\d,]+\.\d{2})", text, re.IGNORECASE)
@@ -139,11 +198,19 @@ def extract_energy_receipt_data(pdf_file, source_name: str, extracted_text: str 
 
             # ---------- Category ----------
             match_cat = (
-                re.search(r"Category[^\w\n]*[:\s\n]+([A-Za-z\s]+?)(?=\n|Order ID|Amount Paid|$)", text, re.IGNORECASE)
+                re.search(r"Category[^\w\n]*[:\s\n]+([A-Za-z\s]+?)(?=\n|Order ID|Amount Paid|Office Name|$)", text, re.IGNORECASE)
                 or re.search(r"Category\s*\n.*?\b([A-Z\s]{4,}?)\s*\n\s*Order ID", text, re.DOTALL)
             )
             if match_cat and not receipt_data["Category"]:
                 receipt_data["Category"] = match_cat.group(1).strip()
+
+            # ---------- Office Name ----------
+            match_off = (
+                re.search(r"Office\s*Name[^\w\n]*[:\s\n]+([A-Za-z0-9\s/.-]+?)(?=\n|SERVICE CHARGES|Amount Paid|$)", text, re.IGNORECASE)
+                or re.search(r"Office\s*Name\s*\n\s*([A-Za-z0-9\s/.-]+?)(?=\n|$)", text, re.IGNORECASE)
+            )
+            if match_off and not receipt_data["Office Name"]:
+                receipt_data["Office Name"] = match_off.group(1).strip()
 
     except Exception:
         pass
@@ -161,6 +228,14 @@ def extract_energy_receipt_data(pdf_file, source_name: str, extracted_text: str 
         except (ValueError, TypeError):
             amt_val = 0.0
 
+    # Primary key alignment: Normalize Bill Month to MM/YYYY (e.g. February 2026 -> 02/2026)
+    raw_month = receipt_data["Bill Month"]
+    norm_month = normalize_bill_month(raw_month) if raw_month else ""
+
+    receipt_data["bill_month_raw"] = raw_month
+    receipt_data["bill_month"] = norm_month if norm_month else raw_month
+    receipt_data["Bill Month"] = norm_month if norm_month else raw_month
+
     # Enrich with snake_case keys for database synchronization & backend compatibility
     receipt_data["receipt_no"] = receipt_data["Receipt No"]
     receipt_data["consumer_no"] = receipt_data["Consumer No"]
@@ -170,8 +245,8 @@ def extract_energy_receipt_data(pdf_file, source_name: str, extracted_text: str 
     receipt_data["amount_paid"] = amt_val
     receipt_data["payment_type"] = receipt_data["Payment Type"]
     receipt_data["transaction_id"] = receipt_data["Transaction ID"]
-    receipt_data["bill_month"] = receipt_data["Bill Month"]
     receipt_data["category"] = receipt_data["Category"]
+    receipt_data["office_name"] = receipt_data["Office Name"]
     receipt_data["source_pdf"] = receipt_data["Source PDF"]
 
     return receipt_data

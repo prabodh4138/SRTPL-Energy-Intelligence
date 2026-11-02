@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api';
-import { CandidateResult, OfficialBill, ReviewQueueItem, ReceiptItem } from '../types';
+import { CandidateResult, OfficialBill, ReviewQueueItem, ReceiptItem, MergedReconciliationItem } from '../types';
 import {
   UploadCloud,
   FileCheck2,
@@ -21,7 +21,10 @@ import {
 } from 'lucide-react';
 
 export const BillReconciliationView: React.FC = () => {
-  const [activeSubtab, setActiveSubtab] = useState<'extract' | 'review' | 'register' | 'receipts' | 'consumers'>('extract');
+  const [activeSubtab, setActiveSubtab] = useState<'extract' | 'review' | 'register' | 'receipts' | 'merged' | 'consumers'>('extract');
+
+  // Merged Reconciliation State
+  const [mergedRecon, setMergedRecon] = useState<MergedReconciliationItem[]>([]);
 
   // Extraction State
   const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
@@ -70,14 +73,16 @@ export const BillReconciliationView: React.FC = () => {
     setLoadingData(true);
     try {
       // Eagerly load official bills, review queue, and receipts so tab badges and export work immediately
-      const [regRes, revRes, rcpRes] = await Promise.all([
+      const [regRes, revRes, rcpRes, mrgRes] = await Promise.all([
         api.getOfficialRegister().catch(() => ({ bills: [] })),
         api.getReviewQueue().catch(() => ({ items: [] })),
         api.getReceipts().catch(() => ({ receipts: [] })),
+        api.getMergedReconciliation().catch(() => ({ records: [] })),
       ]);
       setOfficialBills(regRes.bills || []);
       setReviewQueue(revRes.items || []);
       setReceipts(rcpRes.receipts || []);
+      setMergedRecon(mrgRes.records || []);
 
       if (activeSubtab === 'consumers') {
         const cRes = await api.getConsumers().catch(() => ({ consumers: [] }));
@@ -300,7 +305,19 @@ export const BillReconciliationView: React.FC = () => {
             }`}
           >
             <CreditCard className="w-3.5 h-3.5" />
-            4. Receipts & Allocations
+            4. Receipts Register ({receipts.length})
+          </button>
+
+          <button
+            onClick={() => setActiveSubtab('merged')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition ${
+              activeSubtab === 'merged'
+                ? 'bg-teal-500 text-slate-950 shadow-md'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5" />
+            5. Merged Reconciliation ({mergedRecon.length})
           </button>
 
           <button
@@ -312,62 +329,48 @@ export const BillReconciliationView: React.FC = () => {
             }`}
           >
             <Users className="w-3.5 h-3.5" />
-            5. Consumer Master (60)
+            6. Consumer Master (60)
           </button>
         </div>
 
-        {/* Quick export buttons (Official Bills or Extracted Candidates Batch) */}
+        {/* Universal Export Dropdowns / Quick Buttons for Bills, Receipts, and Merged Reconciliation */}
         <div className="flex items-center gap-2">
           <button
             onClick={() => {
-              if (officialBills.length > 0) {
+              if (activeSubtab === 'receipts' && receipts.length > 0) {
+                window.open(api.downloadReceiptsExcelUrl, '_blank');
+              } else if (activeSubtab === 'merged' && mergedRecon.length > 0) {
+                window.open(api.downloadMergedReconciliationExcelUrl, '_blank');
+              } else if (officialBills.length > 0) {
                 window.open(api.downloadBillsExcelUrl, '_blank');
               } else if (candidates.length > 0) {
                 handleExportCandidates('xlsx');
               } else {
-                alert("Cannot export: No bills are present in the database or extraction session. Please upload bills first.");
+                alert("No records currently available to export. Please upload bills or receipts first.");
               }
             }}
-            disabled={officialBills.length === 0 && candidates.length === 0}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition ${
-              officialBills.length > 0 || candidates.length > 0
-                ? "bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700 cursor-pointer"
-                : "bg-slate-900 text-slate-500 border-slate-800 cursor-not-allowed opacity-60"
-            }`}
-            title={
-              officialBills.length > 0
-                ? `Export ${officialBills.length} Official Bills as Excel (.xlsx)`
-                : candidates.length > 0
-                ? `Export ${candidates.length} Extracted Candidates as Excel (.xlsx)`
-                : "Cannot export: No bills present"
-            }
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border-emerald-500/30 transition shadow-sm cursor-pointer"
+            title="Download Excel (.xlsx) for active register"
           >
             <Download className="w-3.5 h-3.5 text-emerald-400" />
             Export Excel
           </button>
           <button
             onClick={() => {
-              if (officialBills.length > 0) {
+              if (activeSubtab === 'receipts' && receipts.length > 0) {
+                window.open(api.downloadReceiptsCsvUrl, '_blank');
+              } else if (activeSubtab === 'merged' && mergedRecon.length > 0) {
+                window.open(api.downloadMergedReconciliationCsvUrl, '_blank');
+              } else if (officialBills.length > 0) {
                 window.open(api.downloadBillsCsvUrl, '_blank');
               } else if (candidates.length > 0) {
                 handleExportCandidates('csv');
               } else {
-                alert("Cannot export: No bills are present in the database or extraction session. Please upload bills first.");
+                alert("No records currently available to export. Please upload bills or receipts first.");
               }
             }}
-            disabled={officialBills.length === 0 && candidates.length === 0}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition ${
-              officialBills.length > 0 || candidates.length > 0
-                ? "bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700 cursor-pointer"
-                : "bg-slate-900 text-slate-500 border-slate-800 cursor-not-allowed opacity-60"
-            }`}
-            title={
-              officialBills.length > 0
-                ? `Export ${officialBills.length} Official Bills as CSV (.csv)`
-                : candidates.length > 0
-                ? `Export ${candidates.length} Extracted Candidates as CSV (.csv)`
-                : "Cannot export: No bills present"
-            }
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border-sky-500/30 transition shadow-sm cursor-pointer"
+            title="Download CSV (.csv) for active register"
           >
             <Download className="w-3.5 h-3.5 text-sky-400" />
             Export CSV
@@ -919,39 +922,164 @@ export const BillReconciliationView: React.FC = () => {
         </div>
       )}
 
-      {/* TAB 4: RECEIPTS */}
+      {/* TAB 4: RECEIPTS REGISTER (8 Required Fields + Direct Export) */}
       {activeSubtab === 'receipts' && (
         <div className="rounded-2xl bg-slate-900 border border-slate-800 overflow-hidden shadow-xl">
-          <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-slate-200">Payment Receipts Register</h3>
-            <span className="text-xs text-sky-400 font-semibold">{receipts.length} receipts</span>
+          <div className="px-6 py-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-200">Payment Receipts Register</h3>
+              <p className="text-xs text-slate-400 mt-0.5">Authoritative payment clearance records parsed from bank/DISCOM receipts.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => window.open(api.downloadReceiptsExcelUrl, '_blank')}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 transition shadow-sm"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Export Receipts (Excel)
+              </button>
+              <button
+                onClick={() => window.open(api.downloadReceiptsCsvUrl, '_blank')}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/30 transition shadow-sm"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Export Receipts (CSV)
+              </button>
+              <span className="text-xs text-sky-400 font-semibold ml-2">({receipts.length} receipts)</span>
+            </div>
           </div>
 
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs text-slate-300">
               <thead className="bg-slate-950/40 text-[11px] uppercase tracking-wider text-slate-500 border-b border-slate-800">
                 <tr>
-                  <th className="px-6 py-3">Receipt No</th>
-                  <th className="px-6 py-3">Account No</th>
-                  <th className="px-6 py-3">Bill Month</th>
-                  <th className="px-6 py-3">Amount Paid</th>
-                  <th className="px-6 py-3">Status</th>
+                  <th className="px-5 py-3">Receipt No</th>
+                  <th className="px-5 py-3">Consumer No</th>
+                  <th className="px-5 py-3">Account NO</th>
+                  <th className="px-5 py-3">Payment Type</th>
+                  <th className="px-5 py-3">Collections Date</th>
+                  <th className="px-5 py-3">Bill Month</th>
+                  <th className="px-5 py-3">Amount Paid</th>
+                  <th className="px-5 py-3">Category</th>
+                  <th className="px-5 py-3">Office Name</th>
+                  <th className="px-5 py-3 text-center">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60 font-mono text-xs">
                 {receipts.map((r, idx) => (
                   <tr key={idx} className="hover:bg-slate-800/40 transition">
-                    <td className="px-6 py-3 font-semibold text-sky-400">{r.receipt_no}</td>
-                    <td className="px-6 py-3 text-slate-200">{r.account_no}</td>
-                    <td className="px-6 py-3 text-slate-400">{r.bill_month}</td>
-                    <td className="px-6 py-3 text-emerald-400 font-bold">{formatMoney(r.amount_paid)}</td>
-                    <td className="px-6 py-3">
-                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 text-[10px] font-sans">
+                    <td className="px-5 py-3 font-semibold text-sky-400">{r.receipt_no}</td>
+                    <td className="px-5 py-3 text-emerald-400 font-bold">{r.consumer_no || r.account_no}</td>
+                    <td className="px-5 py-3 text-slate-400">{r.account_no || '—'}</td>
+                    <td className="px-5 py-3 font-sans text-slate-200">{r.payment_type || r.payment_mode || 'NEFT'}</td>
+                    <td className="px-5 py-3 text-slate-300">{r.collections_date || '—'}</td>
+                    <td className="px-5 py-3 font-bold text-amber-400">{r.bill_month}</td>
+                    <td className="px-5 py-3 text-emerald-400 font-bold">{formatMoney(r.amount_paid)}</td>
+                    <td className="px-5 py-3 font-sans text-slate-300">{r.category || 'PUBLIC LIGHT'}</td>
+                    <td className="px-5 py-3 font-sans text-slate-300">{r.office_name || 'ESO RE SECTION'}</td>
+                    <td className="px-5 py-3 text-center">
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 text-[10px] font-sans font-semibold">
                         CLEARED ✓
                       </span>
                     </td>
                   </tr>
                 ))}
+                {receipts.length === 0 && (
+                  <tr>
+                    <td colSpan={10} className="px-6 py-8 text-center text-xs text-slate-500 font-sans">
+                      No payment receipts registered yet. Upload receipts in Tab 1 to extract and correlate payments.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* TAB 5: UNIFIED MERGED RECONCILIATION (Bills & Receipts Joined by Consumer No & Bill Month) */}
+      {activeSubtab === 'merged' && (
+        <div className="rounded-2xl bg-slate-900 border border-slate-800 overflow-hidden shadow-xl">
+          <div className="px-6 py-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-200">Unified Merged Bill & Receipts Reconciliation</h3>
+              <p className="text-xs text-slate-400 mt-0.5">Primary Key: Consumer No + Normalized Bill Month (MM/YYYY, e.g. 02/2026). Correlates bill assessments with bank payment receipts.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => window.open(api.downloadMergedReconciliationExcelUrl, '_blank')}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 transition shadow-sm"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Export Merged (Excel)
+              </button>
+              <button
+                onClick={() => window.open(api.downloadMergedReconciliationCsvUrl, '_blank')}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/30 transition shadow-sm"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Export Merged (CSV)
+              </button>
+              <span className="text-xs text-teal-400 font-semibold ml-2">({mergedRecon.length} rows)</span>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs text-slate-300">
+              <thead className="bg-slate-950/40 text-[11px] uppercase tracking-wider text-slate-500 border-b border-slate-800">
+                <tr>
+                  <th className="px-4 py-3">Consumer No</th>
+                  <th className="px-4 py-3">Bill Month</th>
+                  <th className="px-4 py-3">Bill Number</th>
+                  <th className="px-4 py-3">Plaza</th>
+                  <th className="px-4 py-3">Type</th>
+                  <th className="px-4 py-3 text-right">Billed Amount</th>
+                  <th className="px-4 py-3 text-right">Net After Rebate</th>
+                  <th className="px-4 py-3">Receipt No</th>
+                  <th className="px-4 py-3">Payment Type</th>
+                  <th className="px-4 py-3">Collections Date</th>
+                  <th className="px-4 py-3 text-right">Amount Paid</th>
+                  <th className="px-4 py-3">Office Name</th>
+                  <th className="px-4 py-3 text-right">Outstanding</th>
+                  <th className="px-4 py-3 text-center">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800/60 font-mono text-xs">
+                {mergedRecon.map((m, idx) => (
+                  <tr key={idx} className="hover:bg-slate-800/40 transition">
+                    <td className="px-4 py-3 font-bold text-sky-400">{m.consumer_account_no}</td>
+                    <td className="px-4 py-3 font-semibold text-amber-400">{m.bill_month}</td>
+                    <td className="px-4 py-3 text-slate-300">{m.bill_number || '—'}</td>
+                    <td className="px-4 py-3 text-slate-400">{m.toll_plaza_id || '—'}</td>
+                    <td className="px-4 py-3 font-sans text-slate-400">{m.bill_type || 'LT'}</td>
+                    <td className="px-4 py-3 text-right font-bold text-slate-200">{formatMoney(m.total_amount_payable)}</td>
+                    <td className="px-4 py-3 text-right text-emerald-300">{formatMoney(m.net_payable_amount_after_rbt_dt_rs || m.total_amount_payable)}</td>
+                    <td className="px-4 py-3 text-sky-400">{m.receipt_no || '—'}</td>
+                    <td className="px-4 py-3 font-sans text-slate-400">{m.payment_type || '—'}</td>
+                    <td className="px-4 py-3 text-slate-300">{m.collections_date || '—'}</td>
+                    <td className="px-4 py-3 text-right font-bold text-emerald-400">{formatMoney(m.amount_paid)}</td>
+                    <td className="px-4 py-3 font-sans text-slate-300">{m.office_name || '—'}</td>
+                    <td className="px-4 py-3 text-right font-bold text-indigo-400">{formatMoney(m.outstanding_balance)}</td>
+                    <td className="px-4 py-3 text-center font-sans">
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                        m.payment_status === 'PAID'
+                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                          : m.payment_status === 'PARTIAL'
+                          ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                          : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                      }`}>
+                        {m.payment_status}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+                {mergedRecon.length === 0 && (
+                  <tr>
+                    <td colSpan={14} className="px-6 py-8 text-center text-xs text-slate-500 font-sans">
+                      No merged reconciliation records found. Upload bills and receipts to automatically correlate data.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>

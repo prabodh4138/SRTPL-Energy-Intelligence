@@ -2302,27 +2302,90 @@ def save_payment_receipt(receipt_record: dict[str, Any], prevent_duplicates: boo
 
     client = get_supabase_client()
     cloud_synced = False
+    from bill_extractor.extractor_receipt_full import normalize_bill_month
+    raw_month = str(receipt_record.get("bill_month") or receipt_record.get("Bill Month") or "").strip()
+    r_month = normalize_bill_month(raw_month) if raw_month else ""
+    r_cno = str(receipt_record.get("consumer_no") or receipt_record.get("Consumer No") or "").strip()
+    r_ano = str(receipt_record.get("account_no") or receipt_record.get("Account NO") or "").strip()
+    r_amt = _clean_kpi_num(receipt_record.get("amount_paid") or receipt_record.get("Amount Paid"))
+
     valid_receipt_cols = {
         "receipt_no", "consumer_no", "account_no", "consumer_name",
         "collections_date", "amount_paid", "payment_type", "transaction_id",
-        "bill_month", "category", "source_pdf"
+        "bill_month", "category", "office_name", "source_pdf"
     }
     db_payload = {k: v for k, v in receipt_record.items() if k in valid_receipt_cols}
     db_payload["receipt_no"] = r_no
+    if r_month:
+        db_payload["bill_month"] = r_month
+
     if client:
         try:
-            client.table("payment_receipts").insert(db_payload).execute()
+            client.table("payment_receipts").upsert(db_payload, on_conflict="receipt_no").execute()
             cloud_synced = True
         except Exception:
             try:
-                client.table("payment_receipts").upsert(db_payload, on_conflict="receipt_no").execute()
+                # Fallback if office_name column not yet present in remote cache
+                safe_payload = {k: v for k, v in db_payload.items() if k != "office_name"}
+                client.table("payment_receipts").upsert(safe_payload, on_conflict="receipt_no").execute()
                 cloud_synced = True
             except Exception:
                 pass
 
+    # Update in-memory / session state cache for receipts
     if "saved_payment_receipts" not in st.session_state:
         st.session_state["saved_payment_receipts"] = {}
     st.session_state["saved_payment_receipts"][r_no] = receipt_record
+
+    # Auto-Reconciliation: Update energy bills amount_paid, outstanding_balance, payment_status
+    if r_amt > 0 and (r_cno or r_ano):
+        for b_num, b_data in list(_IN_MEMORY_UPLOADED_BILLS.items()):
+            b_ac = str(b_data.get("consumer_account_no") or "").strip()
+            b_mo = normalize_bill_month(str(b_data.get("bill_month") or ""))
+            if (b_ac in (r_cno, r_ano)) and (not r_month or b_mo == r_month):
+                tot = _clean_kpi_num(b_data.get("total_amount_payable") or b_data.get("current_total"))
+                b_data["amount_paid"] = r_amt
+                b_data["outstanding_balance"] = max(0.0, tot - r_amt)
+                b_data["payment_status"] = "PAID" if b_data["outstanding_balance"] <= 1.0 else "PARTIAL"
+
+        if "saved_energy_bills" in st.session_state:
+            for b_num, b_data in list(st.session_state["saved_energy_bills"].items()):
+                b_ac = str(b_data.get("consumer_account_no") or "").strip()
+                b_mo = normalize_bill_month(str(b_data.get("bill_month") or ""))
+                if (b_ac in (r_cno, r_ano)) and (not r_month or b_mo == r_month):
+                    tot = _clean_kpi_num(b_data.get("total_amount_payable") or b_data.get("current_total"))
+                    b_data["amount_paid"] = r_amt
+                    b_data["outstanding_balance"] = max(0.0, tot - r_amt)
+                    b_data["payment_status"] = "PAID" if b_data["outstanding_balance"] <= 1.0 else "PARTIAL"
+
+        if client:
+            try:
+                match_res = client.table("energy_bills").select("bill_number, consumer_account_no, bill_month, total_amount_payable, amount_paid").execute()
+                for b_row in (match_res.data or []):
+                    b_ac = str(b_row.get("consumer_account_no") or "").strip()
+                    b_mo = normalize_bill_month(str(b_row.get("bill_month") or ""))
+                    if (b_ac in (r_cno, r_ano)) and (not r_month or b_mo == r_month):
+                        tot = _clean_kpi_num(b_row.get("total_amount_payable"))
+                        new_bal = max(0.0, tot - r_amt)
+                        p_stat = "PAID" if new_bal <= 1.0 else "PARTIAL"
+                        client.table("energy_bills").update({
+                            "amount_paid": r_amt,
+                            "outstanding_balance": new_bal,
+                            "payment_status": p_stat,
+                        }).eq("bill_number", b_row["bill_number"]).execute()
+                        try:
+                            client.table("receipt_allocations").upsert({
+                                "receipt_no": r_no,
+                                "bill_number": b_row["bill_number"],
+                                "consumer_account_no": b_row["consumer_account_no"],
+                                "bill_month": r_month,
+                                "allocated_amount": r_amt
+                            }, on_conflict="receipt_no,bill_number").execute()
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
     return {"status": "SUCCESS", "cloud_synced": cloud_synced, "payload": receipt_record}
 
 
@@ -3341,11 +3404,17 @@ def get_receipt_reconciliation() -> pd.DataFrame:
         r_no = str(r.get("receipt_no", "")).strip()
         amt = _clean_kpi_num(r.get("amount_paid"))
         alloc = allocations.get(r_no, amt)
+        norm_bm = normalize_bill_month(str(r.get("bill_month") or r.get("Bill Month") or ""))
         rows.append({
             "receipt_no": r_no,
             "consumer_no": str(r.get("consumer_no") or r.get("account_no") or ""),
-            "collections_date": str(r.get("collections_date") or ""),
+            "payment_type": str(r.get("payment_type") or r.get("Payment Type") or "ONLINE").strip(),
+            "amount_paid": amt,
             "receipt_amount": amt,
+            "collections_date": str(r.get("collections_date") or r.get("Collections Date") or "").strip(),
+            "bill_month": norm_bm,
+            "category": str(r.get("category") or r.get("Category") or "PUBLIC LIGHT").strip(),
+            "office_name": str(r.get("office_name") or r.get("Office Name") or "ESO RE SECTION").strip(),
             "allocated_amount": alloc,
             "unallocated_balance": max(0.0, amt - alloc),
             "allocation_status": "MATCHED" if alloc >= amt else ("PARTIAL" if alloc > 0 else "UNALLOCATED"),
@@ -3494,3 +3563,130 @@ def log_audit_event(event_type: str, details: str, entity_type: str = "BILL", en
         "details": details,
         "result": result,
     })
+
+
+def get_merged_bill_receipt_reconciliation() -> pd.DataFrame:
+    """
+    Merges official energy bills with payment receipts using primary key:
+    (Consumer No / consumer_account_no, Bill Month [normalized to MM/YYYY, e.g. 02/2026]).
+    Guarantees presence of:
+    - Consumer No
+    - Bill Month (MM/YYYY)
+    - Bill Number
+    - Feeder Type (HT/LT)
+    - Toll Plaza
+    - Total Billed / Payable Amount
+    - Net Payable Before & After Rebate Date
+    - Meter Rent
+    - Customer Service Charge
+    - Receipt No
+    - Payment Type
+    - Collections Date
+    - Amount Paid
+    - Office Name
+    - Category
+    - Outstanding Balance
+    - Payment Status
+    """
+    bills_df = _ensure_official_register_columns(get_official_bill_register())
+    receipts_df = get_all_payment_receipts()
+
+    from bill_extractor.extractor_receipt_full import normalize_bill_month
+
+    receipt_map: dict[tuple[str, str], dict[str, Any]] = {}
+    if not receipts_df.empty:
+        for r in receipts_df.to_dict(orient="records"):
+            cno = str(r.get("consumer_no") or r.get("Consumer No") or "").strip()
+            ano = str(r.get("account_no") or r.get("Account NO") or "").strip()
+            mo = normalize_bill_month(str(r.get("bill_month") or r.get("Bill Month") or ""))
+            if cno and mo:
+                receipt_map[(cno, mo)] = r
+            if ano and mo:
+                receipt_map[(ano, mo)] = r
+
+    merged_rows = []
+    matched_receipt_keys = set()
+
+    if not bills_df.empty:
+        for b in bills_df.to_dict(orient="records"):
+            ac = str(b.get("consumer_account_no") or b.get("Consumer A/c No.") or "").strip()
+            raw_mo = str(b.get("bill_month") or b.get("Bill Month") or "")
+            norm_mo = normalize_bill_month(raw_mo)
+
+            # Match receipt on (ac, norm_mo) or (ac, raw_mo)
+            r = receipt_map.get((ac, norm_mo)) or receipt_map.get((ac, raw_mo)) or {}
+            if r and r.get("receipt_no"):
+                matched_receipt_keys.add(str(r["receipt_no"]).strip())
+
+            b_tot = _clean_kpi_num(b.get("total_amount_payable") or b.get("current_total") or 0.0)
+            r_paid = _clean_kpi_num(r.get("amount_paid") or r.get("Amount Paid") or b.get("amount_paid") or 0.0)
+            bal = max(0.0, b_tot - r_paid)
+            p_stat = "PAID" if (bal <= 1.0 and r_paid > 0) else ("PARTIAL" if r_paid > 0 else "UNPAID")
+
+            merged_rows.append({
+                "consumer_account_no": ac,
+                "bill_month": norm_mo if norm_mo else raw_mo,
+                "bill_number": str(b.get("bill_number") or "").strip(),
+                "toll_plaza_id": str(b.get("toll_plaza_id") or "TP01").strip(),
+                "bill_type": str(b.get("bill_type") or "LT").strip(),
+                "consumer_scope": str(b.get("consumer_scope") or "HIGHWAY").strip(),
+                "meter_sl_no": str(b.get("meter_sl_no") or "—").strip(),
+                "bill_issue_date": str(b.get("bill_issue_date") or "").strip(),
+                "due_date": str(b.get("due_date") or "").strip(),
+                "rebate_date": str(b.get("rebate_date") or "").strip(),
+                "energy_charges": _clean_kpi_num(b.get("energy_charges")),
+                "electricity_duty": _clean_kpi_num(b.get("electricity_duty")),
+                "meter_rent": _clean_kpi_num(b.get("meter_rent")),
+                "customer_service_charge": _clean_kpi_num(b.get("customer_service_charge")),
+                "total_amount_payable": b_tot,
+                "net_payable_amount_before_rbt_dt_rs": _clean_kpi_num(b.get("net_payable_amount_before_rbt_dt_rs") or b_tot),
+                "net_payable_amount_after_rbt_dt_rs": _clean_kpi_num(b.get("net_payable_amount_after_rbt_dt_rs") or b_tot),
+                "receipt_no": str(r.get("receipt_no") or "").strip(),
+                "payment_type": str(r.get("payment_type") or r.get("Payment Type") or (b.get("payment_mode") if r_paid > 0 else "")).strip(),
+                "collections_date": str(r.get("collections_date") or r.get("Collections Date") or "").strip(),
+                "amount_paid": r_paid,
+                "office_name": str(r.get("office_name") or r.get("Office Name") or b.get("division_name") or "ESO RE SECTION").strip(),
+                "category": str(r.get("category") or r.get("Category") or b.get("tariff_category") or "PUBLIC LIGHT").strip(),
+                "outstanding_balance": bal,
+                "payment_status": p_stat,
+                "source_filename": str(b.get("source_filename") or "").strip(),
+            })
+
+    # Append standalone receipts where bill has not yet arrived
+    if not receipts_df.empty:
+        for r in receipts_df.to_dict(orient="records"):
+            r_no = str(r.get("receipt_no") or "").strip()
+            if r_no and r_no not in matched_receipt_keys:
+                cno = str(r.get("consumer_no") or r.get("account_no") or "").strip()
+                norm_mo = normalize_bill_month(str(r.get("bill_month") or ""))
+                amt = _clean_kpi_num(r.get("amount_paid"))
+                merged_rows.append({
+                    "consumer_account_no": cno,
+                    "bill_month": norm_mo,
+                    "bill_number": "—",
+                    "toll_plaza_id": "—",
+                    "bill_type": "LT",
+                    "consumer_scope": "HIGHWAY",
+                    "meter_sl_no": "—",
+                    "bill_issue_date": "—",
+                    "due_date": "—",
+                    "rebate_date": "—",
+                    "energy_charges": 0.0,
+                    "electricity_duty": 0.0,
+                    "meter_rent": 0.0,
+                    "customer_service_charge": 0.0,
+                    "total_amount_payable": amt,
+                    "net_payable_amount_before_rbt_dt_rs": amt,
+                    "net_payable_amount_after_rbt_dt_rs": amt,
+                    "receipt_no": r_no,
+                    "payment_type": str(r.get("payment_type") or "").strip(),
+                    "collections_date": str(r.get("collections_date") or "").strip(),
+                    "amount_paid": amt,
+                    "office_name": str(r.get("office_name") or "").strip(),
+                    "category": str(r.get("category") or "").strip(),
+                    "outstanding_balance": 0.0,
+                    "payment_status": "PAID",
+                    "source_filename": str(r.get("source_pdf") or "").strip(),
+                })
+
+    return pd.DataFrame(merged_rows)

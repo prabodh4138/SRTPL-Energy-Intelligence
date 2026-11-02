@@ -65,11 +65,42 @@ export interface ReviewQueueItem {
 
 export interface ReceiptItem {
   receipt_no: string;
+  consumer_no?: string;
   account_no: string;
-  bill_month: string;
-  amount_paid: number;
+  consumer_name?: string;
+  payment_type?: string;
   payment_mode?: string;
+  amount_paid: number;
+  collections_date?: string;
+  bill_month: string;
+  category?: string;
+  office_name?: string;
+  transaction_id?: string;
   transaction_ref?: string;
+  source_pdf?: string;
+}
+
+export interface MergedReconciliationItem {
+  consumer_account_no: string;
+  bill_month: string;
+  bill_number?: string;
+  toll_plaza_id?: string;
+  bill_type?: string;
+  consumer_scope?: string;
+  meter_sl_no?: string;
+  total_amount_payable: number;
+  net_payable_amount_before_rbt_dt_rs?: number;
+  net_payable_amount_after_rbt_dt_rs?: number;
+  meter_rent?: number;
+  customer_service_charge?: number;
+  receipt_no?: string;
+  payment_type?: string;
+  collections_date?: string;
+  amount_paid: number;
+  office_name?: string;
+  category?: string;
+  outstanding_balance: number;
+  payment_status: 'PAID' | 'PARTIAL' | 'UNPAID';
 }
 
 export interface EquipmentReading {
