@@ -594,20 +594,51 @@ def render():
                                 else:
                                     raw_bytes = bytes(item) if item else b""
 
-                            is_receipt = any(k in fname.lower() for k in ["receipt", "payment", "utr", "challan"])
+                            extracted_text = ""
+                            try:
+                                with pdfplumber.open(io.BytesIO(raw_bytes)) as pdf:
+                                    if pdf.pages:
+                                        extracted_text = pdf.pages[0].extract_text() or ""
+                            except Exception:
+                                extracted_text = ""
+
+                            fname_lower = fname.lower()
+                            text_lower = extracted_text.lower()
+                            is_receipt = (
+                                any(k in fname_lower for k in ["receipt", "payment", "utr", "challan", "hdfc", "rcp"])
+                                or "(money receipt)" in text_lower
+                                or "money receipt" in text_lower
+                                or ("receipt no" in text_lower and "collections date" in text_lower)
+                                or ("amount paid" in text_lower and "order id" in text_lower)
+                            )
                             if is_receipt:
                                 try:
                                     stream_receipt = io.BytesIO(raw_bytes)
                                     stream_receipt.name = fname
-                                    rec = extract_energy_receipt_data(stream_receipt, fname)
-                                    rec_no = str(rec.get("receipt_no") or f"RCP-{idx}").strip()
-                                    amt = _clean_kpi_num(rec.get("amount_paid") or rec.get("amount"))
+                                    rec = extract_energy_receipt_data(stream_receipt, fname, extracted_text=extracted_text)
+                                    rec_no = str(rec.get("receipt_no") or rec.get("Receipt No") or f"RCP-{idx}").strip()
+                                    amt = _clean_kpi_num(rec.get("amount_paid") or rec.get("Amount Paid") or rec.get("amount"))
+                                    consumer = str(rec.get("account_no") or rec.get("Account NO") or rec.get("consumer_no") or rec.get("Consumer No") or "—").strip()
+                                    month = str(rec.get("bill_month") or rec.get("Bill Month") or "—").strip()
+
+                                    rec["receipt_no"] = rec_no
+                                    rec["consumer_no"] = str(rec.get("consumer_no") or rec.get("Consumer No") or "")
+                                    rec["account_no"] = str(rec.get("account_no") or rec.get("Account NO") or "")
+                                    rec["consumer_name"] = str(rec.get("consumer_name") or rec.get("Consumer Name") or "")
+                                    rec["collections_date"] = str(rec.get("collections_date") or rec.get("Collections Date") or "")
+                                    rec["amount_paid"] = amt
+                                    rec["payment_type"] = str(rec.get("payment_type") or rec.get("Payment Type") or "")
+                                    rec["transaction_id"] = str(rec.get("transaction_id") or rec.get("Transaction ID") or "")
+                                    rec["bill_month"] = month
+                                    rec["category"] = str(rec.get("category") or rec.get("Category") or "")
+                                    rec["source_pdf"] = fname
+
                                     rec.pop("raw_bytes", None)
                                     rec.pop("content", None)
                                     return {
                                         "idx": idx, "file": fname, "kind": "Receipt",
-                                        "consumer": str(rec.get("account_no") or rec.get("consumer_no") or "—"),
-                                        "month": str(rec.get("bill_month") or "—"),
+                                        "consumer": consumer,
+                                        "month": month,
                                         "identifier": rec_no, "amount": amt, "payload": rec,
                                         "is_receipt": True, "error": None
                                     }
@@ -619,13 +650,6 @@ def render():
                                     }
                             else:
                                 try:
-                                    extracted_text = ""
-                                    try:
-                                        with pdfplumber.open(io.BytesIO(raw_bytes)) as pdf:
-                                            if pdf.pages:
-                                                extracted_text = pdf.pages[0].extract_text() or ""
-                                    except Exception:
-                                        extracted_text = ""
 
                                     stream_main = io.BytesIO(raw_bytes)
                                     stream_main.name = fname

@@ -83,6 +83,8 @@ BILL_REGISTER_COLUMN_LABELS: dict[str, str] = {
     "tod_surcharge": "TOD Surcharge (₹)",
     "electricity_charges": "Electricity Charges (₹)",
     "electricity_duty": "Electricity Duty (₹)",
+    "meter_rent": "Meter Rent (₹)",
+    "customer_service_charge": "Customer Service Charge (₹)",
     "dps_rs": "DPS / Delay Surcharge (₹)",
     "prompt_rebate": "Prompt Rebate (₹)",
     "current_total": "Current Assessment (₹)",
@@ -105,18 +107,20 @@ BILL_REGISTER_COLUMN_LABELS: dict[str, str] = {
 }
 
 COLUMN_PRESETS = {
-    "Reconciliation Core (15)": [
+    "Reconciliation Core (18)": [
         "bill_number", "consumer_account_no", "meter_sl_no", "toll_plaza_id",
         "bill_type", "consumer_scope", "bill_month", "sanctioned_load_kw",
         "contract_demand", "total_billed_kwh", "energy_charges",
-        "total_amount_payable", "amount_paid", "outstanding_balance", "payment_status"
+        "meter_rent", "customer_service_charge",
+        "total_amount_payable", "net_payable_amount_before_rbt_dt_rs",
+        "net_payable_amount_after_rbt_dt_rs", "amount_paid", "outstanding_balance", "payment_status"
     ],
-    "Financial & Charges (17)": [
+    "Financial & Charges (19)": [
         "bill_number", "consumer_account_no", "bill_month", "total_billed_kwh",
         "energy_charges", "demand_charge", "tod_incentive", "tod_surcharge",
-        "electricity_charges", "electricity_duty", "dps_rs", "prompt_rebate",
-        "current_total", "total_amount_payable", "net_payable_amount_before_rbt_dt_rs",
-        "net_payable_amount_after_rbt_dt_rs", "payment_status"
+        "electricity_charges", "electricity_duty", "meter_rent", "customer_service_charge",
+        "dps_rs", "prompt_rebate", "current_total", "total_amount_payable",
+        "net_payable_amount_before_rbt_dt_rs", "net_payable_amount_after_rbt_dt_rs", "payment_status"
     ],
     "Meters & Demand Specs (14)": [
         "consumer_account_no", "meter_sl_no", "toll_plaza_id", "bill_type",
