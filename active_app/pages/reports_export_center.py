@@ -109,6 +109,9 @@ BILL_REGISTER_COLUMN_LABELS: dict[str, str] = {
     "rebate_availed": "Rebate Availed (₹)",
     "rebate_loss": "Rebate Loss (₹)",
     "rebate_remarks": "Rebate Audit Remarks",
+    "company_profit_rs": "Company Profit (Rebate Availed) (₹)",
+    "company_loss_rs": "Company Loss (Rebate Lost) (₹)",
+    "financial_impact": "Financial Impact (Profit/Loss)",
     "collections_date": "Payment Date",
     "receipt_no": "Receipt Number",
     "payment_type": "Payment Type",
@@ -116,10 +119,11 @@ BILL_REGISTER_COLUMN_LABELS: dict[str, str] = {
 }
 
 COLUMN_PRESETS = {
-    "Rebate & Prompt Payment Audit (11)": [
+    "Company Profit & Rebate Audit (14)": [
         "consumer_account_no", "bill_month", "bill_number", "toll_plaza_id",
         "total_amount_payable", "rebate_date", "collections_date",
-        "prompt_rebate", "rebate_status", "rebate_availed", "rebate_loss"
+        "prompt_rebate", "rebate_status", "rebate_availed", "rebate_loss",
+        "company_profit_rs", "company_loss_rs", "financial_impact"
     ],
     "Reconciliation Core (18)": [
         "bill_number", "consumer_account_no", "meter_sl_no", "toll_plaza_id",

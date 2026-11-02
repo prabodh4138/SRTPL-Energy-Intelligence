@@ -1476,17 +1476,18 @@ def render():
             
             merged_recon_df = get_merged_bill_receipt_reconciliation()
             if not merged_recon_df.empty:
-                # Executive Rebate Performance KPI Metrics
+                # Executive Rebate & Company Financial Impact KPI Metrics
                 tot_elig = float(merged_recon_df["prompt_rebate"].sum()) if "prompt_rebate" in merged_recon_df.columns else 0.0
-                tot_availed = float(merged_recon_df["rebate_availed"].sum()) if "rebate_availed" in merged_recon_df.columns else 0.0
-                tot_loss = float(merged_recon_df["rebate_loss"].sum()) if "rebate_loss" in merged_recon_df.columns else 0.0
-                realiz_rate = round((tot_availed / tot_elig) * 100.0, 1) if tot_elig > 0 else 0.0
+                tot_profit = float(merged_recon_df["company_profit_rs"].sum()) if "company_profit_rs" in merged_recon_df.columns else (float(merged_recon_df["rebate_availed"].sum()) if "rebate_availed" in merged_recon_df.columns else 0.0)
+                tot_loss = float(merged_recon_df["company_loss_rs"].sum()) if "company_loss_rs" in merged_recon_df.columns else (float(merged_recon_df["rebate_loss"].sum()) if "rebate_loss" in merged_recon_df.columns else 0.0)
+                net_bottomline = tot_profit - tot_loss
+                realiz_rate = round((tot_profit / tot_elig) * 100.0, 1) if tot_elig > 0 else 0.0
 
                 rk1, rk2, rk3, rk4 = st.columns(4)
-                rk1.metric("🎯 Total Eligible Rebate", f"₹{tot_elig:,.2f}")
-                rk2.metric("🟢 Rebate Availed (Timely)", f"₹{tot_availed:,.2f}", delta=f"{realiz_rate}% realized")
-                rk3.metric("🔴 Rebate Loss (Late / Lapsed)", f"₹{tot_loss:,.2f}", delta=f"-₹{tot_loss:,.2f}" if tot_loss > 0 else "₹0.00", delta_color="inverse")
-                rk4.metric("📈 Realization Rate", f"{realiz_rate}%")
+                rk1.metric("💰 Total Eligible Rebate", f"₹{tot_elig:,.2f}", help="Total prompt rebate available across all verified bills")
+                rk2.metric("🟢 Company Profit (Rebate Availed)", f"₹{tot_profit:,.2f}", delta=f"{realiz_rate}% realized", delta_color="normal", help="Prompt payment discount realized on or before rebate date")
+                rk3.metric("🔴 Company Loss (Rebate Forfeited)", f"₹{tot_loss:,.2f}", delta=f"-₹{tot_loss:,.2f}" if tot_loss > 0 else "₹0.00", delta_color="inverse", help="Rebate lost due to payment after rebate date or overdue expiry")
+                rk4.metric("📊 Net Bottomline Impact", f"₹{net_bottomline:+,.2f}", delta="Net Profit" if net_bottomline >= 0 else "Net Loss", delta_color="normal" if net_bottomline >= 0 else "inverse", help="Net savings to company (Company Profit minus Company Loss)")
 
                 st.write("")
 
@@ -1498,7 +1499,7 @@ def render():
                 show_cols = [c for c in [
                     "consumer_account_no", "bill_month", "bill_number", "toll_plaza_id",
                     "total_amount_payable", "rebate_date", "collections_date",
-                    "prompt_rebate", "rebate_status", "rebate_availed", "rebate_loss",
+                    "prompt_rebate", "rebate_status", "company_profit_rs", "company_loss_rs", "financial_impact",
                     "receipt_no", "payment_type", "amount_paid", 
                     "office_name", "outstanding_balance", "payment_status"
                 ] if c in disp_merge.columns]
@@ -1514,8 +1515,9 @@ def render():
                         "collections_date": "Payment Date",
                         "prompt_rebate": "Rebate (₹)",
                         "rebate_status": "Rebate Status",
-                        "rebate_availed": "Rebate Availed (₹)",
-                        "rebate_loss": "Rebate Loss (₹)",
+                        "company_profit_rs": "Company Profit (₹)",
+                        "company_loss_rs": "Company Loss (₹)",
+                        "financial_impact": "Financial Impact",
                         "receipt_no": "Receipt No",
                         "payment_type": "Payment Type",
                         "amount_paid": "Amount Paid (₹)",
@@ -1527,6 +1529,7 @@ def render():
                     hide_index=True,
                 )
 
+                st.write("")
                 st.write("")
                 m_exp1, m_exp2, _ = st.columns([1.5, 1.5, 3])
                 mx_buf = io.BytesIO()
