@@ -133,3 +133,34 @@ export interface EquipmentReading {
   status: string;
   [key: string]: any;
 }
+
+
+export interface MonthWiseClearanceSummary {
+  bill_month: string;
+  total_master_accounts: number;
+  bills_generated: number;
+  bills_unbilled: number;
+  generation_pct: number;
+  payment_done: number;
+  bills_pending: number;
+  total_billed_amount: number;
+  total_paid_amount: number;
+  total_outstanding_balance: number;
+  company_profit_rs: number;
+  company_loss_rs: number;
+  clearance_rate_pct: number;
+  collection_rate_pct: number;
+  standalone_receipts_count: number;
+}
+
+export interface UnbilledConsumerAccount {
+  consumer_account_no: string;
+  toll_plaza_id: string;
+  bill_type: string;
+  asset_code?: string;
+  sanctioned_load_kw?: number;
+  location?: string;
+  consumer_scope?: string;
+  bill_month: string;
+  billing_status: string;
+}

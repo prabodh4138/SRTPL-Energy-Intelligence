@@ -23,6 +23,8 @@ from core.db_sync import (
     get_unified_billing_kpi_dataset,
     get_merged_bill_receipt_reconciliation,
     _ensure_official_register_columns,
+    get_month_wise_bill_clearance_summary,
+    get_unbilled_consumers_for_month,
 )
 
 router = APIRouter(prefix="/api/reports", tags=["Reports"])
@@ -42,6 +44,7 @@ def get_reports_summary():
         {"id": "REP-03", "name": "Payment Receipts Reconciliation & Allocations", "format": "Excel / CSV", "rows": len(receipts_df), "category": "Audit & Clearance"},
         {"id": "REP-04", "name": "Corridor Monthly Budget vs Actual Expenditure", "format": "Excel / CSV", "rows": len(budget_df), "category": "Executive"},
         {"id": "REP-05", "name": "Unified Bill & Receipts Reconciliation Register", "format": "Excel / CSV", "rows": len(merged_df), "category": "Financial Controls"},
+        {"id": "REP-06", "name": "Month-Wise Bill Clearance & Reconciliation Tracker", "format": "Excel / CSV", "rows": len(get_month_wise_bill_clearance_summary()), "category": "Financial Controls"},
     ]
     return {"reports": reports}
 
@@ -297,3 +300,44 @@ def export_custom_report(payload: CustomExportPayload):
         headers=headers,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
+
+@router.get("/month-wise-clearance")
+def get_month_wise_clearance_api():
+    """Authoritative dynamic month-wise bill clearance summary."""
+    df = get_month_wise_bill_clearance_summary()
+    return {"summary": df.to_dict(orient="records")}
+
+
+@router.get("/unbilled-consumers/{bill_month:path}")
+def get_unbilled_consumers_api(bill_month: str):
+    """Returns unbilled consumer accounts from 60 master roster for specified month."""
+    df = get_unbilled_consumers_for_month(bill_month)
+    return {"unbilled": df.to_dict(orient="records")}
+
+
+@router.get("/download-month-wise-excel")
+def download_month_wise_excel():
+    summary_df = get_month_wise_bill_clearance_summary()
+    merged_df = get_merged_bill_receipt_reconciliation()
+    
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        summary_df.to_excel(writer, index=False, sheet_name="Month_Clearance_Summary")
+        merged_df.to_excel(writer, index=False, sheet_name="Merged_Reconciliation")
+    output.seek(0)
+    
+    headers = {"Content-Disposition": 'attachment; filename="SRTPL_Month_Wise_Clearance_Summary.xlsx"'}
+    return Response(
+        content=output.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers,
+    )
+
+
+@router.get("/download-month-wise-csv")
+def download_month_wise_csv():
+    summary_df = get_month_wise_bill_clearance_summary()
+    csv_bytes = summary_df.to_csv(index=False).encode("utf-8")
+    headers = {"Content-Disposition": 'attachment; filename="SRTPL_Month_Wise_Clearance_Summary.csv"'}
+    return Response(content=csv_bytes, media_type="text/csv", headers=headers)

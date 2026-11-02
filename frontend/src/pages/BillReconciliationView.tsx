@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 
 import { api } from '../api';
 
-import { CandidateResult, OfficialBill, ReviewQueueItem, ReceiptItem, MergedReconciliationItem } from '../types';
+import { CandidateResult, OfficialBill, ReviewQueueItem, ReceiptItem, MergedReconciliationItem, MonthWiseClearanceSummary, UnbilledConsumerAccount } from '../types';
 
 import {
 
@@ -44,7 +44,12 @@ import {
 
 export const BillReconciliationView: React.FC = () => {
 
-  const [activeSubtab, setActiveSubtab] = useState<'extract' | 'review' | 'register' | 'receipts' | 'merged' | 'consumers'>('extract');
+  const [activeSubtab, setActiveSubtab] = useState<'extract' | 'review' | 'register' | 'receipts' | 'merged' | 'monthwise' | 'consumers'>('extract');
+  const [monthWiseSummary, setMonthWiseSummary] = useState<MonthWiseClearanceSummary[]>([]);
+  const [selectedClearanceMonth, setSelectedClearanceMonth] = useState<string>('ALL');
+  const [selectedClearanceStatus, setSelectedClearanceStatus] = useState<'ALL' | 'GENERATED' | 'PAID' | 'PENDING' | 'UNBILLED'>('ALL');
+  const [clearanceSearchQuery, setClearanceSearchQuery] = useState<string>('');
+  const [unbilledAccounts, setUnbilledAccounts] = useState<UnbilledConsumerAccount[]>([]);
 
 
 
@@ -139,6 +144,17 @@ export const BillReconciliationView: React.FC = () => {
   }, [activeSubtab]);
 
 
+
+  
+  const loadUnbilledForMonth = async (month: string) => {
+    if (!month || month === 'ALL') return;
+    try {
+      const res = await api.getUnbilledConsumers(month);
+      setUnbilledAccounts(res.unbilled || []);
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   const loadTabData = async () => {
 
@@ -660,7 +676,7 @@ export const BillReconciliationView: React.FC = () => {
 
             <Users className="w-3.5 h-3.5" />
 
-            6. Consumer Master (60)
+            7. Consumer Master (60)
 
           </button>
 
@@ -2266,6 +2282,387 @@ export const BillReconciliationView: React.FC = () => {
 
       })()}
 
+
+
+            {/* TAB 6: 📊 DYNAMIC MONTH-WISE CLEARANCE TRACKER & LEDGER */}
+      {activeSubtab === 'monthwise' && (() => {
+        const totMaster = 60;
+        const totGen = monthWiseSummary.reduce((acc, r) => acc + (r.bills_generated || 0), 0);
+        const totPaid = monthWiseSummary.reduce((acc, r) => acc + (r.payment_done || 0), 0);
+        const totPending = monthWiseSummary.reduce((acc, r) => acc + (r.bills_pending || 0), 0);
+        const totBilled = monthWiseSummary.reduce((acc, r) => acc + (r.total_billed_amount || 0), 0);
+        const totPaidAmt = monthWiseSummary.reduce((acc, r) => acc + (r.total_paid_amount || 0), 0);
+        const totOut = monthWiseSummary.reduce((acc, r) => acc + (r.total_outstanding_balance || 0), 0);
+        const totProfit = monthWiseSummary.reduce((acc, r) => acc + (r.company_profit_rs || 0), 0);
+        const totLoss = monthWiseSummary.reduce((acc, r) => acc + (r.company_loss_rs || 0), 0);
+        const overallClearance = totGen > 0 ? ((totPaid / totGen) * 100).toFixed(1) : '0.0';
+
+        const activeMonthData = selectedClearanceMonth === 'ALL'
+          ? null
+          : monthWiseSummary.find((m) => m.bill_month === selectedClearanceMonth);
+
+        const filteredMerged = mergedRecon.filter((item) => {
+          if (selectedClearanceMonth !== 'ALL' && item.bill_month !== selectedClearanceMonth) return false;
+          if (selectedClearanceStatus === 'PAID' && item.payment_status !== 'PAID') return false;
+          if (selectedClearanceStatus === 'PENDING' && !['UNPAID', 'PARTIAL'].includes(item.payment_status)) return false;
+          if (selectedClearanceStatus === 'GENERATED' && (!item.bill_number || item.bill_number === '—' || item.bill_number === '?')) return false;
+          if (clearanceSearchQuery) {
+            const q = clearanceSearchQuery.toLowerCase();
+            const cNo = String(item.consumer_account_no || '').toLowerCase();
+            const bNo = String(item.bill_number || '').toLowerCase();
+            const rNo = String(item.receipt_no || '').toLowerCase();
+            const pl = String(item.toll_plaza_id || '').toLowerCase();
+            const off = String(item.office_name || '').toLowerCase();
+            if (!cNo.includes(q) && !bNo.includes(q) && !rNo.includes(q) && !pl.includes(q) && !off.includes(q)) return false;
+          }
+          return true;
+        });
+
+        const filteredUnbilled = unbilledAccounts.filter((u) => {
+          if (clearanceSearchQuery) {
+            const q = clearanceSearchQuery.toLowerCase();
+            const cNo = String(u.consumer_account_no || '').toLowerCase();
+            const pl = String(u.toll_plaza_id || '').toLowerCase();
+            const loc = String(u.location || '').toLowerCase();
+            if (!cNo.includes(q) && !pl.includes(q) && !loc.includes(q)) return false;
+          }
+          return true;
+        });
+
+        return (
+          <div className="space-y-6">
+            {/* Top KPI Cards */}
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+              <div className="rounded-2xl bg-slate-900 border border-slate-800 p-4 shadow-sm">
+                <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Master Accounts</span>
+                <div className="text-xl font-bold text-white mt-1">{totMaster}</div>
+                <span className="text-[10px] text-slate-500">3 HT / 57 LT Roster</span>
+              </div>
+              <div className="rounded-2xl bg-slate-900 border border-slate-800 p-4 shadow-sm">
+                <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Bills Generated</span>
+                <div className="text-xl font-bold text-sky-400 mt-1">{totGen}</div>
+                <span className="text-[10px] text-sky-500/80">{monthWiseSummary.length} Billing Cycles</span>
+              </div>
+              <div className="rounded-2xl bg-slate-900 border border-slate-800 p-4 shadow-sm">
+                <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Payments Done</span>
+                <div className="text-xl font-bold text-emerald-400 mt-1">{totPaid}</div>
+                <span className="text-[10px] text-emerald-500/80">{overallClearance}% Cleared</span>
+              </div>
+              <div className="rounded-2xl bg-slate-900 border border-slate-800 p-4 shadow-sm">
+                <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Bills Pending</span>
+                <div className="text-xl font-bold text-amber-400 mt-1">{totPending}</div>
+                <span className="text-[10px] text-amber-500/80">Pending Settlement</span>
+              </div>
+              <div className="rounded-2xl bg-slate-900 border border-slate-800 p-4 shadow-sm">
+                <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Company Profit</span>
+                <div className="text-xl font-bold text-emerald-400 mt-1">₹{totProfit.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+                <span className="text-[10px] text-emerald-500">Rebates Availed</span>
+              </div>
+              <div className="rounded-2xl bg-slate-900 border border-slate-800 p-4 shadow-sm">
+                <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Total Outstanding</span>
+                <div className="text-xl font-bold text-rose-400 mt-1">₹{totOut.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</div>
+                <span className="text-[10px] text-rose-500/80">Loss: ₹{totLoss.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+              </div>
+            </div>
+
+            {/* Month-Wise Clearance Matrix */}
+            <div className="rounded-2xl bg-slate-900 border border-slate-800 overflow-hidden shadow-xl">
+              <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-200">Month-Wise Generation & Clearance Matrix</h3>
+                  <p className="text-xs text-slate-400 mt-0.5">Authoritative cycle-by-cycle performance tracking out of 60 master accounts.</p>
+                </div>
+                <span className="px-2.5 py-1 rounded-lg bg-emerald-950/60 text-emerald-400 border border-emerald-800/40 text-xs font-semibold">
+                  {monthWiseSummary.length} Billing Cycles
+                </span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-950/60 text-slate-400 border-b border-slate-800">
+                    <tr>
+                      <th className="py-3 px-4 font-semibold">Bill Month</th>
+                      <th className="py-3 px-3 font-semibold text-center">Master Accounts</th>
+                      <th className="py-3 px-3 font-semibold text-center">Bills Generated</th>
+                      <th className="py-3 px-3 font-semibold text-center">Unbilled (Missing)</th>
+                      <th className="py-3 px-3 font-semibold text-center">Gen %</th>
+                      <th className="py-3 px-3 font-semibold text-center">Payment Done</th>
+                      <th className="py-3 px-3 font-semibold text-center">Bills Pending</th>
+                      <th className="py-3 px-4 font-semibold text-right">Total Billed (₹)</th>
+                      <th className="py-3 px-4 font-semibold text-right">Total Paid (₹)</th>
+                      <th className="py-3 px-4 font-semibold text-right">Outstanding (₹)</th>
+                      <th className="py-3 px-3 font-semibold text-center">Clearance %</th>
+                      <th className="py-3 px-4 font-semibold text-right">Profit (₹)</th>
+                      <th className="py-3 px-4 font-semibold text-right">Loss (₹)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60 font-mono text-slate-300">
+                    {monthWiseSummary.map((m) => (
+                      <tr key={m.bill_month} className="hover:bg-slate-800/40 transition">
+                        <td className="py-3 px-4 font-sans font-semibold text-sky-400">{m.bill_month}</td>
+                        <td className="py-3 px-3 text-center">{m.total_master_accounts}</td>
+                        <td className="py-3 px-3 text-center text-emerald-400 font-semibold">{m.bills_generated}</td>
+                        <td className="py-3 px-3 text-center text-amber-400">{m.bills_unbilled}</td>
+                        <td className="py-3 px-3 text-center font-sans">
+                          <span className="px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 text-[11px] font-semibold">
+                            {m.generation_pct}%
+                          </span>
+                        </td>
+                        <td className="py-3 px-3 text-center text-emerald-400 font-bold">{m.payment_done}</td>
+                        <td className="py-3 px-3 text-center text-rose-400 font-semibold">{m.bills_pending}</td>
+                        <td className="py-3 px-4 text-right">₹{m.total_billed_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                        <td className="py-3 px-4 text-right text-emerald-400">₹{m.total_paid_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                        <td className="py-3 px-4 text-right text-rose-400 font-semibold">₹{m.total_outstanding_balance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                        <td className="py-3 px-3 text-center font-sans">
+                          <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${
+                            m.clearance_rate_pct >= 80
+                              ? 'bg-emerald-950 text-emerald-400 border border-emerald-800/40'
+                              : m.clearance_rate_pct > 0
+                              ? 'bg-amber-950 text-amber-400 border border-amber-800/40'
+                              : 'bg-slate-800 text-slate-400'
+                          }`}>
+                            {m.clearance_rate_pct}%
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 text-right text-emerald-400">₹{(m.company_profit_rs || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                        <td className="py-3 px-4 text-right text-rose-400">₹{(m.company_loss_rs || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Interactive Drill-down & Filter Controls */}
+            <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5 shadow-lg space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <h4 className="text-sm font-semibold text-slate-200">🔍 Dynamic Month Ledger & Drill-Down</h4>
+                  <p className="text-xs text-slate-400">Select cycle and status to inspect accounts, payments, and outstanding balances.</p>
+                </div>
+                <input
+                  type="text"
+                  placeholder="Search Consumer No, Bill Ref, Plaza..."
+                  value={clearanceSearchQuery}
+                  onChange={(e) => setClearanceSearchQuery(e.target.value)}
+                  className="px-3.5 py-1.5 rounded-xl bg-slate-950 border border-slate-700 text-xs text-slate-200 placeholder-slate-500 w-64 focus:outline-none focus:border-sky-500"
+                />
+              </div>
+
+              {/* Month Selection Buttons */}
+              <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-800">
+                <span className="text-xs font-semibold text-slate-400 mr-2">Cycle:</span>
+                <button
+                  onClick={() => {
+                    setSelectedClearanceMonth('ALL');
+                    if (selectedClearanceStatus === 'UNBILLED') setSelectedClearanceStatus('ALL');
+                  }}
+                  className={`px-3 py-1 rounded-xl text-xs font-semibold transition ${
+                    selectedClearanceMonth === 'ALL'
+                      ? 'bg-sky-500 text-slate-950 shadow-md font-bold'
+                      : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  All Months
+                </button>
+                {monthWiseSummary.map((m) => (
+                  <button
+                    key={m.bill_month}
+                    onClick={() => {
+                      setSelectedClearanceMonth(m.bill_month);
+                      loadUnbilledForMonth(m.bill_month);
+                    }}
+                    className={`px-3 py-1 rounded-xl text-xs font-semibold transition ${
+                      selectedClearanceMonth === m.bill_month
+                        ? 'bg-sky-500 text-slate-950 shadow-md font-bold'
+                        : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {m.bill_month}
+                  </button>
+                ))}
+              </div>
+
+              {/* Status Filter Buttons */}
+              <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-800">
+                <span className="text-xs font-semibold text-slate-400 mr-2">Status:</span>
+                {[
+                  { id: 'ALL', label: 'All Records' },
+                  { id: 'GENERATED', label: 'Bills Generated (All)' },
+                  { id: 'PAID', label: 'Payments Done (Paid)' },
+                  { id: 'PENDING', label: 'Bills Pending (Unpaid)' },
+                  { id: 'UNBILLED', label: 'Unbilled Accounts (Pending Generation)' },
+                ].map((st) => (
+                  <button
+                    key={st.id}
+                    onClick={() => {
+                      setSelectedClearanceStatus(st.id as any);
+                      if (st.id === 'UNBILLED' && selectedClearanceMonth !== 'ALL') {
+                        loadUnbilledForMonth(selectedClearanceMonth);
+                      }
+                    }}
+                    className={`px-3 py-1 rounded-xl text-xs font-semibold transition ${
+                      selectedClearanceStatus === st.id
+                        ? 'bg-emerald-500 text-slate-950 shadow-md font-bold'
+                        : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {st.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Active Cycle KPI Bar */}
+              {activeMonthData && (
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3 p-3 rounded-xl bg-slate-950/80 border border-slate-800 text-xs">
+                  <div>
+                    <span className="text-slate-400">Target Accounts:</span>{' '}
+                    <span className="font-bold text-white">{activeMonthData.total_master_accounts}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400">Bills Generated:</span>{' '}
+                    <span className="font-bold text-sky-400">{activeMonthData.bills_generated} ({activeMonthData.generation_pct}%)</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400">Payments Done:</span>{' '}
+                    <span className="font-bold text-emerald-400">{activeMonthData.payment_done} ({activeMonthData.clearance_rate_pct}%)</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400">Pending Bills:</span>{' '}
+                    <span className="font-bold text-rose-400">{activeMonthData.bills_pending}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-400">Outstanding:</span>{' '}
+                    <span className="font-bold text-rose-400">₹{activeMonthData.total_outstanding_balance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Drill-down Results Table */}
+            {selectedClearanceStatus === 'UNBILLED' ? (
+              <div className="rounded-2xl bg-slate-900 border border-slate-800 overflow-hidden shadow-xl">
+                <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-semibold text-amber-400">
+                      ⚠️ Unbilled Accounts ({filteredUnbilled.length}) &mdash; {selectedClearanceMonth}
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">Consumer master accounts that have not yet generated a bill for this cycle.</p>
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-950/60 text-slate-400 border-b border-slate-800">
+                      <tr>
+                        <th className="py-3 px-4 font-semibold">Consumer Account No (Text)</th>
+                        <th className="py-3 px-4 font-semibold">Toll Plaza</th>
+                        <th className="py-3 px-4 font-semibold">Tariff Type</th>
+                        <th className="py-3 px-4 font-semibold">Asset Code</th>
+                        <th className="py-3 px-4 font-semibold text-right">Sanctioned Load (kW)</th>
+                        <th className="py-3 px-4 font-semibold">Location / Scope</th>
+                        <th className="py-3 px-4 font-semibold">Cycle</th>
+                        <th className="py-3 px-4 font-semibold text-center">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 font-sans text-slate-300">
+                      {filteredUnbilled.map((u, i) => (
+                        <tr key={i} className="hover:bg-slate-800/40 transition">
+                          <td className="py-3 px-4 font-mono font-bold text-amber-300 select-all">{u.consumer_account_no}</td>
+                          <td className="py-3 px-4">{u.toll_plaza_id}</td>
+                          <td className="py-3 px-4">{u.bill_type}</td>
+                          <td className="py-3 px-4 font-mono text-slate-400">{u.asset_code || '—'}</td>
+                          <td className="py-3 px-4 text-right font-mono">{u.sanctioned_load_kw || '—'}</td>
+                          <td className="py-3 px-4 text-slate-300">{u.location || 'Highway'}</td>
+                          <td className="py-3 px-4 font-mono text-sky-400">{u.bill_month}</td>
+                          <td className="py-3 px-4 text-center">
+                            <span className="px-2 py-0.5 rounded-full bg-amber-950 text-amber-400 border border-amber-800/40 text-[10px] font-semibold">
+                              PENDING GENERATION
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-2xl bg-slate-900 border border-slate-800 overflow-hidden shadow-xl">
+                <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-200">
+                      Filtered Clearance Register ({filteredMerged.length} records)
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">Authoritative merged bill and receipt records with plain text numbers (no commas).</p>
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-950/60 text-slate-400 border-b border-slate-800">
+                      <tr>
+                        <th className="py-3 px-4 font-semibold">Consumer No (Text)</th>
+                        <th className="py-3 px-3 font-semibold">Month</th>
+                        <th className="py-3 px-4 font-semibold">Bill Ref (Text)</th>
+                        <th className="py-3 px-3 font-semibold">Plaza</th>
+                        <th className="py-3 px-4 font-semibold text-right">Billed (₹)</th>
+                        <th className="py-3 px-3 font-semibold text-center">Status</th>
+                        <th className="py-3 px-4 font-semibold text-right">Paid (₹)</th>
+                        <th className="py-3 px-4 font-semibold text-right">Outstanding (₹)</th>
+                        <th className="py-3 px-3 font-semibold">Rebate Date</th>
+                        <th className="py-3 px-4 font-semibold">Rebate Status</th>
+                        <th className="py-3 px-4 font-semibold text-right">Profit (₹)</th>
+                        <th className="py-3 px-4 font-semibold text-right">Loss (₹)</th>
+                        <th className="py-3 px-4 font-semibold">Receipt / UTR (Text)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 font-mono text-slate-300">
+                      {filteredMerged.map((item, idx) => (
+                        <tr key={idx} className="hover:bg-slate-800/40 transition">
+                          <td className="py-3 px-4 font-bold text-sky-400 select-all">{item.consumer_account_no}</td>
+                          <td className="py-3 px-3 font-sans">{item.bill_month}</td>
+                          <td className="py-3 px-4 text-slate-300 select-all">{item.bill_number || '—'}</td>
+                          <td className="py-3 px-3 font-sans text-slate-400">{item.toll_plaza_id || '—'}</td>
+                          <td className="py-3 px-4 text-right">₹{item.total_amount_payable.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                          <td className="py-3 px-3 text-center font-sans">
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                              item.payment_status === 'PAID'
+                                ? 'bg-emerald-950 text-emerald-400 border border-emerald-800/40'
+                                : item.payment_status === 'PARTIAL'
+                                ? 'bg-amber-950 text-amber-400 border border-amber-800/40'
+                                : 'bg-rose-950 text-rose-400 border border-rose-800/40'
+                            }`}>
+                              {item.payment_status}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-right text-emerald-400">₹{item.amount_paid.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                          <td className="py-3 px-4 text-right text-rose-400 font-semibold">₹{item.outstanding_balance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</td>
+                          <td className="py-3 px-3 font-sans text-slate-400">{item.rebate_date || '—'}</td>
+                          <td className="py-3 px-4 font-sans text-[11px]">
+                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                              (item.rebate_status || '').includes('AVAILED')
+                                ? 'bg-emerald-950 text-emerald-400 border border-emerald-800/40'
+                                : (item.rebate_status || '').includes('LOSS')
+                                ? 'bg-rose-950 text-rose-400 border border-rose-800/40'
+                                : 'bg-slate-800 text-slate-400'
+                            }`}>
+                              {item.rebate_status || 'PENDING'}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-right text-emerald-400">
+                            ₹{(item.company_profit_rs || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className="py-3 px-4 text-right text-rose-400">
+                            ₹{(item.company_loss_rs || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className="py-3 px-4 text-slate-400 select-all">{item.receipt_no || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
 
       {/* TAB 5: 60 CONSUMERS ROSTER */}

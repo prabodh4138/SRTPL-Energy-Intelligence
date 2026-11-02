@@ -51,8 +51,8 @@ def normalize_bill_month(bm: str) -> str:
     m_std = re.match(r"^(\d{1,2})/(\d{4})$", raw)
     if m_std:
         return f"{int(m_std.group(1)):02d}/{m_std.group(2)}"
-    # YYYY-MM?
-    m_iso = re.match(r"^(\d{4})-(\d{1,2})", raw)
+    # YYYY-MM or YYYY/MM?
+    m_iso = re.match(r"^(\d{4})[-/](\d{1,2})", raw)
     if m_iso:
         return f"{int(m_iso.group(2)):02d}/{m_iso.group(1)}"
     # MM-YYYY?

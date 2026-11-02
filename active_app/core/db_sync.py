@@ -7860,3 +7860,94 @@ def get_merged_bill_receipt_reconciliation() -> pd.DataFrame:
 
     return pd.DataFrame(merged_rows)
 
+
+
+
+# ---------------------------------------------------------------------------
+# AUTHORITATIVE MONTH-WISE BILL GENERATION & PAYMENT CLEARANCE
+# ---------------------------------------------------------------------------
+
+def get_month_wise_bill_clearance_summary() -> pd.DataFrame:
+    """
+    Authoritative month-wise aggregation of bills generated, payments done,
+    and bills pending against the total expected consumer accounts (60 master accounts).
+    Dynamic and updated in real-time from persistent SQL database.
+    """
+    merged_df = get_merged_bill_receipt_reconciliation()
+    consumers_df = get_all_consumer_accounts()
+    total_master = len(consumers_df)
+
+    if merged_df.empty:
+        return pd.DataFrame()
+
+    months = sorted([m for m in merged_df["bill_month"].dropna().unique() if m and m not in ["—", "?"]], reverse=True)
+    
+    summary_rows = []
+    for m in months:
+        sub = merged_df[merged_df["bill_month"] == m]
+        bills_gen = sub[sub["bill_number"].notna() & (sub["bill_number"] != "") & (sub["bill_number"] != "—") & (sub["bill_number"] != "?")]
+        standalone_rec = sub[sub["bill_number"].isna() | (sub["bill_number"] == "") | (sub["bill_number"] == "—") | (sub["bill_number"] == "?")]
+        
+        paid_bills = bills_gen[bills_gen["payment_status"] == "PAID"]
+        partial_bills = bills_gen[bills_gen["payment_status"] == "PARTIAL"]
+        pending_bills = bills_gen[bills_gen["payment_status"] == "UNPAID"]
+        
+        gen_count = len(bills_gen)
+        paid_count = len(paid_bills)
+        pending_count = len(pending_bills) + len(partial_bills)
+        unbilled_count = max(0, total_master - gen_count)
+        
+        tot_billed = float(bills_gen["total_amount_payable"].sum())
+        tot_paid = float(bills_gen["amount_paid"].sum())
+        tot_outstanding = float(bills_gen["outstanding_balance"].sum())
+        
+        co_profit = float(bills_gen["company_profit_rs"].sum()) if "company_profit_rs" in bills_gen.columns else 0.0
+        co_loss = float(bills_gen["company_loss_rs"].sum()) if "company_loss_rs" in bills_gen.columns else 0.0
+        
+        clearance_rate = round((paid_count / gen_count * 100.0), 1) if gen_count > 0 else 0.0
+        collection_rate = round((tot_paid / tot_billed * 100.0), 1) if tot_billed > 0 else 0.0
+        
+        summary_rows.append({
+            "bill_month": m,
+            "total_master_accounts": total_master,
+            "bills_generated": gen_count,
+            "bills_unbilled": unbilled_count,
+            "generation_pct": round((gen_count / total_master * 100.0), 1) if total_master > 0 else 0.0,
+            "payment_done": paid_count,
+            "bills_pending": pending_count,
+            "total_billed_amount": tot_billed,
+            "total_paid_amount": tot_paid,
+            "total_outstanding_balance": tot_outstanding,
+            "company_profit_rs": co_profit,
+            "company_loss_rs": co_loss,
+            "clearance_rate_pct": clearance_rate,
+            "collection_rate_pct": collection_rate,
+            "standalone_receipts_count": len(standalone_rec)
+        })
+
+    return pd.DataFrame(summary_rows)
+
+
+def get_unbilled_consumers_for_month(bill_month: str) -> pd.DataFrame:
+    """
+    Returns consumer master accounts from the 60 authoritative roster that do not
+    yet have an energy bill uploaded/generated for the specified month.
+    """
+    consumers_df = get_all_consumer_accounts()
+    if consumers_df.empty:
+        return pd.DataFrame()
+
+    bills_df = get_official_bill_register()
+    from bill_extractor.extractor_receipt_full import normalize_bill_month
+    norm_m = normalize_bill_month(bill_month)
+
+    if bills_df.empty:
+        billed_accounts = set()
+    else:
+        month_bills = bills_df[bills_df["bill_month"].apply(normalize_bill_month) == norm_m]
+        billed_accounts = set(month_bills["consumer_account_no"].astype(str).str.strip().unique())
+
+    unbilled = consumers_df[~consumers_df["consumer_account_no"].astype(str).str.strip().isin(billed_accounts)].copy()
+    unbilled["bill_month"] = norm_m
+    unbilled["billing_status"] = "PENDING GENERATION"
+    return unbilled

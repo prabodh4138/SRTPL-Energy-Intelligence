@@ -365,4 +365,20 @@ export const api = {
     if (!res.ok) throw new Error('Failed to fetch merged reconciliation');
     return res.json();
   },
+  get downloadMonthWiseExcelUrl() {
+    return `${getApiBase()}/reports/download-month-wise-excel`;
+  },
+  get downloadMonthWiseCsvUrl() {
+    return `${getApiBase()}/reports/download-month-wise-csv`;
+  },
+  getMonthWiseClearance: async (): Promise<{ summary: any[] }> => {
+    const res = await fetch(`${getApiBase()}/reports/month-wise-clearance`);
+    if (!res.ok) throw new Error('Failed to fetch month-wise clearance');
+    return res.json();
+  },
+  getUnbilledConsumers: async (month: string): Promise<{ unbilled: any[] }> => {
+    const res = await fetch(`${getApiBase()}/reports/unbilled-consumers/${encodeURIComponent(month)}`);
+    if (!res.ok) throw new Error('Failed to fetch unbilled consumers');
+    return res.json();
+  },
 };

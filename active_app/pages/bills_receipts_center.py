@@ -81,6 +81,8 @@ from core.db_sync import (
     delete_rejected_bill,
     _ensure_official_register_columns,
     get_merged_bill_receipt_reconciliation,
+    get_month_wise_bill_clearance_summary,
+    get_unbilled_consumers_for_month,
 )
 
 
@@ -1374,6 +1376,233 @@ def render():
 
 
     # =========================================================================
+    
+def render_month_wise_clearance_tracker():
+    """Authoritative dynamic month-wise bill clearance tracker and interactive drilldown ledger."""
+    st.markdown("### 📊 Authoritative Month-Wise Bill Clearance Tracker & Reconciliation")
+    st.caption("Dynamic ledger calculating total expected bills (60 Master Consumer Accounts), actual generated bills, payments completed, and pending balances cycle-by-cycle.")
+
+    summary_df = get_month_wise_bill_clearance_summary()
+    merged_recon_df = get_merged_bill_receipt_reconciliation()
+    consumers_df = get_all_consumer_accounts()
+    total_roster = len(consumers_df) if not consumers_df.empty else 60
+
+    if summary_df.empty:
+        st.info("No billing or receipt transactions recorded yet in the database.")
+        return
+
+    # High-level aggregate KPIs across all periods
+    tot_gen_all = int(summary_df["bills_generated"].sum())
+    tot_paid_all = int(summary_df["payment_done"].sum())
+    tot_pending_all = int(summary_df["bills_pending"].sum())
+    tot_billed_all = float(summary_df["total_billed_amount"].sum())
+    tot_paid_amt_all = float(summary_df["total_paid_amount"].sum())
+    tot_out_all = float(summary_df["total_outstanding_balance"].sum())
+    tot_profit_all = float(summary_df["company_profit_rs"].sum())
+    tot_loss_all = float(summary_df["company_loss_rs"].sum())
+
+    c_k1, c_k2, c_k3, c_k4, c_k5 = st.columns(5)
+    c_k1.metric("🏢 Total Master Accounts", f"{total_roster} Accounts", help="Authoritative roster of 60 DISCOM consumer accounts (3 HT + 57 LT)")
+    c_k2.metric("📄 Total Bills Generated", f"{tot_gen_all}", help="Total uploaded and verified energy bills")
+    c_k3.metric("✅ Payments Done", f"{tot_paid_all}", delta=f"{round(tot_paid_all/tot_gen_all*100, 1) if tot_gen_all>0 else 0}% cleared", delta_color="normal", help="Bills with payment status PAID")
+    c_k4.metric("⏳ Bills Pending", f"{tot_pending_all}", delta=f"-{tot_pending_all} unpaid", delta_color="inverse", help="Bills pending payment clearance (UNPAID/PARTIAL)")
+    c_k5.metric("💰 Total Outstanding", f"₹{tot_out_all:,.2f}", help="Cumulative balance payable to DISCOM")
+
+    st.write("")
+    st.markdown("#### 📅 Month-Wise Generation & Clearance Matrix")
+
+    # Display dynamic month summary table
+    disp_summary = summary_df.copy()
+    matrix_cols = [
+        "bill_month", "total_master_accounts", "bills_generated", "bills_unbilled", 
+        "generation_pct", "payment_done", "bills_pending", 
+        "total_billed_amount", "total_paid_amount", "total_outstanding_balance",
+        "clearance_rate_pct", "company_profit_rs", "company_loss_rs"
+    ]
+    renamed_matrix = disp_summary[[c for c in matrix_cols if c in disp_summary.columns]].rename(columns={
+        "bill_month": "Bill Month",
+        "total_master_accounts": "Total Accounts",
+        "bills_generated": "Bills Generated",
+        "bills_unbilled": "Pending Generation (Missing)",
+        "generation_pct": "Gen %",
+        "payment_done": "Payment Done (Paid)",
+        "bills_pending": "Bills Pending (Unpaid)",
+        "total_billed_amount": "Total Billed (₹)",
+        "total_paid_amount": "Total Paid (₹)",
+        "total_outstanding_balance": "Outstanding (₹)",
+        "clearance_rate_pct": "Clearance %",
+        "company_profit_rs": "Profit (₹)",
+        "company_loss_rs": "Loss (₹)",
+    })
+    st.dataframe(renamed_matrix, width="stretch", hide_index=True)
+
+    st.write("")
+    st.markdown("---")
+    st.markdown("#### 🔍 Interactive Ledger & Drill-Down List")
+
+    all_months = ["All Months"] + sorted([m for m in summary_df["bill_month"].unique() if m and m not in ["—", "?"]], reverse=True)
+    
+    col_sel_m, col_sel_st, col_search = st.columns([1.5, 2.0, 2.5])
+    selected_month = col_sel_m.selectbox("Select Billing Month", all_months, key="clearance_month_sel")
+    selected_status = col_sel_st.selectbox("Filter Status", [
+        "All Records",
+        "Bills Generated (All)",
+        "Payments Done (Paid)",
+        "Bills Pending (Unpaid / Partial)",
+        "Unbilled Accounts (Pending Generation)"
+    ], key="clearance_status_sel")
+    search_query = col_search.text_input("Search (Consumer No / Bill Ref / Plaza)", "", key="clearance_search_input").strip().lower()
+
+    # Dynamic KPI ribbon for selected month
+    if selected_month != "All Months":
+        m_row = summary_df[summary_df["bill_month"] == selected_month]
+        if not m_row.empty:
+            mr = m_row.iloc[0]
+            m1, m2, m3, m4, m5 = st.columns(5)
+            m1.metric("🎯 Target Accounts", f"{mr['total_master_accounts']}")
+            m2.metric("📄 Generated", f"{mr['bills_generated']}", delta=f"{mr['generation_pct']}% of total", delta_color="normal")
+            m3.metric("✅ Payment Done", f"{mr['payment_done']}", delta=f"{mr['clearance_rate_pct']}% cleared", delta_color="normal")
+            m4.metric("⏳ Pending Bills", f"{mr['bills_pending']}", delta=f"{mr['bills_unbilled']} unbilled", delta_color="inverse")
+            m5.metric("💰 Month Outstanding", f"₹{mr['total_outstanding_balance']:,.2f}")
+            st.write("")
+
+    # Filtered Data Table
+    if selected_status == "Unbilled Accounts (Pending Generation)":
+        target_m = selected_month if selected_month != "All Months" else (all_months[1] if len(all_months) > 1 else "")
+        if selected_month == "All Months":
+            st.info(f"Showing unbilled accounts for active billing month: **{target_m}**")
+        unbilled_df = get_unbilled_consumers_for_month(target_m)
+        
+        if search_query and not unbilled_df.empty:
+            unbilled_df = unbilled_df[
+                unbilled_df["consumer_account_no"].astype(str).str.lower().str.contains(search_query) |
+                unbilled_df["toll_plaza_id"].astype(str).str.lower().str.contains(search_query) |
+                unbilled_df["location"].astype(str).str.lower().str.contains(search_query)
+            ]
+
+        if not unbilled_df.empty:
+            st.warning(f"⚠️ {len(unbilled_df)} Consumer Accounts have not generated bills for billing month {target_m}.")
+            disp_unb = unbilled_df.copy()
+            # Ensure consumer account no is unformatted plain text
+            disp_unb["consumer_account_no"] = disp_unb["consumer_account_no"].astype(str)
+            show_unb = [c for c in ["consumer_account_no", "toll_plaza_id", "bill_type", "asset_code", "sanctioned_load_kw", "location", "bill_month", "billing_status"] if c in disp_unb.columns]
+            st.dataframe(disp_unb[show_unb].rename(columns={
+                "consumer_account_no": "Consumer Account No (Text)",
+                "toll_plaza_id": "Toll Plaza",
+                "bill_type": "Tariff Type",
+                "asset_code": "Asset Code",
+                "sanctioned_load_kw": "Sanctioned Load (kW)",
+                "location": "Location / Scope",
+                "bill_month": "Bill Month",
+                "billing_status": "Status",
+            }), width="stretch", hide_index=True)
+
+            # Export buttons for unbilled
+            st.write("")
+            ux1, ux2, _ = st.columns([1.5, 1.5, 3])
+            ub_buf = io.BytesIO()
+            with pd.ExcelWriter(ub_buf, engine="openpyxl") as writer:
+                unbilled_df.to_excel(writer, index=False, sheet_name="Unbilled_Accounts")
+            clean_m = target_m.replace('/', '-') if target_m else "all"
+            ux1.download_button(
+                "📥 Export Unbilled (Excel)",
+                data=ub_buf.getvalue(),
+                file_name=f"SRTPL_Unbilled_Accounts_{clean_m}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+            ux2.download_button(
+                "📥 Export Unbilled (CSV)",
+                data=unbilled_df.to_csv(index=False),
+                file_name=f"SRTPL_Unbilled_Accounts_{clean_m}.csv",
+                mime="text/csv",
+            )
+        else:
+            st.success(f"All {total_roster} consumer accounts have generated bills for {target_m}! 100% bill generation coverage.")
+    else:
+        # Bills / Merged records drill-down
+        df_target = merged_recon_df.copy()
+        
+        # Month filter
+        if selected_month != "All Months":
+            df_target = df_target[df_target["bill_month"] == selected_month]
+
+        # Status filter
+        if selected_status == "Bills Generated (All)":
+            df_target = df_target[df_target["bill_number"].notna() & (df_target["bill_number"] != "") & (df_target["bill_number"] != "—") & (df_target["bill_number"] != "?")]
+        elif selected_status == "Payments Done (Paid)":
+            df_target = df_target[df_target["payment_status"] == "PAID"]
+        elif selected_status == "Bills Pending (Unpaid / Partial)":
+            df_target = df_target[df_target["payment_status"].isin(["UNPAID", "PARTIAL"])]
+
+        # Search filter
+        if search_query and not df_target.empty:
+            df_target = df_target[
+                df_target["consumer_account_no"].astype(str).str.lower().str.contains(search_query) |
+                df_target["bill_number"].astype(str).str.lower().str.contains(search_query) |
+                df_target["toll_plaza_id"].astype(str).str.lower().str.contains(search_query) |
+                df_target["office_name"].astype(str).str.lower().str.contains(search_query)
+            ]
+
+        if not df_target.empty:
+            disp_dt = df_target.copy()
+            # Guarantee plain text unformatted strings without comma
+            disp_dt["consumer_account_no"] = disp_dt["consumer_account_no"].astype(str)
+            disp_dt["bill_number"] = disp_dt["bill_number"].astype(str)
+            disp_dt["receipt_no"] = disp_dt["receipt_no"].astype(str)
+
+            cols_show = [c for c in [
+                "consumer_account_no", "bill_month", "bill_number", "toll_plaza_id",
+                "total_amount_payable", "payment_status", "amount_paid", "outstanding_balance",
+                "rebate_date", "collections_date", "prompt_rebate", "rebate_status",
+                "company_profit_rs", "company_loss_rs", "financial_impact",
+                "receipt_no", "office_name"
+            ] if c in disp_dt.columns]
+
+            st.dataframe(disp_dt[cols_show].rename(columns={
+                "consumer_account_no": "Consumer Account No (Text)",
+                "bill_month": "Bill Month",
+                "bill_number": "Bill Ref (Text)",
+                "toll_plaza_id": "Toll Plaza",
+                "total_amount_payable": "Billed Amount (₹)",
+                "payment_status": "Payment Status",
+                "amount_paid": "Amount Paid (₹)",
+                "outstanding_balance": "Outstanding (₹)",
+                "rebate_date": "Rebate Due Date",
+                "collections_date": "Payment Date",
+                "prompt_rebate": "Rebate (₹)",
+                "rebate_status": "Rebate Status",
+                "company_profit_rs": "Profit (₹)",
+                "company_loss_rs": "Loss (₹)",
+                "financial_impact": "Financial Impact",
+                "receipt_no": "Receipt / UTR (Text)",
+                "office_name": "Office Name",
+            }), width="stretch", hide_index=True)
+
+            # Export buttons
+            st.write("")
+            ex1, ex2, _ = st.columns([1.5, 1.5, 3])
+            m_buf = io.BytesIO()
+            with pd.ExcelWriter(m_buf, engine="openpyxl") as writer:
+                df_target.to_excel(writer, index=False, sheet_name="Filtered_Clearance_List")
+            clean_m = selected_month.replace('/', '-') if selected_month != "All Months" else "All_Months"
+            clean_st = selected_status.replace(' ', '_').replace('(', '').replace(')', '').replace('/', '_')
+            ex1.download_button(
+                "📥 Export Filtered List (Excel)",
+                data=m_buf.getvalue(),
+                file_name=f"SRTPL_Clearance_{clean_m}_{clean_st}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+            ex2.download_button(
+                "📥 Export Filtered List (CSV)",
+                data=df_target.to_csv(index=False),
+                file_name=f"SRTPL_Clearance_{clean_m}_{clean_st}.csv",
+                mime="text/csv",
+            )
+        else:
+            st.info(f"No records match the selected filters (Month: {selected_month}, Status: {selected_status}).")
+
+
+    # =========================================================================
     # TAB 5: 💳 RECEIPT REGISTER & ALLOCATION (Section 9 & 10)
     # Zero double-counting of receipt amounts
     # =========================================================================
@@ -1385,9 +1614,10 @@ def render():
 
 
 
-        subtab_rec_reg, subtab_rec_merge = st.tabs([
+        subtab_rec_reg, subtab_rec_merge, subtab_rec_month = st.tabs([
             "💳 Payment Receipts Register (8 Fields)",
             "🔄 Merged Bill & Receipts Reconciliation",
+            "📊 Month-Wise Clearance Tracker & Ledger",
         ])
 
         receipts_df = get_receipt_reconciliation()
@@ -1428,14 +1658,14 @@ def render():
                     data=rx_buf.getvalue(),
                     file_name="SRTPL_Payment_Receipts_Register.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True,
+                    width="stretch",
                 )
                 r_exp2.download_button(
                     "📥 Export Receipts (CSV)",
                     data=receipts_df.to_csv(index=False),
                     file_name="SRTPL_Payment_Receipts_Register.csv",
                     mime="text/csv",
-                    use_container_width=True,
+                    width="stretch",
                 )
 
                 st.divider()
@@ -1540,14 +1770,14 @@ def render():
                     data=mx_buf.getvalue(),
                     file_name="SRTPL_Unified_Bill_Receipts_Reconciliation.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True,
+                    width="stretch",
                 )
                 m_exp2.download_button(
                     "📥 Export Merged Reconciliation (CSV)",
                     data=merged_recon_df.to_csv(index=False),
                     file_name="SRTPL_Unified_Bill_Receipts_Reconciliation.csv",
                     mime="text/csv",
-                    use_container_width=True,
+                    width="stretch",
                 )
             else:
                 st.info("No bills or receipts available for unified reconciliation.")
@@ -1556,6 +1786,12 @@ def render():
 
     # =========================================================================
 
+    
+        with subtab_rec_month:
+            render_month_wise_clearance_tracker()
+
+
+    # =========================================================================
     # TAB 6: ⚖️ DISCREPANCY & METER RECONCILIATION
 
     # Consumer A/C dropdown wise comparison with JUNO telemetry
@@ -1564,73 +1800,52 @@ def render():
 
     with tab_reconcile:
 
-        st.subheader("Meter vs. DISCOM Billed Discrepancy Inspector")
+        st.subheader("Meter vs. DISCOM Billed Discrepancy & Month Clearance Inspector")
 
-        st.caption("Reconciles DISCOM billed energy against JUNO smart meter telemetry per Consumer Account with automated fault alerts.")
+        st.caption("Reconciles DISCOM billed energy against JUNO smart meter telemetry and tracks authoritative month-wise clearance.")
 
+        subtab_recon_month, subtab_recon_discrepancy = st.tabs([
+            "📊 Month-Wise Clearance Tracker & Ledger",
+            "⚖️ Consumer Telemetry vs Billed Discrepancies",
+        ])
 
+        with subtab_recon_month:
+            render_month_wise_clearance_tracker()
 
-        all_consumers_df = get_all_consumer_accounts()
+        with subtab_recon_discrepancy:
+            all_consumers_df = get_all_consumer_accounts()
 
+            if not all_consumers_df.empty:
+                ac_list = sorted([str(ac) for ac in all_consumers_df["consumer_account_no"].dropna().unique()])
+                sel_ac = st.selectbox("Select Consumer Account No", ac_list, key="reconcile_consumer_dropdown")
 
+                consumer_info = all_consumers_df[all_consumers_df["consumer_account_no"] == sel_ac].iloc[0].to_dict()
 
-        if not all_consumers_df.empty:
+                with st.container(border=True):
+                    c_inf1, c_inf2, c_inf3, c_inf4 = st.columns(4)
+                    c_inf1.markdown(f"**Toll Plaza:** `{consumer_info.get('toll_plaza_id', 'TP01')}`")
+                    c_inf2.markdown(f"**Tariff Type:** `{consumer_info.get('bill_type', 'LT')}`")
+                    c_inf3.markdown(f"**Asset Code:** `{consumer_info.get('asset_code', '—')}`")
+                    c_inf4.markdown(f"**Sanctioned Load:** `{consumer_info.get('sanctioned_load_kw', 10.0)} kW`")
+                    st.markdown(f"**Location / Scope:** {consumer_info.get('location', 'Highway')} ({consumer_info.get('consumer_scope', 'HIGHWAY')})")
 
-            ac_list = sorted([str(ac) for ac in all_consumers_df["consumer_account_no"].dropna().unique()])
-
-            sel_ac = st.selectbox("Select Consumer Account No", ac_list, key="reconcile_consumer_dropdown")
-
-
-
-            consumer_info = all_consumers_df[all_consumers_df["consumer_account_no"] == sel_ac].iloc[0].to_dict()
-
-
-
-            with st.container(border=True):
-
-                c_inf1, c_inf2, c_inf3, c_inf4 = st.columns(4)
-
-                c_inf1.markdown(f"**Toll Plaza:** `{consumer_info.get('toll_plaza_id', 'TP01')}`")
-
-                c_inf2.markdown(f"**Tariff Type:** `{consumer_info.get('bill_type', 'LT')}`")
-
-                c_inf3.markdown(f"**Asset Code:** `{consumer_info.get('asset_code', '—')}`")
-
-                c_inf4.markdown(f"**Sanctioned Load:** `{consumer_info.get('sanctioned_load_kw', 10.0)} kW`")
-
-                st.markdown(f"**Location / Scope:** {consumer_info.get('location', 'Highway')} ({consumer_info.get('consumer_scope', 'HIGHWAY')})")
-
-
-
-            # Correlated Telemetry & Billing
-
-            corr_df = get_correlated_consumer_reconciliation()
-
-            if not corr_df.empty and "consumer_account_no" in corr_df.columns:
-
-                ac_corr = corr_df[corr_df["consumer_account_no"] == sel_ac]
-
-                if not ac_corr.empty:
-
-                    st.markdown("##### 📊 Telemetry vs. DISCOM Invoiced Readings")
-
-                    st.dataframe(ac_corr, width="stretch", hide_index=True)
-
+                # Correlated Telemetry & Billing
+                corr_df = get_correlated_consumer_reconciliation()
+                if not corr_df.empty and "consumer_account_no" in corr_df.columns:
+                    ac_corr = corr_df[corr_df["consumer_account_no"] == sel_ac]
+                    if not ac_corr.empty:
+                        st.markdown("##### 📊 Telemetry vs. DISCOM Invoiced Readings")
+                        st.dataframe(ac_corr, width="stretch", hide_index=True)
+                    else:
+                        st.info(f"No telemetric variance anomalies detected for account {sel_ac}. System operating within nominal limits.")
                 else:
-
-                    st.info(f"No telemetric variance anomalies detected for account {sel_ac}. System operating within nominal limits.")
-
+                    st.info("Telemetry data synchronized. No discrepancies flagged for selected consumer.")
             else:
-
-                st.info("Telemetry data synchronized. No discrepancies flagged for selected consumer.")
-
-        else:
-
-            st.info("Consumer account registry is loading...")
+                st.info("Consumer account registry is loading...")
 
 
 
-    # =========================================================================
+        # =========================================================================
 
     # TAB 7: 📜 IMPORT & AUDIT TRAIL (Section 5 & 12)
 
