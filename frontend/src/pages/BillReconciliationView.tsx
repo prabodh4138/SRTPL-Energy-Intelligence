@@ -69,23 +69,106 @@ export const BillReconciliationView: React.FC = () => {
   const loadTabData = async () => {
     setLoadingData(true);
     try {
-      if (activeSubtab === 'review') {
-        const res = await api.getReviewQueue();
-        setReviewQueue(res.items || []);
-      } else if (activeSubtab === 'register') {
-        const res = await api.getOfficialRegister();
-        setOfficialBills(res.bills || []);
-      } else if (activeSubtab === 'receipts') {
-        const res = await api.getReceipts();
-        setReceipts(res.receipts || []);
-      } else if (activeSubtab === 'consumers') {
-        const res = await api.getConsumers();
-        setConsumers(res.consumers || []);
+      // Eagerly load official bills, review queue, and receipts so tab badges and export work immediately
+      const [regRes, revRes, rcpRes] = await Promise.all([
+        api.getOfficialRegister().catch(() => ({ bills: [] })),
+        api.getReviewQueue().catch(() => ({ items: [] })),
+        api.getReceipts().catch(() => ({ receipts: [] })),
+      ]);
+      setOfficialBills(regRes.bills || []);
+      setReviewQueue(revRes.items || []);
+      setReceipts(rcpRes.receipts || []);
+
+      if (activeSubtab === 'consumers') {
+        const cRes = await api.getConsumers().catch(() => ({ consumers: [] }));
+        setConsumers(cRes.consumers || []);
       }
     } catch (e) {
       console.error(e);
     } finally {
       setLoadingData(false);
+    }
+  };
+
+  const handleExportCandidates = async (format: 'xlsx' | 'csv') => {
+    if (!candidates || candidates.length === 0) {
+      alert('No extracted candidates to export.');
+      return;
+    }
+    const rows = candidates.map((c, i) => {
+      const p = c.payload || {};
+      return {
+        id: i + 1,
+        source_filename: c.file || p.source_filename || '',
+        kind: c.kind || (c.is_receipt ? 'Receipt' : 'Bill'),
+        bill_number: c.is_receipt ? (c.identifier || '') : (p.bill_number || c.identifier || ''),
+        receipt_no: c.is_receipt ? (c.identifier || p.receipt_no || '') : '',
+        consumer_account_no: c.consumer || p.consumer_account_no || p.account_no || '',
+        bill_month: c.month || p.bill_month || '',
+        amount: c.amount || 0.0,
+        result: c.result || '',
+        audit_verdict: p.audit_verdict || p['Audit Verdict'] || '',
+        energy_charges: p.energy_charges || p['a. Energy Charges'] || 0.0,
+        electricity_duty: p.electricity_duty || p['Electricity Duty (j)'] || 0.0,
+        meter_rent: p.meter_rent || p['Meter Rent (k)'] || 0.0,
+        customer_service_charge: p.customer_service_charge || p['Customer Service Charge (l)'] || 0.0,
+        net_payable_amount_before_rbt_dt_rs: p.net_payable_amount_before_rbt_dt_rs || p['Net Payable Amount Before Rbt. Dt.(Rs.)'] || 0.0,
+        net_payable_amount_after_rbt_dt_rs: p.net_payable_amount_after_rbt_dt_rs || p['Net Payable Amount After Rbt. Dt.(Rs.)'] || 0.0,
+        detail: c.detail || '',
+      };
+    });
+
+    const columns = [
+      'id', 'source_filename', 'kind', 'bill_number', 'receipt_no',
+      'consumer_account_no', 'bill_month', 'amount', 'result',
+      'meter_rent', 'customer_service_charge',
+      'net_payable_amount_before_rbt_dt_rs', 'net_payable_amount_after_rbt_dt_rs',
+      'detail'
+    ];
+    const labels: Record<string, string> = {
+      id: 'Sl. No.',
+      source_filename: 'Source File',
+      kind: 'Document Type',
+      bill_number: 'Bill Number',
+      receipt_no: 'Receipt Number',
+      consumer_account_no: 'Consumer A/C No.',
+      bill_month: 'Bill Month',
+      amount: 'Amount (₹)',
+      result: 'Ingestion Status',
+      meter_rent: 'Meter Rent (₹)',
+      customer_service_charge: 'Customer Service (₹)',
+      net_payable_amount_before_rbt_dt_rs: 'Net Payable Before Rebate (₹)',
+      net_payable_amount_after_rbt_dt_rs: 'Net Payable After Rebate (₹)',
+      detail: 'Verification Detail',
+    };
+
+    try {
+      await api.exportCustomReport({
+        format,
+        title: 'Extracted_Candidates_Batch',
+        columns,
+        labels,
+        rows,
+      });
+    } catch (err: any) {
+      if (format === 'csv') {
+        const headerRow = columns.map((col) => `"${labels[col] || col}"`).join(',');
+        const dataRows = rows.map((r: any) =>
+          columns
+            .map((col) => `"${String(r[col] ?? '').replace(/"/g, '""')}"`)
+            .join(',')
+        );
+        const csvContent = '\uFEFF' + [headerRow, ...dataRows].join('\r\n');
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `SRTPL_Extracted_Candidates_${new Date().toISOString().slice(0, 10)}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } else {
+        alert('Export candidates failed: ' + (err.message || String(err)));
+      }
     }
   };
 
@@ -125,6 +208,7 @@ export const BillReconciliationView: React.FC = () => {
       }
       setUploadPhase('done');
       setSelectedFiles(null);
+      await loadTabData();
     } catch (err: any) {
       alert('Extraction failed: ' + err.message);
       setUploadPhase('idle');
@@ -232,42 +316,58 @@ export const BillReconciliationView: React.FC = () => {
           </button>
         </div>
 
-        {/* Quick export buttons (strictly disabled if no bills in database) */}
+        {/* Quick export buttons (Official Bills or Extracted Candidates Batch) */}
         <div className="flex items-center gap-2">
           <button
             onClick={() => {
-              if (officialBills.length === 0) {
-                alert("Cannot export: No bill records are present in the Supabase database. Please upload and verify bills first.");
-                return;
+              if (officialBills.length > 0) {
+                window.open(api.downloadBillsExcelUrl, '_blank');
+              } else if (candidates.length > 0) {
+                handleExportCandidates('xlsx');
+              } else {
+                alert("Cannot export: No bills are present in the database or extraction session. Please upload bills first.");
               }
-              window.open(api.downloadBillsExcelUrl, '_blank');
             }}
-            disabled={officialBills.length === 0}
+            disabled={officialBills.length === 0 && candidates.length === 0}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition ${
-              officialBills.length > 0
+              officialBills.length > 0 || candidates.length > 0
                 ? "bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700 cursor-pointer"
                 : "bg-slate-900 text-slate-500 border-slate-800 cursor-not-allowed opacity-60"
             }`}
-            title={officialBills.length === 0 ? "Cannot export: No bills present in database" : "Export Official Bills as Excel (.xlsx)"}
+            title={
+              officialBills.length > 0
+                ? `Export ${officialBills.length} Official Bills as Excel (.xlsx)`
+                : candidates.length > 0
+                ? `Export ${candidates.length} Extracted Candidates as Excel (.xlsx)`
+                : "Cannot export: No bills present"
+            }
           >
             <Download className="w-3.5 h-3.5 text-emerald-400" />
             Export Excel
           </button>
           <button
             onClick={() => {
-              if (officialBills.length === 0) {
-                alert("Cannot export: No bill records are present in the Supabase database. Please upload and verify bills first.");
-                return;
+              if (officialBills.length > 0) {
+                window.open(api.downloadBillsCsvUrl, '_blank');
+              } else if (candidates.length > 0) {
+                handleExportCandidates('csv');
+              } else {
+                alert("Cannot export: No bills are present in the database or extraction session. Please upload bills first.");
               }
-              window.open(api.downloadBillsCsvUrl, '_blank');
             }}
-            disabled={officialBills.length === 0}
+            disabled={officialBills.length === 0 && candidates.length === 0}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition ${
-              officialBills.length > 0
+              officialBills.length > 0 || candidates.length > 0
                 ? "bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700 cursor-pointer"
                 : "bg-slate-900 text-slate-500 border-slate-800 cursor-not-allowed opacity-60"
             }`}
-            title={officialBills.length === 0 ? "Cannot export: No bills present in database" : "Export Official Bills as CSV (.csv)"}
+            title={
+              officialBills.length > 0
+                ? `Export ${officialBills.length} Official Bills as CSV (.csv)`
+                : candidates.length > 0
+                ? `Export ${candidates.length} Extracted Candidates as CSV (.csv)`
+                : "Cannot export: No bills present"
+            }
           >
             <Download className="w-3.5 h-3.5 text-sky-400" />
             Export CSV
@@ -422,6 +522,24 @@ export const BillReconciliationView: React.FC = () => {
                   <div className="flex items-center gap-2">
                     <h3 className="text-sm font-semibold text-slate-200">Candidate Extraction Results</h3>
                     <span className="text-xs text-slate-500">({candidates.length} items)</span>
+                    <div className="flex items-center gap-1.5 ml-3">
+                      <button
+                        onClick={() => handleExportCandidates('xlsx')}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 transition shadow-sm"
+                        title="Export these extracted candidate rows as Excel (.xlsx)"
+                      >
+                        <Download className="w-3 h-3" />
+                        Export Batch (Excel)
+                      </button>
+                      <button
+                        onClick={() => handleExportCandidates('csv')}
+                        className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/30 transition shadow-sm"
+                        title="Export these extracted candidate rows as CSV (.csv)"
+                      >
+                        <Download className="w-3 h-3" />
+                        Export Batch (CSV)
+                      </button>
+                    </div>
                   </div>
 
                   {/* Filter Pills */}

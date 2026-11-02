@@ -2302,13 +2302,20 @@ def save_payment_receipt(receipt_record: dict[str, Any], prevent_duplicates: boo
 
     client = get_supabase_client()
     cloud_synced = False
+    valid_receipt_cols = {
+        "receipt_no", "consumer_no", "account_no", "consumer_name",
+        "collections_date", "amount_paid", "payment_type", "transaction_id",
+        "bill_month", "category", "source_pdf"
+    }
+    db_payload = {k: v for k, v in receipt_record.items() if k in valid_receipt_cols}
+    db_payload["receipt_no"] = r_no
     if client:
         try:
-            client.table("payment_receipts").insert(receipt_record).execute()
+            client.table("payment_receipts").insert(db_payload).execute()
             cloud_synced = True
         except Exception:
             try:
-                client.table("payment_receipts").upsert(receipt_record, on_conflict="receipt_no").execute()
+                client.table("payment_receipts").upsert(db_payload, on_conflict="receipt_no").execute()
                 cloud_synced = True
             except Exception:
                 pass
@@ -2895,6 +2902,10 @@ def _ensure_official_register_columns(df: pd.DataFrame) -> pd.DataFrame:
         r["net_payable_amount_after_rbt_dt_rs"] = after_rebate_val
         r["electricity_charges"] = _clean_kpi_num(r.get("electricity_charges") or 0.0)
         r["electricity_duty"] = _clean_kpi_num(r.get("electricity_duty") or 0.0)
+        r["meter_rent"] = _clean_kpi_num(r.get("meter_rent") or r.get("Meter Rent (k)") or prof.get("meter_rent") or 0.0)
+        r["Meter Rent (k)"] = r["meter_rent"]
+        r["customer_service_charge"] = _clean_kpi_num(r.get("customer_service_charge") or r.get("Customer Service Charge (l)") or prof.get("customer_service_charge") or 0.0)
+        r["Customer Service Charge (l)"] = r["customer_service_charge"]
 
         r["ai_model_applied"] = str(r.get("ai_model_applied") or r.get("AI Model Applied") or "Multi-AI Fitted (100%)")
         r["audit_verdict"] = str(r.get("audit_verdict") or r.get("Audit Verdict") or "VERIFIED ✓")

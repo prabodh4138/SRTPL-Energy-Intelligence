@@ -15,18 +15,23 @@ except ImportError:
     HAS_PDFPLUMBER = False
 
 
-def extract_energy_receipt_data(pdf_file, source_name: str) -> dict:
+def extract_energy_receipt_data(pdf_file, source_name: str, extracted_text: str = "") -> dict:
     """
     Extracts Energy Receipt data from ONE PDF file or BytesIO stream.
 
-    pdf_file   : file path (str/Path) or file-like object (BytesIO / uploaded file)
-    source_name: original PDF filename
+    pdf_file       : file path (str/Path) or file-like object (BytesIO / uploaded file)
+    source_name    : original PDF filename
+    extracted_text : optional pre-extracted text to avoid re-parsing PDF
 
-    Returns: dict with Receipt No, Consumer No, Account NO, Amount Paid, Collections Date,
-             Consumer Name, Payment Type, Transaction ID, Bill Month, Category, Source PDF
+    Returns: dict with dual Title Case & snake_case keys:
+             Receipt No / receipt_no, Consumer No / consumer_no, Account NO / account_no,
+             Amount Paid / amount_paid, Collections Date / collections_date,
+             Consumer Name / consumer_name, Payment Type / payment_type,
+             Transaction ID / transaction_id, Bill Month / bill_month,
+             Category / category, Source PDF / source_pdf
     """
     receipt_data = {
-        "Receipt No": source_name.replace(".pdf", ""),
+        "Receipt No": "",
         "Consumer No": "",
         "Account NO": "",
         "Consumer Name": "",
@@ -41,7 +46,9 @@ def extract_energy_receipt_data(pdf_file, source_name: str) -> dict:
 
     try:
         pages_text: list[str] = []
-        if HAS_FITZ:
+        if extracted_text and extracted_text.strip():
+            pages_text.append(extracted_text)
+        elif HAS_FITZ:
             if isinstance(pdf_file, (str, os.PathLike)):
                 doc = fitz.open(pdf_file)
             else:
@@ -67,6 +74,14 @@ def extract_energy_receipt_data(pdf_file, source_name: str) -> dict:
                         pages_text.append(t)
 
         for text in pages_text:
+            # ---------- Receipt No ----------
+            match_rno = (
+                re.search(r"Receipt\s*No[^\w\n]*[:\s\n]+([A-Za-z0-9]+)", text, re.IGNORECASE)
+                or re.search(r"Receipt\s*Number[^\w\n]*[:\s\n]+([A-Za-z0-9]+)", text, re.IGNORECASE)
+            )
+            if match_rno and not receipt_data["Receipt No"]:
+                receipt_data["Receipt No"] = match_rno.group(1).strip()
+
             # ---------- Collections Date ----------
             match_dt = re.search(r"Collections\s*Date[^\d\n]*[:\s\n]+(\d{2}-\d{2}-\d{4})", text, re.IGNORECASE) or re.search(r"\b(\d{2}-\d{2}-\d{4})\b", text)
             if match_dt and not receipt_data["Collections Date"]:
@@ -132,5 +147,31 @@ def extract_energy_receipt_data(pdf_file, source_name: str) -> dict:
 
     except Exception:
         pass
+
+    # Ensure Receipt No has a fallback to clean filename if not extracted
+    if not receipt_data["Receipt No"]:
+        clean_base = re.sub(r"\.pdf$", "", os.path.basename(source_name), flags=re.IGNORECASE).strip()
+        receipt_data["Receipt No"] = clean_base
+
+    # Numerical parse for amount paid
+    amt_val = 0.0
+    if receipt_data.get("Amount Paid"):
+        try:
+            amt_val = float(str(receipt_data["Amount Paid"]).replace(",", "").strip())
+        except (ValueError, TypeError):
+            amt_val = 0.0
+
+    # Enrich with snake_case keys for database synchronization & backend compatibility
+    receipt_data["receipt_no"] = receipt_data["Receipt No"]
+    receipt_data["consumer_no"] = receipt_data["Consumer No"]
+    receipt_data["account_no"] = receipt_data["Account NO"]
+    receipt_data["consumer_name"] = receipt_data["Consumer Name"]
+    receipt_data["collections_date"] = receipt_data["Collections Date"]
+    receipt_data["amount_paid"] = amt_val
+    receipt_data["payment_type"] = receipt_data["Payment Type"]
+    receipt_data["transaction_id"] = receipt_data["Transaction ID"]
+    receipt_data["bill_month"] = receipt_data["Bill Month"]
+    receipt_data["category"] = receipt_data["Category"]
+    receipt_data["source_pdf"] = receipt_data["Source PDF"]
 
     return receipt_data

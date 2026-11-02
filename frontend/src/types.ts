@@ -32,6 +32,8 @@ export interface CandidateResult {
   amount: number;
   result: 'VERIFIED' | 'REVIEW' | 'FAILED' | 'EXTRACTED' | 'DUPLICATE_REJECTED';
   payload: Record<string, any>;
+  identifier?: string;
+  is_receipt?: boolean;
 }
 
 export interface OfficialBill {
