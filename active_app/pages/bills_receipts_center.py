@@ -1472,10 +1472,24 @@ def render():
 
         with subtab_rec_merge:
             st.markdown("##### 🔄 Unified Merged Bill & Receipts Reconciliation")
-            st.caption("Primary Key: Consumer No + Normalized Bill Month (MM/YYYY e.g., 02/2026). Correlates bills with receipts to reflect amount paid and outstanding balance.")
+            st.caption("Primary Key: Consumer No + Normalized Bill Month (MM/YYYY e.g., 02/2026). Evaluates payment within rebate date for rebate availed vs rebate loss.")
             
             merged_recon_df = get_merged_bill_receipt_reconciliation()
             if not merged_recon_df.empty:
+                # Executive Rebate Performance KPI Metrics
+                tot_elig = float(merged_recon_df["prompt_rebate"].sum()) if "prompt_rebate" in merged_recon_df.columns else 0.0
+                tot_availed = float(merged_recon_df["rebate_availed"].sum()) if "rebate_availed" in merged_recon_df.columns else 0.0
+                tot_loss = float(merged_recon_df["rebate_loss"].sum()) if "rebate_loss" in merged_recon_df.columns else 0.0
+                realiz_rate = round((tot_availed / tot_elig) * 100.0, 1) if tot_elig > 0 else 0.0
+
+                rk1, rk2, rk3, rk4 = st.columns(4)
+                rk1.metric("🎯 Total Eligible Rebate", f"₹{tot_elig:,.2f}")
+                rk2.metric("🟢 Rebate Availed (Timely)", f"₹{tot_availed:,.2f}", delta=f"{realiz_rate}% realized")
+                rk3.metric("🔴 Rebate Loss (Late / Lapsed)", f"₹{tot_loss:,.2f}", delta=f"-₹{tot_loss:,.2f}" if tot_loss > 0 else "₹0.00", delta_color="inverse")
+                rk4.metric("📈 Realization Rate", f"{realiz_rate}%")
+
+                st.write("")
+
                 disp_merge = merged_recon_df.copy()
                 disp_merge["consumer_account_no"] = disp_merge["consumer_account_no"].astype(str)
                 disp_merge["bill_number"] = disp_merge["bill_number"].astype(str)
@@ -1483,24 +1497,28 @@ def render():
                 
                 show_cols = [c for c in [
                     "consumer_account_no", "bill_month", "bill_number", "toll_plaza_id",
-                    "total_amount_payable", "net_payable_amount_after_rbt_dt_rs",
-                    "receipt_no", "payment_type", "amount_paid", "collections_date", 
-                    "category", "office_name", "outstanding_balance", "payment_status"
+                    "total_amount_payable", "rebate_date", "collections_date",
+                    "prompt_rebate", "rebate_status", "rebate_availed", "rebate_loss",
+                    "receipt_no", "payment_type", "amount_paid", 
+                    "office_name", "outstanding_balance", "payment_status"
                 ] if c in disp_merge.columns]
                 
                 st.dataframe(
                     disp_merge[show_cols].rename(columns={
                         "consumer_account_no": "Consumer No",
-                        "bill_month": "Bill Month (MM/YYYY)",
+                        "bill_month": "Bill Month",
                         "bill_number": "Bill Ref",
                         "toll_plaza_id": "Plaza",
                         "total_amount_payable": "Total Payable (₹)",
-                        "net_payable_amount_after_rbt_dt_rs": "Net Payable (₹)",
+                        "rebate_date": "Rebate Date",
+                        "collections_date": "Payment Date",
+                        "prompt_rebate": "Rebate (₹)",
+                        "rebate_status": "Rebate Status",
+                        "rebate_availed": "Rebate Availed (₹)",
+                        "rebate_loss": "Rebate Loss (₹)",
                         "receipt_no": "Receipt No",
                         "payment_type": "Payment Type",
                         "amount_paid": "Amount Paid (₹)",
-                        "collections_date": "Collections Date",
-                        "category": "Category",
                         "office_name": "Office Name",
                         "outstanding_balance": "Outstanding (₹)",
                         "payment_status": "Payment Status",

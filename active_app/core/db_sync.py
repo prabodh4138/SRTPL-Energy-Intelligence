@@ -2963,6 +2963,27 @@ def _ensure_official_register_columns(df: pd.DataFrame) -> pd.DataFrame:
         r["net_after_rebate"] = after_rebate_val
         r["Net Payable Amount After Rbt. Dt.(Rs.)"] = after_rebate_val
         r["net_payable_amount_after_rbt_dt_rs"] = after_rebate_val
+
+        # Rebate Availed vs Rebate Loss audit
+        pay_dt = str(r.get("latest_payment_date") or r.get("collections_date") or r.get("Payment Date") or "").strip()
+        paid_val = _clean_kpi_num(r.get("amount_paid") or r.get("total_paid") or 0.0)
+        reb_eval = compute_rebate_status(
+            rebate_date_val=reb_date,
+            payment_date_val=pay_dt,
+            amount_paid=paid_val,
+            prompt_rebate=reb_val,
+            before_rebate_amt=before_rebate_val,
+            after_rebate_amt=after_rebate_val,
+        )
+        r["prompt_rebate"] = reb_eval["prompt_rebate"]
+        r["Prompt Rebate"] = reb_eval["prompt_rebate"]
+        r["rebate_status"] = reb_eval["rebate_status"]
+        r["Rebate Status"] = reb_eval["rebate_status"]
+        r["rebate_availed"] = reb_eval["rebate_availed"]
+        r["Rebate Availed"] = reb_eval["rebate_availed"]
+        r["rebate_loss"] = reb_eval["rebate_loss"]
+        r["Rebate Loss"] = reb_eval["rebate_loss"]
+        r["rebate_remarks"] = reb_eval["rebate_remarks"]
         r["electricity_charges"] = _clean_kpi_num(r.get("electricity_charges") or 0.0)
         r["electricity_duty"] = _clean_kpi_num(r.get("electricity_duty") or 0.0)
         r["meter_rent"] = _clean_kpi_num(r.get("meter_rent") or r.get("Meter Rent (k)") or prof.get("meter_rent") or 0.0)
@@ -3479,8 +3500,104 @@ def get_budget_vs_actual() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+
+def parse_date_safe(d_val: Any) -> Any:
+    """Safely parses any date format (DD/MM/YYYY, DD-MM-YYYY, YYYY-MM-DD, text months) into datetime.date."""
+    if not d_val or pd.isna(d_val):
+        return None
+    s = str(d_val).strip()
+    if not s or s in ("—", "-", "None", "nan", "NaT"):
+        return None
+    from datetime import datetime, date
+    for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d.%m.%Y", "%d-%b-%Y", "%d/%b/%Y", "%d-%B-%Y", "%d/%B/%Y"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            pass
+    import re
+    m = re.search(r"(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})", s)
+    if m:
+        try:
+            return date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+        except ValueError:
+            pass
+    return None
+
+
+def compute_rebate_status(
+    rebate_date_val: Any,
+    payment_date_val: Any,
+    amount_paid: float,
+    prompt_rebate: float = 0.0,
+    before_rebate_amt: float = 0.0,
+    after_rebate_amt: float = 0.0,
+) -> dict[str, Any]:
+    """
+    Computes rebate realization status based on authoritative DISCOM rule:
+    - If payment made on or before rebate date: REBATE AVAILED (rebate availed = prompt_rebate, rebate loss = 0.0)
+    - If payment made after rebate date: REBATE LOSS (rebate availed = 0.0, rebate loss = prompt_rebate)
+    - If unpaid and current date <= rebate date: PENDING (ELIGIBLE)
+    - If unpaid and current date > rebate date: REBATE LOSS (OVERDUE)
+    """
+    from datetime import datetime
+
+    # Determine eligible rebate amount
+    reb_amt = float(prompt_rebate or 0.0)
+    if reb_amt <= 0.0 and before_rebate_amt > 0 and after_rebate_amt > 0:
+        reb_amt = max(0.0, round(before_rebate_amt - after_rebate_amt, 2))
+
+    d_rebate = parse_date_safe(rebate_date_val)
+    d_pay = parse_date_safe(payment_date_val)
+    today = datetime.now().date()
+
+    if amount_paid > 0 and d_pay is not None:
+        if d_rebate is not None:
+            if d_pay <= d_rebate:
+                status = "REBATE AVAILED"
+                availed = reb_amt
+                loss = 0.0
+                remarks = f"Paid on {d_pay.strftime('%d/%m/%Y')} on or before rebate date {d_rebate.strftime('%d/%m/%Y')}. Rebate availed."
+            else:
+                status = "REBATE LOSS"
+                availed = 0.0
+                loss = reb_amt
+                remarks = f"Paid on {d_pay.strftime('%d/%m/%Y')} after rebate date {d_rebate.strftime('%d/%m/%Y')}. Rebate forfeited."
+        else:
+            status = "NO REBATE DATE"
+            availed = 0.0
+            loss = 0.0
+            remarks = "Payment made, but bill does not specify a rebate date."
+    else:
+        # Unpaid or payment date not recorded
+        if d_rebate is not None:
+            if today <= d_rebate:
+                status = "PENDING (ELIGIBLE)"
+                availed = 0.0
+                loss = 0.0
+                remarks = f"Eligible for prompt rebate of Rs. {reb_amt:,.2f} if paid by {d_rebate.strftime('%d/%m/%Y')}."
+            else:
+                status = "REBATE LOSS"
+                availed = 0.0
+                loss = reb_amt
+                remarks = f"Rebate date {d_rebate.strftime('%d/%m/%Y')} passed without payment."
+        else:
+            status = "NO REBATE DATE"
+            availed = 0.0
+            loss = 0.0
+            remarks = "No rebate date specified."
+
+    return {
+        "prompt_rebate": reb_amt,
+        "rebate_status": status,
+        "rebate_availed": availed,
+        "rebate_loss": loss,
+        "rebate_remarks": remarks,
+        "is_rebate_availed": (status == "REBATE AVAILED"),
+        "is_rebate_loss": (status == "REBATE LOSS"),
+    }
+
 def get_rebate_performance() -> pd.DataFrame:
-    """Returns prompt rebate tracking (vw_rebate_performance)."""
+    """Returns prompt rebate tracking (vw_rebate_performance) audited by payment date vs rebate date."""
     client = get_supabase_client()
     if client:
         try:
@@ -3495,24 +3612,31 @@ def get_rebate_performance() -> pd.DataFrame:
         return pd.DataFrame()
 
     rows = []
-    for plz in ["TP01", "TP02", "TP03"]:
+    plazas = sorted(list(reg_df["toll_plaza_id"].dropna().unique())) if "toll_plaza_id" in reg_df.columns else ["TP01", "TP02", "TP03"]
+    if not plazas:
+        plazas = ["TP01", "TP02", "TP03"]
+
+    for plz in plazas:
         sub = reg_df[reg_df["toll_plaza_id"] == plz]
         if sub.empty:
             continue
         tot_b = len(sub)
         elig = float(sub["prompt_rebate"].sum()) if "prompt_rebate" in sub.columns else 0.0
-        paid_sub = sub[sub["payment_status"] == "PAID"]
-        claimed = float(paid_sub["prompt_rebate"].sum()) if "prompt_rebate" in paid_sub.columns else 0.0
-        lost = max(0.0, elig - claimed)
-        rate = round((claimed / elig) * 100.0, 2) if elig > 0 else 0.0
+        availed = float(sub["rebate_availed"].sum()) if "rebate_availed" in sub.columns else 0.0
+        lost = float(sub["rebate_loss"].sum()) if "rebate_loss" in sub.columns else max(0.0, elig - availed)
+        rate = round((availed / elig) * 100.0, 2) if elig > 0 else 0.0
+        b_mo = str(sub["bill_month"].iloc[0]) if "bill_month" in sub.columns and not sub.empty else "02/2026"
+        f_yr = str(sub.get("financial_year", pd.Series(["2026-27"])).iloc[0])
         rows.append({
             "toll_plaza_id": plz,
-            "bill_month": "Sep 2026",
-            "financial_year": "2026-27",
+            "bill_month": b_mo,
+            "financial_year": f_yr,
             "total_bills": tot_b,
             "eligible_prompt_rebate": elig,
-            "claimed_prompt_rebate": claimed,
+            "claimed_prompt_rebate": availed,
+            "rebate_availed": availed,
             "lost_prompt_rebate": lost,
+            "rebate_loss": lost,
             "rebate_realization_rate": rate,
         })
     return pd.DataFrame(rows)
@@ -3623,6 +3747,21 @@ def get_merged_bill_receipt_reconciliation() -> pd.DataFrame:
             bal = max(0.0, b_tot - r_paid)
             p_stat = "PAID" if (bal <= 1.0 and r_paid > 0) else ("PARTIAL" if r_paid > 0 else "UNPAID")
 
+            pay_date = str(r.get("collections_date") or r.get("Collections Date") or b.get("latest_payment_date") or "").strip()
+            reb_date = str(b.get("rebate_date") or b.get("Rebate Date") or "").strip()
+            b_before = _clean_kpi_num(b.get("net_payable_amount_before_rbt_dt_rs") or b_tot)
+            b_after = _clean_kpi_num(b.get("net_payable_amount_after_rbt_dt_rs") or b_tot)
+            p_reb = _clean_kpi_num(b.get("prompt_rebate") or b.get("Rebate Allowable"))
+
+            reb_eval = compute_rebate_status(
+                rebate_date_val=reb_date,
+                payment_date_val=pay_date,
+                amount_paid=r_paid,
+                prompt_rebate=p_reb,
+                before_rebate_amt=b_before,
+                after_rebate_amt=b_after,
+            )
+
             merged_rows.append({
                 "consumer_account_no": ac,
                 "bill_month": norm_mo if norm_mo else raw_mo,
@@ -3633,17 +3772,22 @@ def get_merged_bill_receipt_reconciliation() -> pd.DataFrame:
                 "meter_sl_no": str(b.get("meter_sl_no") or "—").strip(),
                 "bill_issue_date": str(b.get("bill_issue_date") or "").strip(),
                 "due_date": str(b.get("due_date") or "").strip(),
-                "rebate_date": str(b.get("rebate_date") or "").strip(),
+                "rebate_date": reb_date,
                 "energy_charges": _clean_kpi_num(b.get("energy_charges")),
                 "electricity_duty": _clean_kpi_num(b.get("electricity_duty")),
                 "meter_rent": _clean_kpi_num(b.get("meter_rent")),
                 "customer_service_charge": _clean_kpi_num(b.get("customer_service_charge")),
                 "total_amount_payable": b_tot,
-                "net_payable_amount_before_rbt_dt_rs": _clean_kpi_num(b.get("net_payable_amount_before_rbt_dt_rs") or b_tot),
-                "net_payable_amount_after_rbt_dt_rs": _clean_kpi_num(b.get("net_payable_amount_after_rbt_dt_rs") or b_tot),
+                "net_payable_amount_before_rbt_dt_rs": b_before,
+                "net_payable_amount_after_rbt_dt_rs": b_after,
+                "prompt_rebate": reb_eval["prompt_rebate"],
+                "rebate_status": reb_eval["rebate_status"],
+                "rebate_availed": reb_eval["rebate_availed"],
+                "rebate_loss": reb_eval["rebate_loss"],
+                "rebate_remarks": reb_eval["rebate_remarks"],
                 "receipt_no": str(r.get("receipt_no") or "").strip(),
                 "payment_type": str(r.get("payment_type") or r.get("Payment Type") or (b.get("payment_mode") if r_paid > 0 else "")).strip(),
-                "collections_date": str(r.get("collections_date") or r.get("Collections Date") or "").strip(),
+                "collections_date": pay_date,
                 "amount_paid": r_paid,
                 "office_name": str(r.get("office_name") or r.get("Office Name") or b.get("division_name") or "ESO RE SECTION").strip(),
                 "category": str(r.get("category") or r.get("Category") or b.get("tariff_category") or "PUBLIC LIGHT").strip(),
@@ -3678,6 +3822,11 @@ def get_merged_bill_receipt_reconciliation() -> pd.DataFrame:
                     "total_amount_payable": amt,
                     "net_payable_amount_before_rbt_dt_rs": amt,
                     "net_payable_amount_after_rbt_dt_rs": amt,
+                    "prompt_rebate": 0.0,
+                    "rebate_status": "PENDING BILL",
+                    "rebate_availed": 0.0,
+                    "rebate_loss": 0.0,
+                    "rebate_remarks": "Payment receipt logged; awaiting bill upload to determine rebate eligibility.",
                     "receipt_no": r_no,
                     "payment_type": str(r.get("payment_type") or "").strip(),
                     "collections_date": str(r.get("collections_date") or "").strip(),

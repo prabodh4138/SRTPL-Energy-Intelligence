@@ -31,6 +31,7 @@ from core.db_sync import (
     get_receipt_reconciliation,
     get_rebate_performance,
     get_rejected_bills_bucket,
+    get_merged_bill_receipt_reconciliation,
 )
 
 # ---------------------------------------------------------------------------
@@ -104,9 +105,22 @@ BILL_REGISTER_COLUMN_LABELS: dict[str, str] = {
     "edited_at": "Edited At",
     "edit_notes": "Audit Notes",
     "source_filename": "Source File",
+    "rebate_status": "Rebate Status",
+    "rebate_availed": "Rebate Availed (₹)",
+    "rebate_loss": "Rebate Loss (₹)",
+    "rebate_remarks": "Rebate Audit Remarks",
+    "collections_date": "Payment Date",
+    "receipt_no": "Receipt Number",
+    "payment_type": "Payment Type",
+    "office_name": "Office Name",
 }
 
 COLUMN_PRESETS = {
+    "Rebate & Prompt Payment Audit (11)": [
+        "consumer_account_no", "bill_month", "bill_number", "toll_plaza_id",
+        "total_amount_payable", "rebate_date", "collections_date",
+        "prompt_rebate", "rebate_status", "rebate_availed", "rebate_loss"
+    ],
     "Reconciliation Core (18)": [
         "bill_number", "consumer_account_no", "meter_sl_no", "toll_plaza_id",
         "bill_type", "consumer_scope", "bill_month", "sanctioned_load_kw",
@@ -256,6 +270,7 @@ def _render_custom_view_builder() -> None:
     # 1. Dataset Selection
     dataset_options = {
         "OFFICIAL_BILLS": "⚡ EB Bill Register & Reconciliation (Official Energy Invoices)",
+        "MERGED_RECONCILIATION": "🔄 Unified Merged Bill & Receipts Reconciliation (With Rebate Availed/Loss)",
         "RECEIPTS": "💰 Payment Receipts & Bank Allocation Register",
         "BUDGET_ACTUAL": "📊 Monthly Budget vs Actual Expenditure Variance",
         "CONSUMER_MASTER": "🏷️ 60 Consumer Account Master Registry",
@@ -658,6 +673,9 @@ def _load_dataset_by_key(dataset_key: str) -> pd.DataFrame:
                     if not new_rows.empty:
                         df = pd.concat([df, new_rows], ignore_index=True)
         return _ensure_official_register_columns(df) if not df.empty else df
+
+    elif dataset_key == "MERGED_RECONCILIATION":
+        return get_merged_bill_receipt_reconciliation()
 
     elif dataset_key == "RECEIPTS":
         r_df = get_receipt_reconciliation()

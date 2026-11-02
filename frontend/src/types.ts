@@ -43,6 +43,12 @@ export interface OfficialBill {
   toll_plaza_id?: string;
   bill_type?: string;
   bill_basis?: string;
+  rebate_date?: string;
+  prompt_rebate?: number;
+  rebate_status?: string;
+  rebate_availed?: number;
+  rebate_loss?: number;
+  rebate_remarks?: string;
   total_amount_payable: number;
   amount_paid?: number;
   outstanding_balance?: number;
@@ -88,6 +94,12 @@ export interface MergedReconciliationItem {
   bill_type?: string;
   consumer_scope?: string;
   meter_sl_no?: string;
+  rebate_date?: string;
+  prompt_rebate?: number;
+  rebate_status?: string;
+  rebate_availed?: number;
+  rebate_loss?: number;
+  rebate_remarks?: string;
   total_amount_payable: number;
   net_payable_amount_before_rbt_dt_rs?: number;
   net_payable_amount_after_rbt_dt_rs?: number;
