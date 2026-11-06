@@ -31,7 +31,95 @@ def extract_md_bill_data(pdf_file, source_name, extracted_text=None):
     entry["Consumer ID"] = grab(r"Consumer ID\s*:\s*([A-Za-z0-9]+)")
     entry["Bill Number"] = grab(r"Bill Number\s*:\s*([A-Za-z0-9]+)")
     entry["Bill Month"] = grab(r"Bill Month\s*:\s*(\d{4}/\d{2})")
-    entry["Contract Demand"] = grab(r"Contract Demand\s*:\s*([^:\n]+?)(?=\s+(?:Meter Sl|DT No|Pole No|\n|$))")
+    # Robust Multi-Strategy Contract Demand Extraction
+    raw_cat = grab(r"Tariff Category\s*:\s*([^:\n]+?)(?=\s+(?:Power Factor|Category Type|Billable Demand|Supply Voltage|\n|$))")
+    cd_val = ""
+    m_cd1 = re.search(
+        r'(?:Contract(?:ed)?\s*Demand|C\.?D\.?|Contract\s*Demand\s*/\s*Sanctioned\s*Load)\s*[:=\-]?\s*(\d+(?:\.\d+)?\s*(?:KVA|KW|HP|W))\b',
+        text,
+        re.IGNORECASE
+    )
+    if m_cd1:
+        cd_val = m_cd1.group(1).strip()
+    if not cd_val:
+        m_cd2 = re.search(
+            r'(?:Contract(?:ed)?\s*Demand|C\.?D\.?)\s*[:=\-]?\s*([0-9\.]+(?:\s*[A-Za-z]+)?)(?=\s+(?:[A-Za-z\s]+:|\n|$))',
+            text,
+            re.IGNORECASE
+        )
+        if m_cd2 and m_cd2.group(1).strip():
+            cd_val = m_cd2.group(1).strip()
+            if not re.search(r'[A-Za-z]', cd_val):
+                cd_val += " KVA" if ("HT" in raw_cat.upper()) else " KW"
+    if not cd_val:
+        for l in lines:
+            if re.search(r'Contract(?:ed)?\s*Demand', l, re.IGNORECASE):
+                m_num = re.search(r'Contract(?:ed)?\s*Demand\s*[:=\-]?\s*(\d+(?:\.\d+)?(?:\s*(?:KVA|KW|HP|W))?)', l, re.IGNORECASE)
+                if m_num:
+                    cd_val = m_num.group(1).strip()
+                    if not re.search(r'[A-Za-z]', cd_val):
+                        cd_val += " KVA" if ("HT" in raw_cat.upper()) else " KW"
+                    break
+    if not cd_val:
+        m_sanc = re.search(
+            r'(?:Sanctioned|Connected)\s*(?:Load|Demand)\s*[:=\-]?\s*(\d+(?:\.\d+)?\s*(?:KVA|KW|HP|W)?)\b',
+            text,
+            re.IGNORECASE
+        )
+        if m_sanc:
+            cd_val = m_sanc.group(1).strip()
+            if not re.search(r'[A-Za-z]', cd_val):
+                cd_val += " KVA" if ("HT" in raw_cat.upper()) else " KW"
+    if not cd_val:
+        m_bkw = re.search(r'Billable\s*Demand(?:-KW)?\s*[:=\-]?\s*([\d\.]+)', text, re.IGNORECASE)
+        if m_bkw:
+            cd_val = f"{m_bkw.group(1).strip()} KW"
+
+    entry["Contract Demand"] = cd_val
+    entry["contract_demand"] = cd_val
+
+    # Robust Meter Rent
+    meter_rent_val = ""
+    m_mr = re.search(r'(?:k\.|\(k\)|k\))\s*Meter\s*Rent(?!\s*Count)\s*(?:\([^\)]*\))?\s*[:\s]*([-+]?\d[\d,]*\.\d{2})', text, re.IGNORECASE)
+    if m_mr:
+        meter_rent_val = m_mr.group(1).replace(',', '').strip()
+    if not meter_rent_val:
+        m_mr2 = re.search(r'\bMeter\s*Rent(?!\s*Count)(?:\s*Charge[s]?)?\s*(?:\([^\)]*\))?\s*[:\s]*([-+]?\d[\d,]*\.\d{2})', text, re.IGNORECASE)
+        if m_mr2:
+            meter_rent_val = m_mr2.group(1).replace(',', '').strip()
+    if not meter_rent_val:
+        for l in lines:
+            if re.search(r'\bMeter\s*Rent\b', l, re.IGNORECASE) and not re.search(r'\bMeter\s*Rent\s*Count\b', l, re.IGNORECASE):
+                nums = re.findall(r'[-+]?\d[\d,]*\.\d{2}', l)
+                if nums:
+                    meter_rent_val = nums[0].replace(',', '').strip()
+                    break
+
+    entry["Meter Rent (k)"] = meter_rent_val
+    entry["Meter Rent"] = meter_rent_val
+    entry["meter_rent"] = meter_rent_val
+
+    # Robust Customer Service Charge
+    cust_service_val = ""
+    m_cs = re.search(r'(?:l\.|\(l\)|l\))\s*Cust(?:\.|\b|omer)?\s*Service(?:\s*Charge[s]?)?\s*(?:\([^\)]*\))?\s*[:\s]*([-+]?\d[\d,]*\.\d{2})', text, re.IGNORECASE)
+    if m_cs:
+        cust_service_val = m_cs.group(1).replace(',', '').strip()
+    if not cust_service_val:
+        m_cs2 = re.search(r'\bCust(?:\.|\b|omer)?\s*Service(?:\s*Charge[s]?)?\s*(?:\([^\)]*\))?\s*[:\s]*([-+]?\d[\d,]*\.\d{2})', text, re.IGNORECASE)
+        if m_cs2:
+            cust_service_val = m_cs2.group(1).replace(',', '').strip()
+    if not cust_service_val:
+        for l in lines:
+            if re.search(r'\bCust(?:\.|\b|omer)?\s*Service\b', l, re.IGNORECASE):
+                nums = re.findall(r'[-+]?\d[\d,]*\.\d{2}', l)
+                if nums:
+                    cust_service_val = nums[0].replace(',', '').strip()
+                    break
+
+    entry["Customer Service Charge (l)"] = cust_service_val
+    entry["Customer Service Charge"] = cust_service_val
+    entry["Customer Service"] = cust_service_val
+    entry["customer_service_charge"] = cust_service_val
 
     # ---------- NET PAYABLE AMOUNT AFTER & BEFORE RBT DT ----------
     entry["Net Payable Amount After Rbt. Dt.(Rs.)"] = ""

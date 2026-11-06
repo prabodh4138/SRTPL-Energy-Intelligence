@@ -2621,9 +2621,9 @@ def format_bill_for_db(raw_bill: dict[str, Any], verifier_result: dict[str, Any]
 
         "electricity_duty": _num(raw_bill.get("Electricity Duty (j)") or raw_bill.get("electricity_duty")),
 
-        "meter_rent": _num(raw_bill.get("Meter Rent (k)") or raw_bill.get("meter_rent")),
+        "meter_rent": _num(raw_bill.get("meter_rent") or raw_bill.get("Meter Rent") or raw_bill.get("Meter Rent (k)") or raw_bill.get("meter_rent_rs") or raw_bill.get("Meter Rent (₹)")),
 
-        "customer_service_charge": _num(raw_bill.get("Customer Service Charge (l)") or raw_bill.get("customer_service_charge")),
+        "customer_service_charge": _num(raw_bill.get("customer_service_charge") or raw_bill.get("Customer Service Charge") or raw_bill.get("Customer Service") or raw_bill.get("Customer Service Charge (l)") or raw_bill.get("Customer Service (₹)")),
 
         "dps_rs": _num(raw_bill.get("DPS(Rs.)") or raw_bill.get("dps_rs")),
 
@@ -6190,13 +6190,18 @@ def _ensure_official_register_columns(df: pd.DataFrame) -> pd.DataFrame:
 
         r["electricity_duty"] = _clean_kpi_num(r.get("electricity_duty") or 0.0)
 
-        r["meter_rent"] = _clean_kpi_num(r.get("meter_rent") or r.get("Meter Rent (k)") or prof.get("meter_rent") or 0.0)
+        mr_val = _clean_kpi_num(r.get("meter_rent") or r.get("Meter Rent") or r.get("Meter Rent (k)") or r.get("meter_rent_rs") or r.get("Meter Rent (₹)") or prof.get("meter_rent") or 0.0)
+        r["meter_rent"] = mr_val
+        r["Meter Rent (k)"] = mr_val
+        r["Meter Rent"] = mr_val
+        r["Meter Rent (₹)"] = mr_val
 
-        r["Meter Rent (k)"] = r["meter_rent"]
-
-        r["customer_service_charge"] = _clean_kpi_num(r.get("customer_service_charge") or r.get("Customer Service Charge (l)") or prof.get("customer_service_charge") or 0.0)
-
-        r["Customer Service Charge (l)"] = r["customer_service_charge"]
+        cs_val = _clean_kpi_num(r.get("customer_service_charge") or r.get("Customer Service Charge") or r.get("Customer Service") or r.get("Customer Service Charge (l)") or r.get("Customer Service (₹)") or prof.get("customer_service_charge") or 0.0)
+        r["customer_service_charge"] = cs_val
+        r["Customer Service Charge (l)"] = cs_val
+        r["Customer Service Charge"] = cs_val
+        r["Customer Service"] = cs_val
+        r["Customer Service (₹)"] = cs_val
 
 
 
@@ -7726,9 +7731,14 @@ def get_merged_bill_receipt_reconciliation() -> pd.DataFrame:
 
                 "electricity_duty": _clean_kpi_num(b.get("electricity_duty")),
 
-                "meter_rent": _clean_kpi_num(b.get("meter_rent")),
+                "meter_rent": _clean_kpi_num(b.get("meter_rent") or b.get("Meter Rent") or b.get("Meter Rent (k)")),
+                "Meter Rent": _clean_kpi_num(b.get("meter_rent") or b.get("Meter Rent") or b.get("Meter Rent (k)")),
+                "Meter Rent (₹)": _clean_kpi_num(b.get("meter_rent") or b.get("Meter Rent") or b.get("Meter Rent (k)")),
 
-                "customer_service_charge": _clean_kpi_num(b.get("customer_service_charge")),
+                "customer_service_charge": _clean_kpi_num(b.get("customer_service_charge") or b.get("Customer Service Charge") or b.get("Customer Service")),
+                "Customer Service": _clean_kpi_num(b.get("customer_service_charge") or b.get("Customer Service Charge") or b.get("Customer Service")),
+                "Customer Service Charge": _clean_kpi_num(b.get("customer_service_charge") or b.get("Customer Service Charge") or b.get("Customer Service")),
+                "Customer Service (₹)": _clean_kpi_num(b.get("customer_service_charge") or b.get("Customer Service Charge") or b.get("Customer Service")),
 
                 "total_amount_payable": b_tot,
 
@@ -7814,8 +7824,13 @@ def get_merged_bill_receipt_reconciliation() -> pd.DataFrame:
                     "electricity_duty": 0.0,
 
                     "meter_rent": 0.0,
+                    "Meter Rent": 0.0,
+                    "Meter Rent (₹)": 0.0,
 
                     "customer_service_charge": 0.0,
+                    "Customer Service": 0.0,
+                    "Customer Service Charge": 0.0,
+                    "Customer Service (₹)": 0.0,
 
                     "total_amount_payable": amt,
 

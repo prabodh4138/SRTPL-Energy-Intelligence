@@ -250,9 +250,9 @@ export const BillReconciliationView: React.FC = () => {
 
         electricity_duty: p.electricity_duty || p['Electricity Duty (j)'] || 0.0,
 
-        meter_rent: p.meter_rent || p['Meter Rent (k)'] || 0.0,
+        meter_rent: p.meter_rent ?? p['Meter Rent'] ?? p['Meter Rent (k)'] ?? p['meter_rent_rs'] ?? p['Meter Rent (₹)'] ?? 0.0,
 
-        customer_service_charge: p.customer_service_charge || p['Customer Service Charge (l)'] || 0.0,
+        customer_service_charge: p.customer_service_charge ?? p['Customer Service Charge'] ?? p['Customer Service'] ?? p['Customer Service Charge (l)'] ?? p['customer_service_charge'] ?? p['Customer Service (₹)'] ?? 0.0,
 
         net_payable_amount_before_rbt_dt_rs: p.net_payable_amount_before_rbt_dt_rs || p['Net Payable Amount Before Rbt. Dt.(Rs.)'] || 0.0,
 
@@ -1495,6 +1495,30 @@ export const BillReconciliationView: React.FC = () => {
                                           <span className="text-amber-300 font-bold">
 
                                             {p["Net Payable Amount After Rbt. Dt.(Rs.)"] ? `₹${p["Net Payable Amount After Rbt. Dt.(Rs.)"]}` : "—"}
+
+                                          </span>
+
+                                        </div>
+
+                                        <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-800/80">
+
+                                          <span className="text-[10px] text-slate-500 block font-sans">14. Meter Rent (₹)</span>
+
+                                          <span className="text-teal-300 font-semibold">
+
+                                            {p["Meter Rent"] || p["Meter Rent (k)"] || p["meter_rent"] || p["Meter Rent (₹)"] ? `₹${p["Meter Rent"] || p["Meter Rent (k)"] || p["meter_rent"] || p["Meter Rent (₹)"]}` : "₹0.00"}
+
+                                          </span>
+
+                                        </div>
+
+                                        <div className="p-2.5 rounded-xl bg-slate-900/60 border border-slate-800/80">
+
+                                          <span className="text-[10px] text-slate-500 block font-sans">15. Customer Service (₹)</span>
+
+                                          <span className="text-purple-300 font-semibold">
+
+                                            {p["Customer Service"] || p["Customer Service Charge"] || p["Customer Service Charge (l)"] || p["customer_service_charge"] || p["Customer Service (₹)"] ? `₹${p["Customer Service"] || p["Customer Service Charge"] || p["Customer Service Charge (l)"] || p["customer_service_charge"] || p["Customer Service (₹)"]}` : "₹0.00"}
 
                                           </span>
 

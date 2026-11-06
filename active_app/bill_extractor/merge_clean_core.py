@@ -17,6 +17,8 @@ REQUIRED_EXTRACTION_FIELDS = [
     "Meter Sl. No.",
     "Net Payable Amount Before Rbt. Dt.(Rs.)",
     "Net Payable Amount After Rbt. Dt.(Rs.)",
+    "Meter Rent",
+    "Customer Service Charge",
 ]
 
 
@@ -38,6 +40,12 @@ FIELD_SYNONYM_MAP = {
     ],
     "net_payable_amount_after_rbt_dt_rs": [
         "Net Payable Amount After Rbt. Dt.(Rs.)", "net_payable_amount_after_rbt_dt_rs", "net_after_rebate"
+    ],
+    "meter_rent": [
+        "Meter Rent", "Meter Rent (k)", "meter_rent", "meter_rent_rs", "Meter Rent (₹)", "Meter Rent(Rs.)"
+    ],
+    "customer_service_charge": [
+        "Customer Service Charge", "Customer Service Charge (l)", "Customer Service", "customer_service_charge", "customer_service", "Customer Service (₹)"
     ],
 }
 
@@ -147,10 +155,21 @@ def enrich_bill_record(row: dict[str, Any]) -> dict[str, Any]:
         if not row.get("location") and master_acc.get("location"):
             row["location"] = master_acc["location"]
 
-    # Ensure all 13 requested fields are present in both casing formats
+    # Ensure all requested fields are present in both casing formats
     for fld in REQUIRED_EXTRACTION_FIELDS:
         if fld not in row or row[fld] is None:
             row[fld] = ""
+
+    # Ensure Meter Rent and Customer Service Charge default safely to 0.00
+    if not row.get("meter_rent") or str(row.get("meter_rent")).strip() in ("", "—", "nan", "None"):
+        for k in ["Meter Rent", "Meter Rent (k)", "meter_rent", "meter_rent_rs", "Meter Rent (₹)"]:
+            if not row.get(k) or str(row.get(k)).strip() in ("", "—", "nan", "None"):
+                row[k] = "0.00"
+
+    if not row.get("customer_service_charge") or str(row.get("customer_service_charge")).strip() in ("", "—", "nan", "None"):
+        for k in ["Customer Service Charge", "Customer Service Charge (l)", "Customer Service", "customer_service_charge", "customer_service", "Customer Service (₹)"]:
+            if not row.get(k) or str(row.get(k)).strip() in ("", "—", "nan", "None"):
+                row[k] = "0.00"
 
     for canon, syns in FIELD_SYNONYM_MAP.items():
         found_val = None

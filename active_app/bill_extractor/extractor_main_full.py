@@ -94,9 +94,60 @@ def extract_energy_bill_full(pdf_file, source_name, extracted_text=None):
     entry["Tariff Category"] = raw_cat
 
     # ================= SUPPLY & METER DETAILS =================
-    entry["Contract Demand"] = extract_clean_number(
-        r"Contract Demand\s*:\s*([^:\n]+?)(?=\s+(?:Meter Sl|DT No|Pole No|\n|$))", text
+    # Robust Multi-Strategy Contract Demand Extraction
+    cd_val = ""
+    # Strategy 1: Direct number + unit right after Contract Demand / Contracted Demand / CD
+    m_cd1 = re.search(
+        r"(?:Contract(?:ed)?\s*Demand|C\.?D\.?|Contract\s*Demand\s*/\s*Sanctioned\s*Load)\s*[:=\-]?\s*(\d+(?:\.\d+)?\s*(?:KVA|KW|HP|W))\b",
+        text,
+        re.IGNORECASE
     )
+    if m_cd1:
+        cd_val = m_cd1.group(1).strip()
+    
+    if not cd_val:
+        # Strategy 2: Capturing value before next label or colon
+        m_cd2 = re.search(
+            r"(?:Contract(?:ed)?\s*Demand|C\.?D\.?)\s*[:=\-]?\s*([0-9\.]+(?:\s*[A-Za-z]+)?)(?=\s+(?:[A-Za-z\s]+:|\n|$))",
+            text,
+            re.IGNORECASE
+        )
+        if m_cd2 and m_cd2.group(1).strip():
+            cd_val = m_cd2.group(1).strip()
+            if not re.search(r"[A-Za-z]", cd_val):
+                cd_val += " KVA" if ("HT" in (raw_cat or "").upper()) else " KW"
+
+    if not cd_val:
+        # Strategy 3: Line-by-line inspection
+        for l in lines:
+            if re.search(r"Contract(?:ed)?\s*Demand", l, re.IGNORECASE):
+                m_num = re.search(r"Contract(?:ed)?\s*Demand\s*[:=\-]?\s*(\d+(?:\.\d+)?(?:\s*(?:KVA|KW|HP|W))?)", l, re.IGNORECASE)
+                if m_num:
+                    cd_val = m_num.group(1).strip()
+                    if not re.search(r"[A-Za-z]", cd_val):
+                        cd_val += " KVA" if ("HT" in (raw_cat or "").upper()) else " KW"
+                    break
+
+    if not cd_val:
+        # Strategy 4: Fallback to Sanctioned Load / Connected Load
+        m_sanc = re.search(
+            r"(?:Sanctioned|Connected)\s*(?:Load|Demand)\s*[:=\-]?\s*(\d+(?:\.\d+)?\s*(?:KVA|KW|HP|W)?)\b",
+            text,
+            re.IGNORECASE
+        )
+        if m_sanc:
+            cd_val = m_sanc.group(1).strip()
+            if not re.search(r"[A-Za-z]", cd_val):
+                cd_val += " KVA" if ("HT" in (raw_cat or "").upper()) else " KW"
+
+    if not cd_val:
+        # Strategy 5: Fallback to Billable Demand if contract demand is unprinted in SBM
+        m_bkw = re.search(r"Billable\s*Demand(?:-KW)?\s*[:=\-]?\s*([\d\.]+)", text, re.IGNORECASE)
+        if m_bkw:
+            cd_val = f"{m_bkw.group(1).strip()} KW"
+
+    entry["Contract Demand"] = cd_val
+    entry["contract_demand"] = cd_val
     entry["Meter Sl. No."] = extract_clean_number(r"Meter Sl\.\s*No\.?\s*:\s*([\w\-]+)", text)
     entry["Meter Rent Count"] = extract_clean_number(r"Meter Rent Count\s*:\s*([\d/]+)", text)
     entry["Security Deposit"] = extract_clean_number(r"Security Deposit\s*:\s*([\d,]+\.?\d*)", text)
@@ -302,12 +353,67 @@ def extract_energy_bill_full(pdf_file, source_name, extracted_text=None):
     m_ed_pct = re.search(r"j\.\s*Electricity Duty\s*\((\d+)%\)", table_text)
     entry["Electricity Duty Rate"] = f"{m_ed_pct.group(1)}%" if m_ed_pct else ""
 
-    entry["Meter Rent (k)"] = extract_clean_number(
-        r"k\.\s*Meter Rent\s*[^\d]*(\d[\d,\.]*)", table_text
+    # Bulletproof Meter Rent Extraction (handles k. Meter Rent, generic Meter Rent, prefixes k./(k)/k)/none)
+    meter_rent_val = ""
+    m_mr = re.search(r'(?:k\.|\(k\)|k\))\s*Meter\s*Rent(?!\s*Count)\s*(?:\([^\)]*\))?\s*[:\s]*([-+]?\d[\d,]*\.\d{2})', text, re.IGNORECASE)
+    if m_mr:
+        meter_rent_val = m_mr.group(1).replace(',', '').strip()
+    if not meter_rent_val:
+        m_mr2 = re.search(r'Meter\s*Rent(?!\s*Count)(?:\s*Charge[s]?)?\s*(?:\([^\)]*\))?\s*[:\s]*([-+]?\d[\d,]*\.\d{2})', text, re.IGNORECASE)
+        if m_mr2:
+            meter_rent_val = m_mr2.group(1).replace(',', '').strip()
+    if not meter_rent_val:
+        # Fallback to table_text
+        m_mr_t = re.search(r'Meter\s*Rent(?!\s*Count)\s*[^\d]*(\d[\d,\.]*)', table_text, re.IGNORECASE)
+        if m_mr_t:
+            meter_rent_val = m_mr_t.group(1).replace(',', '').strip()
+    if not meter_rent_val:
+        for l in lines:
+            if re.search(r'Meter\s*Rent', l, re.IGNORECASE) and not re.search(r'Meter\s*Rent\s*Count', l, re.IGNORECASE):
+                nums = re.findall(r'[-+]?\d[\d,]*\.\d{2}', l)
+                if nums:
+                    meter_rent_val = nums[0].replace(',', '').strip()
+                    break
+
+    entry["Meter Rent (k)"] = meter_rent_val
+    entry["Meter Rent"] = meter_rent_val
+    entry["meter_rent"] = meter_rent_val
+    entry["meter_rent_rs"] = meter_rent_val
+
+    # Bulletproof Customer Service Charge Extraction (handles l. Customer Service Charge, Customer Service, Cust Service)
+    cust_service_val = ""
+    m_cs = re.search(
+        r'(?:l\.|\(l\)|l\))\s*Cust(?:\.||omer)?\s*Service(?:\s*Charge[s]?)?\s*(?:\([^\)]*\))?\s*[:\s]*([-+]?\d[\d,]*\.\d{2})',
+        text,
+        re.IGNORECASE
     )
-    entry["Customer Service Charge (l)"] = extract_clean_number(
-        r"l\.\s*Customer Service Charge\s*[^\d]*(\d[\d,\.]*)", table_text
-    )
+    if m_cs:
+        cust_service_val = m_cs.group(1).replace(',', '').strip()
+    if not cust_service_val:
+        m_cs2 = re.search(
+            r'Cust(?:\.||omer)?\s*Service(?:\s*Charge[s]?)?\s*(?:\([^\)]*\))?\s*[:\s]*([-+]?\d[\d,]*\.\d{2})',
+            text,
+            re.IGNORECASE
+        )
+        if m_cs2:
+            cust_service_val = m_cs2.group(1).replace(',', '').strip()
+    if not cust_service_val:
+        m_cs_t = re.search(r'Cust(?:\.||omer)?\s*Service(?:\s*Charge[s]?)?\s*[^\d]*(\d[\d,\.]*)', table_text, re.IGNORECASE)
+        if m_cs_t:
+            cust_service_val = m_cs_t.group(1).replace(',', '').strip()
+    if not cust_service_val:
+        for l in lines:
+            if re.search(r'Cust(?:\.||omer)?\s*Service', l, re.IGNORECASE):
+                nums = re.findall(r'[-+]?\d[\d,]*\.\d{2}', l)
+                if nums:
+                    cust_service_val = nums[0].replace(',', '').strip()
+                    break
+
+    entry["Customer Service Charge (l)"] = cust_service_val
+    entry["Customer Service Charge"] = cust_service_val
+    entry["Customer Service"] = cust_service_val
+    entry["customer_service_charge"] = cust_service_val
+    entry["customer_service"] = cust_service_val
     entry["Current Total (o)"] = extract_clean_number(
         r"o\.\s*Current Total.*?[^\d]*(\d[\d,\.]*)", table_text
     )
