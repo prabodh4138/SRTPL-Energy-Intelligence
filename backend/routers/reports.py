@@ -270,18 +270,39 @@ def export_custom_report(payload: CustomExportPayload):
 
             col_name = str(df.columns[c_idx - 1]).lower()
             # Explicit text formatting for bill numbers, meter serials, consumer accounts, and codes (NEVER comma separated)
-            if any(k in col_name for k in ["number", "bill_number", "account", "meter", "code", "sl_no", "id", "batch", "ref", "receipt", "plaza", "scope", "type", "basis", "status", "category", "section", "division", "date", "month", "period", "file", "location"]):
+            # Note: "rent" (Meter Rent) and "service" (Customer Service) are monetary charges and MUST NOT be treated as text
+            if "rent" not in col_name and any(k in col_name for k in ["number", "bill_number", "account", "meter_sl", "meter sl", "meter_code", "sl_no", "code", "id", "batch", "ref", "receipt", "plaza", "scope", "type", "basis", "status", "category", "section", "division", "date", "month", "period", "file", "location"]):
                 cell.number_format = "@"
                 cell.value = str(val) if val is not None and val != "" else "—"
                 cell.alignment = Alignment(horizontal="left")
-            elif any(k in col_name for k in ["amount", "charges", "duty", "payable", "paid", "balance", "total", "deposit", "dps", "₹", "rs."]):
-                if isinstance(val, (int, float)):
-                    cell.number_format = "#,##0.00"
+            elif any(k in col_name for k in ["amount", "charges", "duty", "payable", "paid", "balance", "total", "deposit", "dps", "rent", "service", "₹", "rs."]):
+                try:
+                    if val is not None and str(val).strip() not in ["", "—", "None", "nan"]:
+                        cell.value = float(str(val).replace(",", ""))
+                        cell.number_format = "#,##0.00"
+                        cell.alignment = Alignment(horizontal="right")
+                    else:
+                        cell.value = 0.0
+                        cell.number_format = "#,##0.00"
+                        cell.alignment = Alignment(horizontal="right")
+                except (ValueError, TypeError):
                     cell.alignment = Alignment(horizontal="right")
             elif any(k in col_name for k in ["units", "kwh", "kvah", "load", "demand", "md"]):
-                if isinstance(val, (int, float)):
-                    cell.number_format = "#,##0.00"
-                    cell.alignment = Alignment(horizontal="right")
+                try:
+                    if isinstance(val, (int, float)):
+                        cell.number_format = "#,##0.00"
+                        cell.alignment = Alignment(horizontal="right")
+                    elif val is not None and str(val).strip() not in ["", "—", "None", "nan"]:
+                        cleaned_str = str(val).strip()
+                        if any(u in cleaned_str.upper() for u in ["KW", "KVA", "HP"]):
+                            cell.number_format = "@"
+                            cell.alignment = Alignment(horizontal="center")
+                        else:
+                            cell.value = float(cleaned_str.replace(",", ""))
+                            cell.number_format = "#,##0.00"
+                            cell.alignment = Alignment(horizontal="right")
+                except (ValueError, TypeError):
+                    cell.alignment = Alignment(horizontal="center")
 
     for col in ws.columns:
         max_len = 0

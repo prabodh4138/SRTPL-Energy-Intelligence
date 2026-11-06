@@ -95,6 +95,17 @@ def extract_energy_bill_full(pdf_file, source_name, extracted_text=None):
 
     # ================= SUPPLY & METER DETAILS =================
     # Robust Multi-Strategy Contract Demand Extraction
+    def _is_valid_cd(val: str) -> bool:
+        if not val:
+            return False
+        v = val.strip().upper()
+        if v in ["", "—", "-", "NONE", "NAN", "0", "0.0", "0.00", "0 KW", "0.0 KW", "0.00 KW", "0 KVA", "0.0 KVA", "0.00 KVA", "0 HP", "0.00 HP"]:
+            return False
+        nums = re.findall(r"(\d+(?:\.\d+)?)", v)
+        if nums and float(nums[0]) == 0.0:
+            return False
+        return True
+
     cd_val = ""
     # Strategy 1: Direct number + unit right after Contract Demand / Contracted Demand / CD
     m_cd1 = re.search(
@@ -102,7 +113,7 @@ def extract_energy_bill_full(pdf_file, source_name, extracted_text=None):
         text,
         re.IGNORECASE
     )
-    if m_cd1:
+    if m_cd1 and _is_valid_cd(m_cd1.group(1)):
         cd_val = m_cd1.group(1).strip()
     
     if not cd_val:
@@ -113,9 +124,11 @@ def extract_energy_bill_full(pdf_file, source_name, extracted_text=None):
             re.IGNORECASE
         )
         if m_cd2 and m_cd2.group(1).strip():
-            cd_val = m_cd2.group(1).strip()
-            if not re.search(r"[A-Za-z]", cd_val):
-                cd_val += " KVA" if ("HT" in (raw_cat or "").upper()) else " KW"
+            candidate = m_cd2.group(1).strip()
+            if not re.search(r"[A-Za-z]", candidate):
+                candidate += " KVA" if ("HT" in (raw_cat or "").upper()) else " KW"
+            if _is_valid_cd(candidate):
+                cd_val = candidate
 
     if not cd_val:
         # Strategy 3: Line-by-line inspection
@@ -123,10 +136,12 @@ def extract_energy_bill_full(pdf_file, source_name, extracted_text=None):
             if re.search(r"Contract(?:ed)?\s*Demand", l, re.IGNORECASE):
                 m_num = re.search(r"Contract(?:ed)?\s*Demand\s*[:=\-]?\s*(\d+(?:\.\d+)?(?:\s*(?:KVA|KW|HP|W))?)", l, re.IGNORECASE)
                 if m_num:
-                    cd_val = m_num.group(1).strip()
-                    if not re.search(r"[A-Za-z]", cd_val):
-                        cd_val += " KVA" if ("HT" in (raw_cat or "").upper()) else " KW"
-                    break
+                    candidate = m_num.group(1).strip()
+                    if not re.search(r"[A-Za-z]", candidate):
+                        candidate += " KVA" if ("HT" in (raw_cat or "").upper()) else " KW"
+                    if _is_valid_cd(candidate):
+                        cd_val = candidate
+                        break
 
     if not cd_val:
         # Strategy 4: Fallback to Sanctioned Load / Connected Load
@@ -136,15 +151,19 @@ def extract_energy_bill_full(pdf_file, source_name, extracted_text=None):
             re.IGNORECASE
         )
         if m_sanc:
-            cd_val = m_sanc.group(1).strip()
-            if not re.search(r"[A-Za-z]", cd_val):
-                cd_val += " KVA" if ("HT" in (raw_cat or "").upper()) else " KW"
+            candidate = m_sanc.group(1).strip()
+            if not re.search(r"[A-Za-z]", candidate):
+                candidate += " KVA" if ("HT" in (raw_cat or "").upper()) else " KW"
+            if _is_valid_cd(candidate):
+                cd_val = candidate
 
     if not cd_val:
         # Strategy 5: Fallback to Billable Demand if contract demand is unprinted in SBM
         m_bkw = re.search(r"Billable\s*Demand(?:-KW)?\s*[:=\-]?\s*([\d\.]+)", text, re.IGNORECASE)
         if m_bkw:
-            cd_val = f"{m_bkw.group(1).strip()} KW"
+            candidate = f"{m_bkw.group(1).strip()} KW"
+            if _is_valid_cd(candidate):
+                cd_val = candidate
 
     entry["Contract Demand"] = cd_val
     entry["contract_demand"] = cd_val

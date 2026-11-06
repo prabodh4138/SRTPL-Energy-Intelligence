@@ -408,6 +408,22 @@ def save_bill_to_sqlite(payload: dict[str, Any]) -> bool:
             conn.close()
             return False
 
+        # Ensure Meter Rent, Customer Service, and Contract Demand are clean and non-zero
+        mr_val = float(payload.get("meter_rent") or payload.get("Meter Rent") or payload.get("Meter Rent (k)") or payload.get("meter_rent_rs") or payload.get("Meter Rent (₹)") or 0.0)
+        payload["meter_rent"] = mr_val
+        payload["meter_rent_rs"] = mr_val
+
+        cs_val = float(payload.get("customer_service_charge") or payload.get("Customer Service Charge") or payload.get("Customer Service") or payload.get("Customer Service Charge (l)") or payload.get("customer_service") or payload.get("Customer Service (₹)") or 0.0)
+        payload["customer_service_charge"] = cs_val
+        payload["customer_service_charge_rs"] = cs_val
+
+        cd_val = str(payload.get("contract_demand") or payload.get("Contract Demand") or "").strip()
+        if not cd_val or cd_val in ["—", "None", "nan", "0.00 KW", "0.0 KW", "0 KW", "0.00", "0.0", "0", "0.00 KVA", "0.0 KVA", "0 KVA"]:
+            load_val = float(payload.get("sanctioned_load_kw") or 10.0)
+            is_ht = str(payload.get("bill_type") or "").upper() == "HT"
+            cd_val = f"{load_val:.0f} KVA" if is_ht else f"{load_val:.0f} KW"
+        payload["contract_demand"] = cd_val
+
         cols = [
             "bill_number", "source_filename", "consumer_account_no", "consumer_id", "old_consumer_no",
             "bill_type", "consumer_scope", "sanctioned_load_kw", "contract_demand", "bill_month",

@@ -2589,7 +2589,7 @@ def format_bill_for_db(raw_bill: dict[str, Any], verifier_result: dict[str, Any]
 
         "meter_rent_count": str(raw_bill.get("Meter Rent Count") or raw_bill.get("meter_rent_count") or ""),
 
-        "contract_demand": cd_clean or (f"{load_val:.0f} KVA" if is_ht else f"{load_val:.0f} KW"),
+        "contract_demand": (cd_clean if cd_clean and cd_clean.strip() not in ["—", "None", "nan", "0.00 KW", "0.0 KW", "0 KW", "0.00", "0.0", "0", "0.00 KVA", "0.0 KVA", "0 KVA"] else (f"{load_val:.0f} KVA" if is_ht else f"{load_val:.0f} KW")),
 
         "security_deposit": _num(raw_bill.get("Security Deposit") or raw_bill.get("security_deposit")),
 
@@ -2622,8 +2622,10 @@ def format_bill_for_db(raw_bill: dict[str, Any], verifier_result: dict[str, Any]
         "electricity_duty": _num(raw_bill.get("Electricity Duty (j)") or raw_bill.get("electricity_duty")),
 
         "meter_rent": _num(raw_bill.get("meter_rent") or raw_bill.get("Meter Rent") or raw_bill.get("Meter Rent (k)") or raw_bill.get("meter_rent_rs") or raw_bill.get("Meter Rent (₹)")),
+        "meter_rent_rs": _num(raw_bill.get("meter_rent") or raw_bill.get("Meter Rent") or raw_bill.get("Meter Rent (k)") or raw_bill.get("meter_rent_rs") or raw_bill.get("Meter Rent (₹)")),
 
         "customer_service_charge": _num(raw_bill.get("customer_service_charge") or raw_bill.get("Customer Service Charge") or raw_bill.get("Customer Service") or raw_bill.get("Customer Service Charge (l)") or raw_bill.get("Customer Service (₹)")),
+        "customer_service_charge_rs": _num(raw_bill.get("customer_service_charge") or raw_bill.get("Customer Service Charge") or raw_bill.get("Customer Service") or raw_bill.get("Customer Service Charge (l)") or raw_bill.get("Customer Service (₹)")),
 
         "dps_rs": _num(raw_bill.get("DPS(Rs.)") or raw_bill.get("dps_rs")),
 
@@ -3379,6 +3381,8 @@ def update_energy_bill(
 KNOWN_CONSUMER_EXTRACTION_PROFILES = {
 
     "416000000110": {
+        "meter_rent": 1000.0,
+        "customer_service_charge": 250.0,
 
         "consumer_account_no": "416000000110",
 
@@ -3421,6 +3425,8 @@ KNOWN_CONSUMER_EXTRACTION_PROFILES = {
     },
 
     "413000000002": {
+        "meter_rent": 1000.0,
+        "customer_service_charge": 250.0,
 
         "consumer_account_no": "413000000002",
 
@@ -3463,6 +3469,8 @@ KNOWN_CONSUMER_EXTRACTION_PROFILES = {
     },
 
     "813000000281": {
+        "meter_rent": 1000.0,
+        "customer_service_charge": 250.0,
 
         "consumer_account_no": "813000000281",
 
@@ -3505,6 +3513,8 @@ KNOWN_CONSUMER_EXTRACTION_PROFILES = {
     },
 
     "413001070344": {
+        "meter_rent": 0.0,
+        "customer_service_charge": 0.0,
 
         "consumer_account_no": "413001070344",
 
@@ -3547,6 +3557,8 @@ KNOWN_CONSUMER_EXTRACTION_PROFILES = {
     },
 
     "812001070018": {
+        "meter_rent": 150.0,
+        "customer_service_charge": 0.0,
 
         "consumer_account_no": "812001070018",
 
@@ -3589,6 +3601,8 @@ KNOWN_CONSUMER_EXTRACTION_PROFILES = {
     },
 
     "416001070082": {
+        "meter_rent": 150.0,
+        "customer_service_charge": 0.0,
 
         "consumer_account_no": "416001070082",
 
@@ -3631,6 +3645,8 @@ KNOWN_CONSUMER_EXTRACTION_PROFILES = {
     },
 
     "413001070102": {
+        "meter_rent": 150.0,
+        "customer_service_charge": 0.0,
 
         "consumer_account_no": "413001070102",
 
@@ -3673,6 +3689,8 @@ KNOWN_CONSUMER_EXTRACTION_PROFILES = {
     },
 
     "416001070084": {
+        "meter_rent": 150.0,
+        "customer_service_charge": 0.0,
 
         "consumer_account_no": "416001070084",
 
@@ -3715,6 +3733,8 @@ KNOWN_CONSUMER_EXTRACTION_PROFILES = {
     },
 
     "416001070086": {
+        "meter_rent": 150.0,
+        "customer_service_charge": 0.0,
 
         "consumer_account_no": "416001070086",
 
@@ -3757,6 +3777,8 @@ KNOWN_CONSUMER_EXTRACTION_PROFILES = {
     },
 
     "411001070208": {
+        "meter_rent": 150.0,
+        "customer_service_charge": 0.0,
 
         "consumer_account_no": "411001070208",
 
@@ -3799,6 +3821,8 @@ KNOWN_CONSUMER_EXTRACTION_PROFILES = {
     },
 
     "416001070090": {
+        "meter_rent": 150.0,
+        "customer_service_charge": 0.0,
 
         "consumer_account_no": "416001070090",
 
@@ -3841,6 +3865,8 @@ KNOWN_CONSUMER_EXTRACTION_PROFILES = {
     },
 
     "416001111004": {
+        "meter_rent": 150.0,
+        "customer_service_charge": 0.0,
 
         "consumer_account_no": "416001111004",
 
@@ -3883,6 +3909,8 @@ KNOWN_CONSUMER_EXTRACTION_PROFILES = {
     },
 
     "813001070057": {
+        "meter_rent": 150.0,
+        "customer_service_charge": 0.0,
 
         "consumer_account_no": "813001070057",
 
@@ -5348,6 +5376,35 @@ def get_unified_billing_kpi_dataset() -> pd.DataFrame:
 
 
 
+
+            # Contract demand normalization
+            cd_clean_val = cd_str
+            if not cd_clean_val or cd_clean_val.strip() in ["—", "None", "nan", "0.00 KW", "0.0 KW", "0 KW", "0.00", "0.0", "0", "0.00 KVA", "0.0 KVA", "0 KVA"]:
+                if m.get("contract_demand") and str(m.get("contract_demand")).strip() not in ["0.00 KW", "0.00", "0", ""]:
+                    cd_clean_val = str(m["contract_demand"])
+                else:
+                    cd_clean_val = f"{load_kw:.0f} KVA" if b_type == "HT" else f"{load_kw:.0f} KW"
+
+            # Meter rent and customer service charge with tariff defaults
+            mr_clean = _clean_kpi_num(r.get("meter_rent") or r.get("Meter Rent") or r.get("Meter Rent (k)") or r.get("meter_rent_rs") or r.get("Meter Rent (₹)"))
+            if mr_clean <= 0.0:
+                if b_type == "HT":
+                    mr_clean = 1000.0
+                elif ac not in {"413001070344"}:
+                    mr_clean = 150.0
+
+            cs_clean = _clean_kpi_num(r.get("customer_service_charge") or r.get("Customer Service Charge") or r.get("Customer Service") or r.get("Customer Service Charge (l)") or r.get("Customer Service (₹)"))
+            if cs_clean <= 0.0 and b_type == "HT":
+                cs_clean = 250.0
+
+            el_chg_clean = _clean_kpi_num(r.get("electricity_charges") or r.get("Electricity Charge (i)") or r.get("electricity_charge"))
+            if el_chg_clean <= 0.0:
+                el_chg_clean = ec + dem + tod_inc + tod_sur
+
+            el_duty_clean = _clean_kpi_num(r.get("electricity_duty") or r.get("Electricity Duty (j)") or r.get("electricity_duty_rs"))
+            if el_duty_clean <= 0.0 and el_chg_clean > 0.0:
+                el_duty_clean = round(el_chg_clean * (0.07 if b_type == "HT" else 0.04), 2)
+
             combined_rows.append({
 
                 "bill_number": b_no,
@@ -5376,7 +5433,7 @@ def get_unified_billing_kpi_dataset() -> pd.DataFrame:
 
                 "is_provisional_or_average": False,
 
-                "contract_demand": cd_str or (f"{load_kw:.0f} KVA" if b_type == "HT" else f"{load_kw:.0f} KW"),
+                "contract_demand": cd_clean_val,
 
                 "security_deposit": _clean_kpi_num(r.get("security_deposit") or r.get("Security Deposit") or 0.0),
 
@@ -5445,6 +5502,17 @@ def get_unified_billing_kpi_dataset() -> pd.DataFrame:
                 "ai_model_applied": str(r.get("ai_model_applied") or r.get("AI Model Applied") or "Multi-AI Fitted (100%)"),
 
                 "audit_verdict": str(r.get("verification_status") or r.get("Audit Verdict") or "VERIFIED ✓"),
+                "contract_demand": cd_clean_val,
+                "electricity_charges": el_chg_clean,
+                "electricity_duty": el_duty_clean,
+                "meter_rent": mr_clean,
+                "customer_service_charge": cs_clean,
+                "bill_period": str(r.get("bill_period") or r.get("Bill Period") or "—").strip(),
+                "bill_days": str(r.get("bill_days") or r.get("Bill Days/Months") or "—").strip(),
+                "bill_issue_date": str(r.get("bill_issue_date") or r.get("Bill Issue Date") or "—").strip(),
+                "due_date": str(r.get("due_date") or r.get("Due Date") or "—").strip(),
+                "source_filename": str(r.get("source_filename") or r.get("Source PDF") or "Unknown_Bill.pdf").strip(),
+                "meter_rent_count": str(r.get("meter_rent_count") or r.get("Meter Rent Count") or "—").strip(),
 
             })
 
@@ -5584,6 +5652,16 @@ def get_unified_billing_kpi_dataset() -> pd.DataFrame:
 
 
 
+
+            cd_prov_clean = cd_str
+            if not cd_prov_clean or cd_prov_clean.strip() in ["—", "None", "nan", "0.00 KW", "0.0 KW", "0 KW", "0.00", "0.0", "0", "0.00 KVA", "0.0 KVA", "0 KVA"]:
+                if m.get("contract_demand") and str(m.get("contract_demand")).strip() not in ["0.00 KW", "0.00", "0", ""]:
+                    cd_prov_clean = str(m["contract_demand"])
+                else:
+                    cd_prov_clean = f"{load_kw:.0f} KVA" if b_type == "HT" else f"{load_kw:.0f} KW"
+            mr_prov = _clean_kpi_num(r.get("meter_rent") or (1000.0 if b_type == "HT" else (0.0 if ac in {"413001070344"} else 150.0)))
+            cs_prov = _clean_kpi_num(r.get("customer_service_charge") or (250.0 if b_type == "HT" else 0.0))
+
             combined_rows.append({
 
                 "bill_number": b_no,
@@ -5706,8 +5784,9 @@ def get_unified_billing_kpi_dataset() -> pd.DataFrame:
 
         "section", "sub_division", "rebate_date", "dps_rs", "tariff_category",
 
-        "meter_sl_no", "net_before_rebate", "net_after_rebate", "ai_model_applied", "audit_verdict"
+        "meter_sl_no", "net_before_rebate", "net_after_rebate", "ai_model_applied", "audit_verdict",
 
+        "meter_rent", "customer_service_charge", "electricity_charges", "electricity_duty", "bill_period", "bill_days", "bill_issue_date", "due_date", "source_filename", "meter_rent_count",
     ]
 
     for col in required_kpi_cols:
@@ -5964,9 +6043,9 @@ def _ensure_official_register_columns(df: pd.DataFrame) -> pd.DataFrame:
 
         # Contract Demand representation
 
-        if not cd or cd in ["—", "None", "nan"]:
+        if not cd or cd.strip() in ["—", "None", "nan", "0.00 KW", "0.0 KW", "0 KW", "0.00", "0.0", "0", "0.00 KVA", "0.0 KVA", "0 KVA"]:
 
-            if prof.get("contract_demand"):
+            if prof.get("contract_demand") and str(prof.get("contract_demand")).strip() not in ["0.00 KW", "0.00", "0", ""]:
 
                 cd = str(prof["contract_demand"])
 
@@ -6191,17 +6270,36 @@ def _ensure_official_register_columns(df: pd.DataFrame) -> pd.DataFrame:
         r["electricity_duty"] = _clean_kpi_num(r.get("electricity_duty") or 0.0)
 
         mr_val = _clean_kpi_num(r.get("meter_rent") or r.get("Meter Rent") or r.get("Meter Rent (k)") or r.get("meter_rent_rs") or r.get("Meter Rent (₹)") or prof.get("meter_rent") or 0.0)
+        if mr_val <= 0.0:
+            if is_ht:
+                mr_val = 1000.0
+            elif prof.get("meter_rent") is not None:
+                mr_val = float(prof["meter_rent"])
+            elif ac not in {"413001070344"}:
+                mr_val = 150.0
         r["meter_rent"] = mr_val
         r["Meter Rent (k)"] = mr_val
         r["Meter Rent"] = mr_val
         r["Meter Rent (₹)"] = mr_val
 
         cs_val = _clean_kpi_num(r.get("customer_service_charge") or r.get("Customer Service Charge") or r.get("Customer Service") or r.get("Customer Service Charge (l)") or r.get("Customer Service (₹)") or prof.get("customer_service_charge") or 0.0)
+        if cs_val <= 0.0 and is_ht:
+            cs_val = 250.0
         r["customer_service_charge"] = cs_val
         r["Customer Service Charge (l)"] = cs_val
         r["Customer Service Charge"] = cs_val
         r["Customer Service"] = cs_val
         r["Customer Service (₹)"] = cs_val
+
+        r["Electricity Charges (₹)"] = r["electricity_charges"]
+        r["Electricity Duty (₹)"] = r["electricity_duty"]
+        r["Meter Rent (₹)"] = r["meter_rent"]
+        r["Customer Service (₹)"] = r["customer_service_charge"]
+        r["Location"] = str(r.get("location") or prof.get("section") or "—")
+        r["Source File"] = r["source_filename"]
+        r["Bill Period"] = str(r.get("bill_period") or "—")
+        r["Bill Days"] = str(r.get("bill_days") or "—")
+        r["Due Date"] = str(r.get("due_date") or r.get("rebate_date") or "—")
 
 
 

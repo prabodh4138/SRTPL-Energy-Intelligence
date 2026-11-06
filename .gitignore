@@ -54,3 +54,4 @@ htmlcov/
 # Agent & Antigravity internal runtime
 .gemini/
 .agents/
+scratch/
