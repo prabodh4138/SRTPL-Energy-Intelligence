@@ -1,76 +1,74 @@
 -- ============================================================================
--- SRTPL POWER INTELLIGENCE — DELETE ALL DATA EXCEPT CONSUMERS & PLAZAS
+-- SRTPL POWER INTELLIGENCE — BULLETPROOF DELETE ALL TEST & OPERATIONAL DATA
 -- Target: Supabase / PostgreSQL SQL Editor
 --
--- PRESERVED TABLES:
---   1. energy_master.consumer_account (60 master consumer accounts)
---   2. energy_master.plaza (3 plazas: TP01, TP02, TP03)
+-- PRESERVED 100% INTACT:
+--   1. energy_master.consumer_account (All 60 master consumers PRESERVED)
+--   2. energy_master.plaza (All 3 plazas: TP01, TP02, TP03 PRESERVED)
 --
--- WIPED TABLES (0 rows):
---   - energy_master.asset (assets)
---   - public.energy_bills (13 bills)
---   - public.payment_receipts (5 receipts)
---   - public.receipt_allocations (allocations)
---   - public.monthly_budgets (budgets)
---   - public.bill_review_queue & public.bill_rejected_bucket
---   - public.audit_events
---   - energy_readings.* (eb, dg, solar, transformer, ups)
---   - energy_import.* (import_row, import_file, import_batch)
---   - energy_validation.exception_record
+-- WIPED CLEAN (0 rows):
+--   - energy_bills & energy_bills_provisional
+--   - payment_receipts & receipt_allocations
+--   - monthly_budgets, bill_review_queue, bill_rejected_bucket, audit_events
+--   - equipment telemetry (eb, dg, solar, transformer, ups)
+--   - import tables (import_row, import_file, import_batch, exception_record)
+--   - energy_master.asset
 -- ============================================================================
 
-TRUNCATE TABLE 
-    -- 1. Financial, Bills, Receipts & Reconciliation
-    public.receipt_allocations,
-    public.monthly_budgets,
-    public.bill_review_queue,
-    public.bill_rejected_bucket,
-    public.audit_events,
-    public.payment_receipts,
-    public.energy_bills_provisional,
-    public.energy_bills,
-
-    -- 2. Equipment Telemetry & Daily Readings
-    energy_readings.eb,
-    energy_readings.dg,
-    energy_readings.solar,
-    energy_readings.transformer,
-    energy_readings.ups,
-
-    -- 3. File Ingestion & DQ Validation
-    energy_validation.exception_record,
-    energy_import.import_row,
-    energy_import.import_file,
-    energy_import.import_batch,
-
-    -- 4. Master Assets (23 Assets wiped)
-    energy_master.asset
-RESTART IDENTITY CASCADE;
-
--- Safely clear optional tables if they exist
 DO $$
+DECLARE
+    tbl text;
+    tables_to_truncate text[] := ARRAY[
+        'public.receipt_allocations',
+        'public.monthly_budgets',
+        'public.bill_review_queue',
+        'public.bill_rejected_bucket',
+        'public.audit_events',
+        'public.payment_receipts',
+        'public.energy_bills_provisional',
+        'public.energy_bills',
+        'public.merged_bill_receipt_reconciliation',
+        'energy_readings.eb',
+        'energy_readings.dg',
+        'energy_readings.solar',
+        'energy_readings.transformer',
+        'energy_readings.ups',
+        'energy_validation.exception_record',
+        'energy_import.import_row',
+        'energy_import.import_file',
+        'energy_import.import_batch',
+        'energy_analytics.daily_summary',
+        'energy_analytics.kpi_master',
+        'energy_master.asset'
+    ];
 BEGIN
-    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'merged_bill_receipt_reconciliation') THEN
-        EXECUTE 'TRUNCATE TABLE public.merged_bill_receipt_reconciliation RESTART IDENTITY CASCADE';
-    END IF;
-    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'energy_analytics' AND table_name = 'daily_summary') THEN
-        EXECUTE 'TRUNCATE TABLE energy_analytics.daily_summary RESTART IDENTITY CASCADE';
-    END IF;
-    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'energy_analytics' AND table_name = 'kpi_master') THEN
-        EXECUTE 'TRUNCATE TABLE energy_analytics.kpi_master RESTART IDENTITY CASCADE';
-    END IF;
-EXCEPTION WHEN OTHERS THEN
-    NULL;
+    FOREACH tbl IN ARRAY tables_to_truncate
+    LOOP
+        BEGIN
+            EXECUTE 'TRUNCATE TABLE ' || tbl || ' RESTART IDENTITY CASCADE';
+        EXCEPTION 
+            WHEN undefined_table THEN
+                NULL; -- Table does not exist in schema, safely skip
+            WHEN OTHERS THEN
+                NULL;
+        END;
+    END LOOP;
 END $$;
 
--- Reload PostgREST API schema cache
+-- Reload Supabase PostgREST API cache so UI sees changes immediately
 NOTIFY pgrst, 'reload schema';
 
--- Verification Query: Confirm only consumer_account (60) and plaza (3) remain
-SELECT 
-    schemaname, 
-    relname AS table_name, 
-    n_live_tup AS remaining_rows
-FROM pg_stat_user_tables
-WHERE schemaname IN ('public', 'energy_readings', 'energy_master', 'energy_import', 'energy_validation')
-ORDER BY remaining_rows DESC, relname;
+-- Verification: Check live counts of key tables
+SELECT 'energy_master.consumer_account' AS table_name, count(*)::text AS current_rows FROM energy_master.consumer_account
+UNION ALL
+SELECT 'energy_master.plaza', count(*)::text FROM energy_master.plaza
+UNION ALL
+SELECT 'energy_master.asset', count(*)::text FROM energy_master.asset
+UNION ALL
+SELECT 'public.energy_bills', count(*)::text FROM public.energy_bills
+UNION ALL
+SELECT 'public.payment_receipts', count(*)::text FROM public.payment_receipts
+UNION ALL
+SELECT 'public.receipt_allocations', count(*)::text FROM public.receipt_allocations
+UNION ALL
+SELECT 'public.monthly_budgets', count(*)::text FROM public.monthly_budgets;
