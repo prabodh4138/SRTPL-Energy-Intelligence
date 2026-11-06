@@ -384,8 +384,8 @@ NOTIFY pgrst, 'reload schema';
 
 SELECT 
     schemaname, 
-    tablename, 
+    relname AS table_name,
     n_live_tup AS total_rows
 FROM pg_stat_user_tables
 WHERE schemaname IN ('public', 'energy_readings', 'energy_master', 'energy_import', 'energy_validation')
-ORDER BY total_rows DESC, tablename;
+ORDER BY total_rows DESC, relname;

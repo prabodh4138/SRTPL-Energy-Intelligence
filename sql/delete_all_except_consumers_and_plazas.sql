@@ -69,8 +69,8 @@ NOTIFY pgrst, 'reload schema';
 -- Verification Query: Confirm only consumer_account (60) and plaza (3) remain
 SELECT 
     schemaname, 
-    tablename, 
+    relname AS table_name, 
     n_live_tup AS remaining_rows
 FROM pg_stat_user_tables
 WHERE schemaname IN ('public', 'energy_readings', 'energy_master', 'energy_import', 'energy_validation')
-ORDER BY remaining_rows DESC, tablename;
+ORDER BY remaining_rows DESC, relname;
