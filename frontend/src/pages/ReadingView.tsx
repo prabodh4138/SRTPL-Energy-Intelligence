@@ -138,37 +138,64 @@ export const ReadingView: React.FC = () => {
               <table className="w-full text-left text-xs text-slate-300">
                 <thead className="bg-slate-950/40 text-[11px] uppercase tracking-wider text-slate-500 border-b border-slate-800">
                   <tr>
-                    <th className="px-6 py-3">Entry ID</th>
-                    <th className="px-6 py-3">Meter Asset</th>
-                    <th className="px-6 py-3">Plaza</th>
-                    <th className="px-6 py-3">Log Date</th>
-                    <th className="px-6 py-3">Reading (kWh / Units)</th>
-                    <th className="px-6 py-3">Interval Delta</th>
-                    <th className="px-6 py-3">Audit Verdict</th>
+                    <th className="px-5 py-3">Entry ID</th>
+                    <th className="px-5 py-3">Meter Asset</th>
+                    <th className="px-4 py-3">Plaza</th>
+                    <th className="px-5 py-3">Log Date</th>
+                    <th className="px-5 py-3 text-right">Reading (kWh)</th>
+                    <th className="px-5 py-3 text-right">Delta (kWh)</th>
+                    <th className="px-5 py-3 text-right">Reading (kVAh)</th>
+                    <th className="px-5 py-3 text-right">Delta (kVAh)</th>
+                    <th className="px-4 py-3 text-center">PF</th>
+                    <th className="px-5 py-3 text-center">Audit Verdict</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 font-mono">
-                  {(data.records || []).map((row: any) => (
-                    <tr key={row.id} className="hover:bg-slate-800/40 transition">
-                      <td className="px-6 py-3 font-semibold text-emerald-400">{row.id}</td>
-                      <td className="px-6 py-3 text-slate-300">{row.meter_code}</td>
-                      <td className="px-6 py-3">
-                        <span className="px-2 py-0.5 rounded bg-slate-800 text-sky-400 text-[10px]">
-                          {row.plaza}
-                        </span>
-                      </td>
-                      <td className="px-6 py-3 text-slate-400">{row.date}</td>
-                      <td className="px-6 py-3 text-slate-100 font-bold">{row.curr_kwh?.toLocaleString()}</td>
-                      <td className="px-6 py-3 text-emerald-400 font-semibold">
-                        {row.diff_kwh ? `+${row.diff_kwh.toLocaleString()}` : '—'}
-                      </td>
-                      <td className="px-6 py-3">
-                        <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px]">
-                          VALID ✓
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                  {(data.records || []).map((row: any) => {
+                    const rowId = row.id || row.reading_id;
+                    const meterCode = row.meter_code || row.asset_code;
+                    const plaza = row.plaza || row.toll_plaza_id;
+                    const logDate = row.date || row.reading_datetime;
+                    const kwh = row.curr_kwh ?? row.cumulative_kwh;
+                    const diffKwh = row.diff_kwh ?? row.interval_kwh;
+                    const kvah = row.curr_kvah ?? row.cumulative_kvah;
+                    const diffKvah = row.diff_kvah ?? row.interval_kvah;
+                    const pf = row.power_factor ?? row.pf;
+                    const status = row.status || row.data_quality_status || 'VALID ✓';
+
+                    return (
+                      <tr key={rowId} className="hover:bg-slate-800/40 transition">
+                        <td className="px-5 py-3 font-semibold text-emerald-400">{rowId}</td>
+                        <td className="px-5 py-3 text-slate-300">{meterCode}</td>
+                        <td className="px-4 py-3">
+                          <span className="px-2 py-0.5 rounded bg-slate-800 text-sky-400 text-[10px]">
+                            {plaza}
+                          </span>
+                        </td>
+                        <td className="px-5 py-3 text-slate-400 whitespace-nowrap">{logDate}</td>
+                        <td className="px-5 py-3 text-slate-100 font-bold text-right">
+                          {kwh !== undefined && kwh !== null ? Number(kwh).toLocaleString(undefined, { maximumFractionDigits: 1 }) : '—'}
+                        </td>
+                        <td className="px-5 py-3 text-emerald-400 font-semibold text-right">
+                          {diffKwh ? `+${Number(diffKwh).toLocaleString(undefined, { maximumFractionDigits: 1 })}` : '—'}
+                        </td>
+                        <td className="px-5 py-3 text-sky-200 font-medium text-right">
+                          {kvah !== undefined && kvah !== null ? Number(kvah).toLocaleString(undefined, { maximumFractionDigits: 1 }) : '—'}
+                        </td>
+                        <td className="px-5 py-3 text-sky-400 font-medium text-right">
+                          {diffKvah ? `+${Number(diffKvah).toLocaleString(undefined, { maximumFractionDigits: 1 })}` : '—'}
+                        </td>
+                        <td className="px-4 py-3 text-amber-300 font-mono text-center">
+                          {pf !== undefined && pf !== null ? Number(pf).toFixed(2) : '—'}
+                        </td>
+                        <td className="px-5 py-3 text-center">
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px]">
+                            {status}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

@@ -211,6 +211,67 @@ class CustomExportPayload(BaseModel):
     rows: list[dict[str, Any]]
 
 
+COLUMN_ALIASES: dict[str, list[str]] = {
+    # EB / DG / Solar / Transformer readings aliases
+    "id": ["reading_id", "entry_id", "bill_id"],
+    "reading_id": ["id", "entry_id"],
+    "meter_code": ["asset_code", "asset_id", "meter_sl_no"],
+    "asset_code": ["meter_code", "asset_id"],
+    "plaza": ["toll_plaza_id", "plaza_id"],
+    "toll_plaza_id": ["plaza", "plaza_id"],
+    "date": ["reading_datetime", "log_date", "bill_date", "created_at"],
+    "reading_datetime": ["date", "log_date"],
+    "curr_kwh": ["cumulative_kwh", "curr_reading_kwh"],
+    "cumulative_kwh": ["curr_kwh", "curr_reading_kwh"],
+    "diff_kwh": ["interval_kwh", "units_billed"],
+    "interval_kwh": ["diff_kwh", "units_billed"],
+    "curr_kvah": ["cumulative_kvah"],
+    "cumulative_kvah": ["curr_kvah"],
+    "diff_kvah": ["interval_kvah"],
+    "interval_kvah": ["diff_kvah"],
+    "curr_kvarh": ["cumulative_kvarh"],
+    "cumulative_kvarh": ["curr_kvarh"],
+    "diff_kvarh": ["interval_kvarh"],
+    "interval_kvarh": ["diff_kvarh"],
+    "maximum_demand": ["max_demand", "recorded_demand_kva", "md"],
+    "max_demand": ["maximum_demand", "recorded_demand_kva", "md"],
+    "power_factor": ["pf", "power_factor_val"],
+    "pf": ["power_factor", "power_factor_val"],
+    "status": ["data_quality_status", "validation_status"],
+    "data_quality_status": ["status", "validation_status"],
+    "notes": ["remarks", "field_notes"],
+    "remarks": ["notes", "field_notes"],
+    "consumer_number": ["consumer_account_no", "consumer_no", "consumer_id"],
+    "consumer_account_no": ["consumer_number", "consumer_no"],
+    "location": ["feeder_name", "substation_location", "Location / Feeder"],
+
+    # Energy bills aliases
+    "meter_rent": ["meter_rent_rs", "Meter Rent", "Meter Rent (₹)", "Meter Rent (k)"],
+    "meter_rent_rs": ["meter_rent", "Meter Rent", "Meter Rent (₹)", "Meter Rent (k)"],
+    "customer_service_charge": ["customer_service_charge_rs", "Customer Service Charge", "Customer Service (₹)", "Customer Service", "Customer Service Charge (l)"],
+    "customer_service_charge_rs": ["customer_service_charge", "Customer Service Charge", "Customer Service (₹)", "Customer Service"],
+    "contract_demand": ["contract_demand_kva", "Contract Demand", "Contract Demand (kVA)", "contract_demand_kw"],
+    "contract_demand_kva": ["contract_demand", "Contract Demand", "Contract Demand (kVA)", "contract_demand_kw"],
+    "sanctioned_load_kw": ["Sanctioned Load (KW)", "sanctioned_load", "load_kw"],
+    "security_deposit": ["Security Deposit", "Security Deposit (₹)", "security_deposit_rs"],
+    "total_billed_kwh": ["total_units", "units_billed", "Total Units (kWh)", "Units Billed"],
+    "energy_charges": ["Energy Charges (₹)", "energy_charges_rs"],
+    "demand_charge": ["Demand Charge (₹)", "demand_charge_rs"],
+    "tod_incentive": ["TOD Incentive (₹)", "tod_incentive_rs"],
+    "tod_surcharge": ["TOD Surcharge (₹)", "tod_surcharge_rs"],
+    "electricity_charges": ["Electricity Charges (₹)", "electricity_charges_rs"],
+    "electricity_duty": ["Electricity Duty (₹)", "electricity_duty_rs"],
+    "dps_rs": ["DPS (₹)", "DPS(Rs.)", "dps"],
+    "current_total": ["Current Total (₹)", "current_total_rs"],
+    "prompt_rebate": ["Prompt Rebate (₹)", "prompt_rebate_rs"],
+    "net_payable_amount_before_rbt_dt_rs": ["Net Payable Before Rebate (₹)", "net_before_rebate", "Net Payable Amount Before Rbt. Dt.(Rs.)"],
+    "net_payable_amount_after_rbt_dt_rs": ["Net Payable After Rebate (₹)", "net_after_rebate", "Net Payable Amount After Rbt. Dt.(Rs.)"],
+    "total_amount_payable": ["Total Payable (₹)", "total_payable"],
+    "amount_paid": ["Amount Paid (₹)", "amount_paid_rs", "total_paid"],
+    "outstanding_balance": ["Outstanding Balance (₹)", "balance_amount", "balance"],
+}
+
+
 @router.post("/custom-export")
 def export_custom_report(payload: CustomExportPayload):
     """Generates a professional styled Excel (.xlsx) or UTF-8 CSV matching the user's custom created view."""
@@ -220,13 +281,19 @@ def export_custom_report(payload: CustomExportPayload):
     chosen_cols = payload.columns if payload.columns else list(payload.rows[0].keys())
     labels = payload.labels or {}
 
-    # Build clean DataFrame with requested columns in order
+    # Build clean DataFrame with requested columns in order and resolved alias fallbacks
     data_list = []
     for r in payload.rows:
         row_dict = {}
         for c in chosen_cols:
             display_name = labels.get(c, c)
-            row_dict[display_name] = r.get(c, "")
+            val = r.get(c)
+            if val is None or str(val).strip() == "":
+                for alias in COLUMN_ALIASES.get(c, []):
+                    if r.get(alias) is not None and str(r.get(alias)).strip() != "":
+                        val = r.get(alias)
+                        break
+            row_dict[display_name] = "" if val is None else val
         data_list.append(row_dict)
 
     df = pd.DataFrame(data_list)

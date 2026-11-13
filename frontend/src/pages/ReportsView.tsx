@@ -95,6 +95,10 @@ const READING_COLUMNS: Record<EquipmentType, ColumnDef[]> = {
     { key: 'date', label: 'Log Date', category: 'core' },
     { key: 'curr_kwh', label: 'Cumulative Reading (kWh)', category: 'meter' },
     { key: 'diff_kwh', label: 'Interval Delta (kWh)', category: 'meter' },
+    { key: 'curr_kvah', label: 'Cumulative Reading (kVAh)', category: 'meter' },
+    { key: 'diff_kvah', label: 'Interval Delta (kVAh)', category: 'meter' },
+    { key: 'curr_kvarh', label: 'Cumulative Reading (kVARh)', category: 'meter' },
+    { key: 'diff_kvarh', label: 'Interval Delta (kVARh)', category: 'meter' },
     { key: 'maximum_demand', label: 'Max Demand (kW)', category: 'meter' },
     { key: 'power_factor', label: 'Power Factor', category: 'meter' },
     { key: 'consumer_number', label: 'Consumer A/C No.', category: 'core' },
@@ -262,12 +266,18 @@ const BILL_PRESETS: Record<string, string[]> = {
 // Explicit helper: Fields that must NEVER have commas or numeric locale formatting
 const isTextColumn = (key: string): boolean => {
   const k = key.toLowerCase();
+  // Monetary charges must NEVER be treated as text columns
+  if (k.includes('rent') || k.includes('service') || k.includes('charge') || k.includes('duty') || k.includes('amount') || k.includes('balance') || k.includes('paid')) {
+    return false;
+  }
   return (
     k.includes('number') ||
     k.includes('bill_number') ||
     k.includes('bill_no') ||
     k.includes('account') ||
-    k.includes('meter') ||
+    k.includes('meter_sl') ||
+    k.includes('meter_code') ||
+    k.includes('asset_code') ||
     k.includes('code') ||
     k.includes('sl_no') ||
     k.includes('ref') ||
@@ -293,6 +303,64 @@ const isTextColumn = (key: string): boolean => {
     k.includes('year') ||
     k.includes('active')
   );
+};
+
+// Authoritative field alias mapping across database, extractor, and frontend schemas
+const FIELD_ALIAS_MAP: Record<string, string[]> = {
+  id: ['reading_id', 'entry_id', 'bill_id'],
+  reading_id: ['id', 'entry_id'],
+  meter_code: ['asset_code', 'asset_id', 'meter_sl_no'],
+  asset_code: ['meter_code', 'asset_id'],
+  plaza: ['toll_plaza_id', 'plaza_id'],
+  toll_plaza_id: ['plaza', 'plaza_id'],
+  date: ['reading_datetime', 'log_date', 'bill_date', 'created_at'],
+  reading_datetime: ['date', 'log_date'],
+  curr_kwh: ['cumulative_kwh', 'curr_reading_kwh'],
+  cumulative_kwh: ['curr_kwh', 'curr_reading_kwh'],
+  diff_kwh: ['interval_kwh', 'units_billed'],
+  interval_kwh: ['diff_kwh', 'units_billed'],
+  curr_kvah: ['cumulative_kvah'],
+  cumulative_kvah: ['curr_kvah'],
+  diff_kvah: ['interval_kvah'],
+  interval_kvah: ['diff_kvah'],
+  curr_kvarh: ['cumulative_kvarh'],
+  cumulative_kvarh: ['curr_kvarh'],
+  diff_kvarh: ['interval_kvarh'],
+  interval_kvarh: ['diff_kvarh'],
+  maximum_demand: ['max_demand', 'recorded_demand_kva', 'md'],
+  max_demand: ['maximum_demand', 'recorded_demand_kva', 'md'],
+  power_factor: ['pf', 'power_factor_val'],
+  pf: ['power_factor', 'power_factor_val'],
+  status: ['data_quality_status', 'validation_status'],
+  data_quality_status: ['status', 'validation_status'],
+  notes: ['remarks', 'field_notes'],
+  remarks: ['notes', 'field_notes'],
+  consumer_number: ['consumer_account_no', 'consumer_no', 'consumer_id'],
+  consumer_account_no: ['consumer_number', 'consumer_no'],
+  location: ['feeder_name', 'substation_location'],
+  meter_rent: ['meter_rent_rs', 'Meter Rent', 'Meter Rent (₹)', 'Meter Rent (k)'],
+  meter_rent_rs: ['meter_rent', 'Meter Rent', 'Meter Rent (₹)', 'Meter Rent (k)'],
+  customer_service_charge: ['customer_service_charge_rs', 'Customer Service Charge', 'Customer Service (₹)', 'Customer Service', 'Customer Service Charge (l)'],
+  customer_service_charge_rs: ['customer_service_charge', 'Customer Service Charge', 'Customer Service (₹)', 'Customer Service'],
+  contract_demand: ['contract_demand_kva', 'Contract Demand', 'Contract Demand (kVA)', 'contract_demand_kw'],
+  sanctioned_load_kw: ['Sanctioned Load (KW)', 'sanctioned_load', 'load_kw'],
+  total_billed_kwh: ['total_units', 'units_billed', 'Total Units (kWh)'],
+};
+
+const resolveFieldValue = (row: any, key: string): any => {
+  if (!row) return '';
+  if (row[key] !== undefined && row[key] !== null && String(row[key]).trim() !== '') {
+    return row[key];
+  }
+  const aliases = FIELD_ALIAS_MAP[key];
+  if (aliases) {
+    for (const a of aliases) {
+      if (row[a] !== undefined && row[a] !== null && String(row[a]).trim() !== '') {
+        return row[a];
+      }
+    }
+  }
+  return row[key] ?? '';
 };
 
 export const ReportsView: React.FC = () => {
@@ -542,8 +610,8 @@ export const ReportsView: React.FC = () => {
         { label: 'Realization Rate', value: `${realization.toFixed(1)}%`, color: 'text-purple-300' },
       ];
     } else if (selectedModule === 'readings') {
-      const totalUnits = filteredData.reduce((acc, r) => acc + (Number(r.curr_kwh) || 0), 0);
-      const totalDelta = filteredData.reduce((acc, r) => acc + (Number(r.diff_kwh) || 0), 0);
+      const totalUnits = filteredData.reduce((acc, r) => acc + (Number(r.curr_kwh ?? r.cumulative_kwh) || 0), 0);
+      const totalDelta = filteredData.reduce((acc, r) => acc + (Number(r.diff_kwh ?? r.interval_kwh) || 0), 0);
       return [
         { label: 'Reading Entries', value: count.toLocaleString(), color: 'text-slate-100' },
         { label: 'Active Equipment', value: selectedEquipment.toUpperCase(), color: 'text-sky-300' },
@@ -642,7 +710,8 @@ export const ReportsView: React.FC = () => {
         const dataRows = filteredData.map((row) =>
           selectedColumns
             .map((col) => {
-              const val = row[col] === null || row[col] === undefined ? '' : String(row[col]);
+              const rawVal = resolveFieldValue(row, col);
+              const val = rawVal === null || rawVal === undefined ? '' : String(rawVal);
               return `"${val.replace(/"/g, '""')}"`;
             })
             .join(',')
@@ -1156,7 +1225,7 @@ export const ReportsView: React.FC = () => {
                           {idx + 1}
                         </td>
                         {selectedColumns.map((colKey) => {
-                          const val = row[colKey];
+                          const val = resolveFieldValue(row, colKey);
 
                           // Badges for specific status / classifications
                           if (colKey === 'payment_status' || colKey === 'allocation_status') {
