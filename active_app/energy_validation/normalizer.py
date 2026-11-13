@@ -70,8 +70,31 @@ class NormalizationEngine:
 
         elif report_type == "TRANSFORMER":
             issues = validate_transformer(current, self.thresholds.thresholds)
+
+            # Compute interval delta for KWH and KVAH if sequential readings exist
+            cur_kwh = None
+            prev_kwh = None
+            cur_kvah = None
+            prev_kvah = None
+            try:
+                if current.get("kwh") is not None:
+                    cur_kwh = float(current["kwh"])
+                if previous.get("kwh") is not None:
+                    prev_kwh = float(previous["kwh"])
+                if current.get("kvah") is not None:
+                    cur_kvah = float(current["kvah"])
+                if previous.get("kvah") is not None:
+                    prev_kvah = float(previous["kvah"])
+            except (ValueError, TypeError):
+                pass
+
+            interval_kwh = round(cur_kwh - prev_kwh, 4) if (cur_kwh is not None and prev_kwh is not None and cur_kwh >= prev_kwh) else None
+            interval_kvah = round(cur_kvah - prev_kvah, 4) if (cur_kvah is not None and prev_kvah is not None and cur_kvah >= prev_kvah) else None
+
             normalized = {
                 **current,
+                "interval_kwh": interval_kwh,
+                "interval_kvah": interval_kvah,
                 "data_quality_status": "VALID" if not issues else "EXCEPTION",
                 "anomaly_flag": bool(issues),
             }

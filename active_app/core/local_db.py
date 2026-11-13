@@ -272,10 +272,23 @@ def init_local_db() -> None:
         asset_id TEXT NOT NULL,
         asset_code TEXT,
         reading_datetime TEXT NOT NULL,
+        status TEXT,
+        kva REAL,
+        kw REAL,
+        voltage_ry REAL,
+        voltage_yb REAL,
+        voltage_br REAL,
+        current_r REAL,
+        current_y REAL,
+        current_b REAL,
+        diesel_level REAL,
+        diesel_topup REAL,
+        load_percentage REAL,
         cumulative_kwh REAL,
         cumulative_running_hours REAL,
         interval_kwh REAL,
         interval_running_hours REAL,
+        rpm REAL,
         pf REAL,
         created_by TEXT,
         created_on TEXT,
@@ -317,6 +330,11 @@ def init_local_db() -> None:
         secondary_v_ry REAL, secondary_v_yb REAL, secondary_v_br REAL,
         primary_i_r REAL, primary_i_y REAL, primary_i_b REAL,
         secondary_i_r REAL, secondary_i_y REAL, secondary_i_b REAL,
+        cumulative_kwh REAL,
+        cumulative_kvah REAL,
+        interval_kwh REAL,
+        interval_kvah REAL,
+        frequency REAL,
         oil_temperature REAL,
         winding_temperature REAL,
         pf REAL,
@@ -337,12 +355,22 @@ def init_local_db() -> None:
         asset_id TEXT NOT NULL,
         asset_code TEXT,
         reading_datetime TEXT NOT NULL,
+        input_voltage_r REAL,
+        input_voltage_y REAL,
+        input_voltage_b REAL,
+        input_current_r REAL,
+        input_current_y REAL,
+        input_current_b REAL,
+        rectifier_voltage REAL,
+        bypass_voltage REAL,
+        bypass_current REAL,
+        bypass_frequency REAL,
         output_voltage REAL,
         output_current REAL,
         output_frequency REAL,
-        battery_vdc REAL,
         battery_temperature REAL,
-        rectifier_voltage REAL,
+        battery_vdc REAL,
+        battery_current REAL,
         created_by TEXT,
         created_on TEXT,
         remarks TEXT,
@@ -353,6 +381,30 @@ def init_local_db() -> None:
     );
     ''')
     cur.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_ups_asset_datetime ON energy_readings_ups(asset_id, reading_datetime);')
+
+    # Dynamic migrations for any existing SQLite table instances to add newly introduced Excel columns
+    def _add_col_if_missing(tbl: str, col: str, ctype: str):
+        try:
+            cur.execute(f"PRAGMA table_info({tbl});")
+            existing_cols = [c[1] for c in cur.fetchall()]
+            if col not in existing_cols:
+                cur.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {ctype};")
+        except Exception:
+            pass
+
+    # Transformer new columns
+    for col in ["cumulative_kwh", "cumulative_kvah", "interval_kwh", "interval_kvah", "frequency"]:
+        _add_col_if_missing("energy_readings_transformer", col, "REAL")
+
+    # DG new columns
+    for col in ["status"]:
+        _add_col_if_missing("energy_readings_dg", col, "TEXT")
+    for col in ["kva", "kw", "voltage_ry", "voltage_yb", "voltage_br", "current_r", "current_y", "current_b", "diesel_level", "diesel_topup", "load_percentage", "rpm"]:
+        _add_col_if_missing("energy_readings_dg", col, "REAL")
+
+    # UPS new columns
+    for col in ["input_voltage_r", "input_voltage_y", "input_voltage_b", "input_current_r", "input_current_y", "input_current_b", "rectifier_voltage", "bypass_voltage", "bypass_current", "bypass_frequency", "battery_current"]:
+        _add_col_if_missing("energy_readings_ups", col, "REAL")
 
     cur.execute('''
     CREATE TABLE IF NOT EXISTS exception_record (
@@ -669,14 +721,21 @@ def save_juno_ingestion_to_sqlite(
             elif rtype.upper() == "DG":
                 cur.execute(f"""
                 INSERT OR REPLACE INTO {tbl_name} (
-                    reading_id, asset_id, asset_code, reading_datetime, cumulative_kwh, cumulative_running_hours,
-                    interval_kwh, interval_running_hours, pf, created_by, created_on, remarks, location, data_quality_status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    reading_id, asset_id, asset_code, reading_datetime,
+                    status, kva, kw, voltage_ry, voltage_yb, voltage_br,
+                    current_r, current_y, current_b, diesel_level, diesel_topup, load_percentage,
+                    cumulative_kwh, cumulative_running_hours, interval_kwh, interval_running_hours,
+                    rpm, pf, created_by, created_on, remarks, location, data_quality_status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     rid, aid, acode, rdt,
+                    r.get("status"), r.get("kva"), r.get("kw"),
+                    r.get("voltage_ry"), r.get("voltage_yb"), r.get("voltage_br"),
+                    r.get("current_r"), r.get("current_y"), r.get("current_b"),
+                    r.get("diesel_level"), r.get("diesel_topup"), r.get("load_percentage"),
                     r.get("cumulative_kwh"), r.get("cumulative_running_hours"),
                     r.get("interval_kwh"), r.get("interval_running_hours"),
-                    r.get("pf"), r.get("created_by"), r.get("created_on"),
+                    r.get("rpm"), r.get("pf"), r.get("created_by"), r.get("created_on"),
                     r.get("remarks"), r.get("location"), r.get("data_quality_status") or "VALID"
                 ))
             elif rtype.upper() == "SOLAR":
@@ -697,14 +756,17 @@ def save_juno_ingestion_to_sqlite(
                     reading_id, asset_id, asset_code, reading_datetime,
                     primary_v_ry, primary_v_yb, primary_v_br, secondary_v_ry, secondary_v_yb, secondary_v_br,
                     primary_i_r, primary_i_y, primary_i_b, secondary_i_r, secondary_i_y, secondary_i_b,
+                    cumulative_kwh, cumulative_kvah, interval_kwh, interval_kvah, frequency,
                     oil_temperature, winding_temperature, pf, created_by, created_on, remarks, location, data_quality_status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     rid, aid, acode, rdt,
                     r.get("primary_v_ry"), r.get("primary_v_yb"), r.get("primary_v_br"),
                     r.get("secondary_v_ry"), r.get("secondary_v_yb"), r.get("secondary_v_br"),
                     r.get("primary_i_r"), r.get("primary_i_y"), r.get("primary_i_b"),
                     r.get("secondary_i_r"), r.get("secondary_i_y"), r.get("secondary_i_b"),
+                    r.get("cumulative_kwh"), r.get("cumulative_kvah"),
+                    r.get("interval_kwh"), r.get("interval_kvah"), r.get("frequency"),
                     r.get("oil_temperature"), r.get("winding_temperature"), r.get("pf"),
                     r.get("created_by"), r.get("created_on"), r.get("remarks"), r.get("location"),
                     r.get("data_quality_status") or "VALID"
@@ -712,14 +774,21 @@ def save_juno_ingestion_to_sqlite(
             elif rtype.upper() == "UPS":
                 cur.execute(f"""
                 INSERT OR REPLACE INTO {tbl_name} (
-                    reading_id, asset_id, asset_code, reading_datetime, output_voltage, output_current,
-                    output_frequency, battery_vdc, battery_temperature, rectifier_voltage,
+                    reading_id, asset_id, asset_code, reading_datetime,
+                    input_voltage_r, input_voltage_y, input_voltage_b,
+                    input_current_r, input_current_y, input_current_b,
+                    rectifier_voltage, bypass_voltage, bypass_current, bypass_frequency,
+                    output_voltage, output_current, output_frequency,
+                    battery_temperature, battery_vdc, battery_current,
                     created_by, created_on, remarks, location, data_quality_status
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     rid, aid, acode, rdt,
+                    r.get("input_voltage_r"), r.get("input_voltage_y"), r.get("input_voltage_b"),
+                    r.get("input_current_r"), r.get("input_current_y"), r.get("input_current_b"),
+                    r.get("rectifier_voltage"), r.get("bypass_voltage"), r.get("bypass_current"), r.get("bypass_frequency"),
                     r.get("output_voltage"), r.get("output_current"), r.get("output_frequency"),
-                    r.get("battery_vdc"), r.get("battery_temperature"), r.get("rectifier_voltage"),
+                    r.get("battery_temperature"), r.get("battery_vdc"), r.get("battery_current"),
                     r.get("created_by"), r.get("created_on"), r.get("remarks"), r.get("location"),
                     r.get("data_quality_status") or "VALID"
                 ))
