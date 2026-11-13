@@ -407,6 +407,24 @@ def execute_live_juno_ingestion(
 
     # Level 1 Duplicate File Check
     if not allow_reimport:
+        # Check SQLite database duplicate
+        try:
+            from core.local_db import is_juno_file_duplicate_sqlite
+            is_sq_dup, sq_match = is_juno_file_duplicate_sqlite(file_hash)
+            if is_sq_dup and sq_match:
+                return {
+                    "status": "DUPLICATE_FILE",
+                    "success": False,
+                    "sha256": file_hash,
+                    "message": (
+                        f"⛔ DUPLICATE FILE REJECTED (Database Level): This exact CSV file was already imported on "
+                        f"{sq_match.get('created_at', 'earlier')} as '{sq_match.get('original_filename')}'. "
+                        "Duplicate file imports are strictly forbidden."
+                    ),
+                    "filename": path.name,
+                }
+        except Exception:
+            pass
         if client:
             is_db_duplicate = False
             db_match_info = None
@@ -695,6 +713,41 @@ def execute_live_juno_ingestion(
         except Exception as exc:
             cloud_injected = False
             cloud_error = str(exc)
+
+    # Step 6.5: Authoritative SQLite Persistence
+    try:
+        from core.local_db import save_juno_ingestion_to_sqlite
+        save_juno_ingestion_to_sqlite(
+            rtype=rtype,
+            batch_record=batch_record if client else {
+                "import_batch_id": f"LIVE-{file_hash[:8]}",
+                "uploaded_by": uploaded_by,
+                "source_system": "JUNO",
+                "report_type": rtype,
+                "status": "IMPORTED",
+                "total_files": 1,
+                "total_rows": len(inspection["records"]),
+                "valid_rows": len(db_rows) - len(db_exceptions),
+                "invalid_rows": len(db_exceptions),
+            },
+            file_record=import_file_record if client else {
+                "import_file_id": f"FILE-{file_hash[:8]}",
+                "import_batch_id": f"LIVE-{file_hash[:8]}",
+                "original_filename": path.name,
+                "sha256_hash": file_hash,
+                "report_type": rtype,
+                "asset_code": raw_asset_code,
+                "row_count": len(inspection["records"]),
+                "valid_row_count": len(db_rows) - len(db_exceptions),
+                "exception_row_count": len(db_exceptions),
+                "uploaded_by": uploaded_by,
+            },
+            db_rows=db_rows,
+            db_exceptions=db_exceptions,
+            allow_reimport=allow_reimport,
+        )
+    except Exception:
+        pass
 
     # Step 7: Master KPI Calculation
     calc_func, calc_version = KPI_CALCULATORS[rtype]
