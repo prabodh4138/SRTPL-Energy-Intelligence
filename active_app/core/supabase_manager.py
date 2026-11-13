@@ -404,6 +404,18 @@ def remove_all_database_data() -> dict[str, Any]:
         pass
 
     try:
+        from core.local_db import wipe_all_operational_data_sqlite
+        wipe_all_operational_data_sqlite()
+    except Exception:
+        pass
+
+    try:
+        from backend.routers.juno import IMPORT_BATCHES
+        IMPORT_BATCHES.clear()
+    except Exception:
+        pass
+
+    try:
         from core.db_sync import _IN_MEMORY_UPLOADED_BILLS
         _IN_MEMORY_UPLOADED_BILLS.clear()
     except Exception:

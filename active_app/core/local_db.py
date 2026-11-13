@@ -886,3 +886,47 @@ def fetch_juno_batches_sqlite() -> list[dict[str, Any]]:
         return batches
     except Exception:
         return []
+
+
+def wipe_all_operational_data_sqlite() -> dict[str, int]:
+    """
+    Completely wipes all telemetry readings, import batches, exception records,
+    and test bills from local SQLite database, while strictly preserving 
+    energy_consumer_master (all 60 consumers).
+    """
+    deleted_counts: dict[str, int] = {}
+    tables = [
+        "energy_readings_dg",
+        "energy_readings_eb",
+        "energy_readings_solar",
+        "energy_readings_transformer",
+        "energy_readings_ups",
+        "exception_record",
+        "import_file",
+        "import_batch",
+        "energy_bills",
+        "payment_receipts",
+        "receipt_allocations",
+        "merged_bill_receipt_reconciliation",
+    ]
+    try:
+        conn = get_sqlite_connection()
+        cur = conn.cursor()
+        for t in tables:
+            try:
+                cur.execute(f"SELECT COUNT(*) FROM [{t}]")
+                cnt = cur.fetchone()[0]
+                cur.execute(f"DELETE FROM [{t}]")
+                deleted_counts[t] = cnt
+            except Exception:
+                deleted_counts[t] = 0
+        conn.commit()
+        try:
+            cur.execute("VACUUM")
+        except Exception:
+            pass
+        conn.close()
+    except Exception as e:
+        deleted_counts["error"] = str(e)
+    return deleted_counts
+

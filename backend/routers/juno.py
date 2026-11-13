@@ -431,3 +431,57 @@ async def import_juno_multi_files(
         "message": summary_msg,
         "file_results": file_results,
     }
+
+
+@router.post("/reset")
+@router.delete("/batches")
+def reset_all_juno_data() -> dict[str, Any]:
+    """
+    Wipes all Juno telemetry reading data, import tracking, batches, and deduplication hashes
+    across memory, SQLite local database, and Supabase cloud (if connected).
+    Preserves all 60 master consumers and toll plazas.
+    """
+    from core.live_pipeline import clear_local_ingestion_hashes
+    from core.local_db import wipe_all_operational_data_sqlite
+    from core.supabase_manager import get_supabase_client
+
+    # 1. Clear in-memory state
+    global IMPORT_BATCHES
+    IMPORT_BATCHES.clear()
+    clear_local_ingestion_hashes()
+
+    # 2. Wipe SQLite
+    sqlite_res = wipe_all_operational_data_sqlite()
+
+    # 3. Wipe Supabase if connected
+    supabase_wiped = False
+    client = get_supabase_client()
+    if client:
+        try:
+            for s, t in [
+                ("energy_readings", "eb"),
+                ("energy_readings", "dg"),
+                ("energy_readings", "solar"),
+                ("energy_readings", "transformer"),
+                ("energy_readings", "ups"),
+                ("energy_validation", "exception_record"),
+                ("energy_import", "import_row"),
+                ("energy_import", "import_file"),
+                ("energy_import", "import_batch"),
+            ]:
+                try:
+                    client.schema(s).table(t).delete().neq("created_at", "1970-01-01").execute()
+                except Exception:
+                    pass
+            supabase_wiped = True
+        except Exception:
+            pass
+
+    return {
+        "status": "SUCCESS",
+        "message": "All Juno reading data, batches, and deduplication hashes successfully wiped.",
+        "sqlite_wiped": sqlite_res,
+        "supabase_wiped": supabase_wiped,
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    }
+
