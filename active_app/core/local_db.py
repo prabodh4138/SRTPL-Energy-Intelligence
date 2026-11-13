@@ -551,7 +551,7 @@ def is_juno_file_duplicate_sqlite(sha256_hash: str) -> tuple[bool, dict[str, Any
         conn = get_sqlite_connection()
         cur = conn.cursor()
         cur.execute(
-            "SELECT import_file_id, import_batch_id, original_filename, created_at, valid_row_count "
+            "SELECT import_file_id, import_batch_id, original_filename, created_at, valid_row_count, report_type, asset_code "
             "FROM import_file WHERE sha256_hash = ? AND valid_row_count > 0 LIMIT 1",
             (sha256_hash,)
         )
@@ -564,6 +564,8 @@ def is_juno_file_duplicate_sqlite(sha256_hash: str) -> tuple[bool, dict[str, Any
                 "original_filename": row[2],
                 "created_at": row[3],
                 "valid_row_count": row[4],
+                "report_type": row[5],
+                "asset_code": row[6],
             }
         return False, None
     except Exception:

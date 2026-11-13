@@ -93,8 +93,8 @@ export const api = {
     return await res.json();
   },
   uploadJunoFile: (
-    equipment: string,
     file: File,
+    equipment: string = 'AUTO',
     onProgress?: (percent: number, loaded: number, total: number) => void
   ): Promise<any> => {
     return new Promise((resolve, reject) => {
@@ -130,6 +130,71 @@ export const api = {
       };
 
       xhr.onerror = () => reject(new Error('Network error during file upload'));
+      xhr.send(formData);
+    });
+  },
+  uploadJunoFilesMulti: (
+    files: File[],
+    equipment: string = 'AUTO',
+    onProgress?: (percent: number, loaded: number, total: number) => void
+  ): Promise<{
+    status: 'SUCCESS' | 'PARTIAL' | 'DUPLICATES_ONLY' | 'ERROR';
+    total_files: number;
+    successful: number;
+    duplicates: number;
+    failed: number;
+    total_valid_rows: number;
+    message: string;
+    file_results: Array<{
+      filename: string;
+      status: 'SUCCESS' | 'DUPLICATE_REJECTED' | 'ERROR';
+      equipment?: string;
+      equipment_label?: string;
+      asset_code?: string;
+      records_count?: number;
+      valid_count?: number;
+      exception_count?: number;
+      cloud_injected?: boolean;
+      sha256?: string;
+      batch_id?: string;
+      message?: string;
+    }>;
+  }> => {
+    return new Promise((resolve, reject) => {
+      const formData = new FormData();
+      for (const f of files) {
+        formData.append('files', f);
+      }
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${getApiBase()}/juno/upload-multi?equipment=${encodeURIComponent(equipment)}`);
+
+      if (onProgress) {
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const percent = Math.round((event.loaded / event.total) * 100);
+            onProgress(percent, event.loaded, event.total);
+          }
+        };
+      }
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            resolve(JSON.parse(xhr.responseText));
+          } catch {
+            reject(new Error('Invalid JSON response'));
+          }
+        } else {
+          try {
+            const err = JSON.parse(xhr.responseText);
+            reject(new Error(err.detail || err.message || `Upload failed (HTTP ${xhr.status})`));
+          } catch {
+            reject(new Error(`Upload failed (HTTP ${xhr.status})`));
+          }
+        }
+      };
+
+      xhr.onerror = () => reject(new Error('Network error during multi-file upload'));
       xhr.send(formData);
     });
   },

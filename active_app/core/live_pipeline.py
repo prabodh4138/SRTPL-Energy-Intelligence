@@ -498,7 +498,7 @@ def execute_live_juno_ingestion(
     inspection = service.inspect(str(path))
     rtype = inspection["report_type"]
 
-    if expected_type and rtype.upper() != expected_type.upper():
+    if expected_type and str(expected_type).strip().upper() not in ["AUTO", "ANY", "ALL", ""] and rtype.upper() != str(expected_type).strip().upper():
         return {
             "status": "TYPE_MISMATCH",
             "success": False,

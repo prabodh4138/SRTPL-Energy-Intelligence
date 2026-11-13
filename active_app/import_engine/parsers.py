@@ -1,4 +1,5 @@
 from datetime import datetime
+from pathlib import Path
 from .csv_reader import read_csv_rows, clean_cell
 from .detector import detect_report_type, detect_metadata
 from .header_parser import find_header_rows, flatten_headers
@@ -22,7 +23,8 @@ def parse_file(path: str) -> ParsedReport:
     if not rows:
         raise ValueError("CSV is empty.")
 
-    report_type = detect_report_type(rows)
+    file_name = Path(path).name if path else None
+    report_type = detect_report_type(rows, filename=file_name)
     metadata = detect_metadata(rows, report_type)
 
     header_index, header_rows = find_header_rows(rows, report_type)

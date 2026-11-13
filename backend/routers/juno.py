@@ -39,6 +39,9 @@ EQUIPMENT_TYPE_MAP = {
     "🔋 UPS Battery System": "UPS",
     "UPS Battery System": "UPS",
     "UPS": "UPS",
+    "AUTO": "AUTO",
+    "ANY": "AUTO",
+    "ALL": "AUTO",
 }
 
 EQUIPMENT_LABEL_MAP = {
@@ -68,7 +71,7 @@ def get_import_batches() -> list[dict[str, Any]]:
                 .table("import_file")
                 .select("import_file_id, import_batch_id, original_filename, sha256_hash, report_type, row_count, valid_row_count, created_at")
                 .order("created_at", desc=True)
-                .limit(100)
+                .limit(200)
                 .execute()
             )
             if res and res.data:
@@ -112,16 +115,26 @@ def get_import_batches() -> list[dict[str, Any]]:
     return result
 
 
-@router.post("/upload")
-async def import_juno_file(equipment: str, file: UploadFile = File(...)) -> dict[str, Any]:
-    """Uploads, validates, deduplicates, and ingests interval logs into Supabase & SQLite."""
-    content = await file.read()
+def _process_single_juno_upload(
+    filename: str,
+    content: bytes,
+    equipment_param: str = "AUTO",
+    uploaded_by: str = "admin@srtpl.com",
+) -> dict[str, Any]:
+    """Helper that validates, deduplicates, auto-detects equipment, and ingests a single Juno CSV file into Supabase & SQLite."""
     if not content:
-        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+        return {
+            "status": "ERROR",
+            "success": False,
+            "filename": filename,
+            "sha256": "",
+            "message": f"File '{filename}' is empty (0 bytes).",
+            "records_count": 0,
+            "valid_count": 0,
+            "cloud_injected": False,
+        }
 
     sha256_hash = hashlib.sha256(content).hexdigest()
-    rtype = EQUIPMENT_TYPE_MAP.get(equipment.strip(), "EB")
-    equipment_label = EQUIPMENT_LABEL_MAP.get(rtype, equipment)
 
     # -------------------------------------------------------------------------
     # LEVEL 1 DEDUPLICATION AT APPLICATION LEVEL
@@ -129,27 +142,43 @@ async def import_juno_file(equipment: str, file: UploadFile = File(...)) -> dict
     # Check in-memory store
     for b in IMPORT_BATCHES:
         if b.get("sha256") == sha256_hash:
-            msg = f"⛔ DUPLICATE REJECTED (Application Level): File '{file.filename}' (SHA-256: {sha256_hash[:16]}...) was already ingested in batch {b.get('batch_id')} on {b.get('imported_at')}."
-            log_audit_event("DUPLICATE_REJECTED", msg, "FILE", file.filename, "REJECTED")
+            msg = f"⛔ DUPLICATE REJECTED (Application Level): File '{filename}' (SHA-256: {sha256_hash[:16]}...) was already ingested in batch {b.get('batch_id')} on {b.get('imported_at')}."
+            log_audit_event("DUPLICATE_REJECTED", msg, "FILE", filename, "REJECTED")
             return {
                 "status": "DUPLICATE_REJECTED",
+                "success": False,
                 "message": msg,
                 "sha256": sha256_hash,
-                "filename": file.filename,
+                "filename": filename,
                 "existing_batch": b,
+                "equipment": b.get("equipment", "EB"),
+                "equipment_label": b.get("equipment", "⚡ EB Grid Supply"),
+                "records_count": b.get("records_count", 0),
+                "valid_count": b.get("records_count", 0),
+                "cloud_injected": False,
             }
 
     # Check local SQLite database
     is_sq_dup, sq_match = is_juno_file_duplicate_sqlite(sha256_hash)
     if is_sq_dup and sq_match:
-        msg = f"⛔ DUPLICATE REJECTED (Application Level): File '{file.filename}' (SHA-256: {sha256_hash[:16]}...) was already ingested on {sq_match.get('created_at')}."
-        log_audit_event("DUPLICATE_REJECTED", msg, "FILE", file.filename, "REJECTED")
+        sq_rtype = str(sq_match.get("report_type") or "EB").upper()
+        sq_label = EQUIPMENT_LABEL_MAP.get(sq_rtype, f"⚡ {sq_rtype}")
+        sq_asset = sq_match.get("asset_code") or "—"
+        msg = f"⛔ DUPLICATE REJECTED (Application Level): File '{filename}' (SHA-256: {sha256_hash[:16]}...) was already ingested on {sq_match.get('created_at')}."
+        log_audit_event("DUPLICATE_REJECTED", msg, "FILE", filename, "REJECTED")
         return {
             "status": "DUPLICATE_REJECTED",
+            "success": False,
             "message": msg,
             "sha256": sha256_hash,
-            "filename": file.filename,
+            "filename": filename,
             "existing_batch": sq_match,
+            "equipment": sq_rtype,
+            "equipment_label": sq_label,
+            "asset_code": sq_asset,
+            "records_count": sq_match.get("valid_row_count", 0),
+            "valid_count": sq_match.get("valid_row_count", 0),
+            "cloud_injected": False,
         }
 
     # Check Supabase cloud database if connected
@@ -159,7 +188,7 @@ async def import_juno_file(equipment: str, file: UploadFile = File(...)) -> dict
             res = (
                 client.schema("energy_import")
                 .table("import_file")
-                .select("import_file_id, import_batch_id, original_filename, created_at, valid_row_count")
+                .select("import_file_id, import_batch_id, original_filename, created_at, valid_row_count, report_type")
                 .eq("sha256_hash", sha256_hash)
                 .limit(1)
                 .execute()
@@ -167,43 +196,59 @@ async def import_juno_file(equipment: str, file: UploadFile = File(...)) -> dict
             if res.data and len(res.data) > 0:
                 match = res.data[0]
                 if int(match.get("valid_row_count") or 0) > 0:
-                    msg = f"⛔ DUPLICATE REJECTED (Application Level): File '{file.filename}' was already ingested into Supabase on {match.get('created_at')}."
-                    log_audit_event("DUPLICATE_REJECTED", msg, "FILE", file.filename, "REJECTED")
+                    matched_rtype = str(match.get("report_type") or "EB").upper()
+                    msg = f"⛔ DUPLICATE REJECTED (Application Level): File '{filename}' was already ingested into Supabase on {match.get('created_at')}."
+                    log_audit_event("DUPLICATE_REJECTED", msg, "FILE", filename, "REJECTED")
                     return {
                         "status": "DUPLICATE_REJECTED",
+                        "success": False,
                         "message": msg,
                         "sha256": sha256_hash,
-                        "filename": file.filename,
+                        "filename": filename,
                         "existing_batch": match,
+                        "equipment": matched_rtype,
+                        "equipment_label": EQUIPMENT_LABEL_MAP.get(matched_rtype, f"⚡ {matched_rtype}"),
+                        "records_count": match.get("valid_row_count", 0),
+                        "valid_count": match.get("valid_row_count", 0),
+                        "cloud_injected": True,
                     }
         except Exception:
             pass
 
     # -------------------------------------------------------------------------
-    # PARSE, NORMALIZE, AND INGEST THROUGH LIVE PIPELINE
+    # PARSE, NORMALIZE, AND INGEST THROUGH LIVE PIPELINE WITH AUTO-DETECTION
     # -------------------------------------------------------------------------
-    ext = Path(file.filename).suffix or ".csv"
+    ext = Path(filename).suffix or ".csv"
     fd, temp_name = tempfile.mkstemp(prefix="juno_upload_", suffix=ext)
     temp_path = Path(temp_name)
+
+    expected_type = None
+    if equipment_param and equipment_param.strip().upper() not in ["AUTO", "ANY", "ALL", ""]:
+        expected_type = EQUIPMENT_TYPE_MAP.get(equipment_param.strip(), equipment_param.strip())
+
     try:
         temp_path.write_bytes(content)
         os.close(fd)
 
-        # Run master ingestion pipeline
+        # Run master ingestion pipeline (auto-detects equipment if expected_type is None)
         res = execute_live_juno_ingestion(
             file_path=temp_path,
-            expected_type=rtype,
-            uploaded_by="admin@srtpl.com",
+            expected_type=expected_type,
+            uploaded_by=uploaded_by,
             allow_reimport=False,
         )
     except Exception as exc:
-        msg = f"Pipeline execution failed: {exc}"
-        log_audit_event("JUNO_IMPORT_ERROR", msg, "FILE", file.filename, "ERROR")
+        msg = f"Pipeline execution failed for '{filename}': {exc}"
+        log_audit_event("JUNO_IMPORT_ERROR", msg, "FILE", filename, "ERROR")
         return {
             "status": "ERROR",
+            "success": False,
             "message": msg,
             "sha256": sha256_hash,
-            "filename": file.filename,
+            "filename": filename,
+            "records_count": 0,
+            "valid_count": 0,
+            "cloud_injected": False,
         }
     finally:
         if temp_path.exists():
@@ -212,65 +257,85 @@ async def import_juno_file(equipment: str, file: UploadFile = File(...)) -> dict
             except OSError:
                 pass
 
-    # -------------------------------------------------------------------------
-    # LEVEL 1 & LEVEL 2 DEDUPLICATION CHECK FROM PIPELINE RESULT
-    # -------------------------------------------------------------------------
+    # Handle pipeline deduplication response
     if res.get("status") == "DUPLICATE_FILE":
-        msg = res.get("message") or f"⛔ DUPLICATE REJECTED: File '{file.filename}' has already been imported."
-        log_audit_event("DUPLICATE_REJECTED", msg, "FILE", file.filename, "REJECTED")
+        msg = res.get("message") or f"⛔ DUPLICATE REJECTED: File '{filename}' has already been imported."
+        log_audit_event("DUPLICATE_REJECTED", msg, "FILE", filename, "REJECTED")
         return {
             "status": "DUPLICATE_REJECTED",
+            "success": False,
             "message": msg,
             "sha256": sha256_hash,
-            "filename": file.filename,
+            "filename": filename,
+            "records_count": 0,
+            "valid_count": 0,
+            "cloud_injected": False,
         }
 
     if res.get("status") == "TYPE_MISMATCH":
         return {
             "status": "ERROR",
+            "success": False,
             "message": res.get("message", "File format or report type mismatch."),
             "sha256": sha256_hash,
-            "filename": file.filename,
+            "filename": filename,
+            "records_count": 0,
+            "valid_count": 0,
+            "cloud_injected": False,
         }
 
     if not res.get("success"):
         return {
             "status": "ERROR",
+            "success": False,
             "message": res.get("message", "Ingestion processing failed."),
             "sha256": sha256_hash,
-            "filename": file.filename,
+            "filename": filename,
+            "records_count": 0,
+            "valid_count": 0,
+            "cloud_injected": False,
         }
 
     # -------------------------------------------------------------------------
     # SUCCESS: REGISTER BATCH AND RETURN CONFIRMATION
     # -------------------------------------------------------------------------
+    detected_rtype = str(res.get("report_type") or "EB").upper()
+    equipment_label = EQUIPMENT_LABEL_MAP.get(detected_rtype, f"⚡ {detected_rtype}")
+    asset_code = str(res.get("asset_code") or res.get("asset_id") or "—").strip()
+    valid_count = int(res.get("valid_rows") or 0)
+    exception_count = int(res.get("exception_rows") or 0)
+    total_records = int(res.get("total_records") or valid_count)
+    cloud_injected = bool(res.get("cloud_injected", False))
+
     now_iso = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     batch_count = len(IMPORT_BATCHES) + 1
     batch_id = f"JUNO-BATCH-{batch_count:04d}"
 
     new_batch = {
         "batch_id": batch_id,
-        "file_name": file.filename,
+        "file_name": filename,
         "equipment": equipment_label,
-        "records_count": res.get("valid_rows", 0),
-        "valid_count": res.get("valid_rows", 0),
-        "exception_count": res.get("exception_rows", 0),
+        "report_type": detected_rtype,
+        "records_count": valid_count,
+        "valid_count": valid_count,
+        "exception_count": exception_count,
         "sha256": sha256_hash,
         "status": "INGESTED",
         "imported_at": now_iso,
-        "cloud_injected": res.get("cloud_injected", False),
+        "cloud_injected": cloud_injected,
         "asset_id": res.get("asset_id", "—"),
+        "asset_code": asset_code,
     }
     IMPORT_BATCHES.insert(0, new_batch)
 
-    cloud_note = " (Cloud Sync Active: Injected into Supabase)" if res.get("cloud_injected") else ""
+    cloud_note = " (Cloud Sync Active: Injected into Supabase)" if cloud_injected else ""
     success_msg = (
-        f"Successfully ingested {file.filename} into {equipment_label} pipeline: "
-        f"{res.get('valid_rows', 0)} clean interval readings, {res.get('exception_rows', 0)} exceptions logged{cloud_note}."
+        f"Successfully ingested {filename} into {equipment_label} pipeline [Asset: {asset_code}]: "
+        f"{valid_count} clean interval readings, {exception_count} exceptions logged{cloud_note}."
     )
     log_audit_event(
         "JUNO_IMPORT_SUCCESS",
-        f"Ingested {file.filename} ({equipment_label}) under batch {batch_id}. Valid: {res.get('valid_rows')}, Cloud: {res.get('cloud_injected')}",
+        f"Ingested {filename} ({equipment_label}, Asset: {asset_code}) under batch {batch_id}. Valid: {valid_count}, Cloud: {cloud_injected}",
         "BATCH",
         batch_id,
         "SUCCESS"
@@ -278,13 +343,91 @@ async def import_juno_file(equipment: str, file: UploadFile = File(...)) -> dict
 
     return {
         "status": "SUCCESS",
+        "success": True,
         "message": success_msg,
+        "batch_id": batch_id,
+        "filename": filename,
+        "equipment": detected_rtype,
+        "equipment_label": equipment_label,
+        "asset_code": asset_code,
+        "records_count": total_records,
+        "valid_count": valid_count,
+        "exception_count": exception_count,
+        "cloud_injected": cloud_injected,
+        "sha256": sha256_hash,
         "batch": new_batch,
         "details": {
-            "valid_rows": res.get("valid_rows", 0),
-            "exception_rows": res.get("exception_rows", 0),
-            "cloud_injected": res.get("cloud_injected", False),
+            "valid_rows": valid_count,
+            "exception_rows": exception_count,
+            "cloud_injected": cloud_injected,
             "cloud_error": res.get("cloud_error"),
             "asset_id": res.get("asset_id"),
+            "asset_code": asset_code,
+            "report_type": detected_rtype,
         }
+    }
+
+
+@router.post("/upload")
+async def import_juno_file(equipment: str = "AUTO", file: UploadFile = File(...)) -> dict[str, Any]:
+    """Single-file endpoint with auto-detection of equipment & asset code."""
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    return _process_single_juno_upload(file.filename, content, equipment_param=equipment)
+
+
+@router.post("/upload-multi")
+async def import_juno_multi_files(
+    files: list[UploadFile] = File(...),
+    equipment: str = "AUTO",
+) -> dict[str, Any]:
+    """Unified multi-file upload endpoint.
+    Accepts multiple CSV/XLSX files simultaneously across DG, EB, Solar, Transformer, UPS.
+    Automatically detects equipment type and asset codes per file and injects into Supabase & SQLite."""
+    if not files:
+        raise HTTPException(status_code=400, detail="No files uploaded.")
+
+    file_results: list[dict[str, Any]] = []
+    success_count = 0
+    dup_count = 0
+    fail_count = 0
+    total_valid_rows = 0
+
+    for f in files:
+        content = await f.read()
+        res = _process_single_juno_upload(f.filename, content, equipment_param=equipment)
+        status = res.get("status")
+
+        if status == "SUCCESS":
+            success_count += 1
+            total_valid_rows += int(res.get("valid_count") or 0)
+        elif status == "DUPLICATE_REJECTED":
+            dup_count += 1
+        else:
+            fail_count += 1
+
+        file_results.append(res)
+
+    overall_status = (
+        "SUCCESS" if (fail_count == 0 and dup_count == 0 and success_count > 0)
+        else ("PARTIAL" if success_count > 0
+        else ("DUPLICATES_ONLY" if dup_count > 0 and fail_count == 0
+        else "ERROR"))
+    )
+
+    summary_msg = (
+        f"Processed {len(files)} files: {success_count} ingested successfully into Supabase ({total_valid_rows} total records), "
+        f"{dup_count} duplicate(s) rejected, {fail_count} failed."
+    )
+
+    return {
+        "status": overall_status,
+        "total_files": len(files),
+        "successful": success_count,
+        "duplicates": dup_count,
+        "failed": fail_count,
+        "total_valid_rows": total_valid_rows,
+        "message": summary_msg,
+        "file_results": file_results,
     }

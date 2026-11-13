@@ -1,15 +1,35 @@
+import re
 from .models import ReportMetadata
 from .csv_reader import clean_cell
 
 REPORT_SIGNATURES = {
-    "SOLAR": ["solar", "unit generated in kwh"],
-    "DG": ["dg", "diesel", "running hours"],
-    "EB": ["eb", "consumer number"],
-    "TRANSFORMER": ["transformer daily log report", "primary side", "secondary side"],
-    "UPS": ["ups daily log report", "battery", "by pass"],
+    "SOLAR": ["solar", "unit generated in kwh", "solarplantid", "solar plant id", "solar generation"],
+    "DG": ["dg", "diesel", "running hours", "generator no", "diesel top-up", "rpm", "load current"],
+    "EB": ["eb", "consumer number", "eb meter id", "kvah", "kvarh", "maximum demand", "power factor"],
+    "TRANSFORMER": ["transformer daily log report", "transformer", "primary side", "secondary side", "transformer id", "wti", "oti"],
+    "UPS": ["ups daily log report", "ups", "battery", "by pass", "ups id", "rectifier voltage", "vdc", "main(input)"],
 }
 
-def detect_report_type(rows: list[list[str]]) -> str:
+ASSET_CODE_PATTERNS = [
+    (re.compile(r"SR-E-EM-EB-", re.IGNORECASE), "EB"),
+    (re.compile(r"SR-E-(?:AP-DGX|DG)-", re.IGNORECASE), "DG"),
+    (re.compile(r"SR-E-AP-SPX-", re.IGNORECASE), "SOLAR"),
+    (re.compile(r"SR-E-HT-TFR-", re.IGNORECASE), "TRANSFORMER"),
+    (re.compile(r"SR-E-AP-UPS-", re.IGNORECASE), "UPS"),
+]
+
+def detect_report_type(rows: list[list[str]], filename: str | None = None) -> str:
+    # 1. First priority: Check asset code patterns directly in the first 15 rows
+    for row in rows[:15]:
+        for cell in row:
+            val = (cell or "").strip()
+            if not val:
+                continue
+            for pattern, rtype in ASSET_CODE_PATTERNS:
+                if pattern.search(val):
+                    return rtype
+
+    # 2. Check title or specific equipment headers in rows
     text = " ".join(
         (cell or "").strip().lower()
         for row in rows[:20]
@@ -20,11 +40,28 @@ def detect_report_type(rows: list[list[str]]) -> str:
         scores[report_type] = sum(1 for s in signatures if s in text)
 
     report_type, score = max(scores.items(), key=lambda x: x[1])
-    if score == 0:
-        if all(token in text for token in ["date", "kwh", "kvah", "kvarh", "md", "pf"]):
+    if score > 0:
+        return report_type
+
+    # 3. Fallback: Inspect filename if provided
+    if filename:
+        fn_lower = filename.lower()
+        if "generator" in fn_lower or "dg" in fn_lower:
+            return "DG"
+        if "solar" in fn_lower:
+            return "SOLAR"
+        if "transformer" in fn_lower or "tfr" in fn_lower:
+            return "TRANSFORMER"
+        if "ups" in fn_lower:
+            return "UPS"
+        if "eb" in fn_lower or "grid" in fn_lower:
             return "EB"
-        raise ValueError("Unable to identify JUNO report type.")
-    return report_type
+
+    # 4. Fallback: EB tokens check
+    if all(token in text for token in ["date", "kwh", "kvah", "kvarh", "md", "pf"]):
+        return "EB"
+
+    raise ValueError("Unable to identify JUNO report type automatically from content or asset code.")
 
 def _find_value(rows, labels):
     for row in rows[:12]:
@@ -69,6 +106,19 @@ def detect_metadata(rows, report_type):
                             md.location = clean_cell(data_row[loc_col])
                             break
                 break
+
+    # Fallback asset_code discovery using regex in top rows if label wasn't matched
+    if not md.asset_code:
+        for row in rows[:15]:
+            for cell in row:
+                c = (cell or "").strip()
+                match = re.search(r"(SR-E-(?:EM-EB|AP-DGX|DG|AP-SPX|HT-TFR|AP-UPS)-[A-Za-z0-9_-]+)", c, re.IGNORECASE)
+                if match:
+                    md.asset_code = match.group(1).strip()
+                    break
+            if md.asset_code:
+                break
+
     md.location = md.location or _find_value(rows, ["location"])
 
     return md
