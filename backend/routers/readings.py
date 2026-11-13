@@ -256,29 +256,47 @@ def get_readings(asset_type: str):
     cfg = EQUIPMENT_CONFIG[atype]
     records = []
 
-    # 1. Primary: Query live Supabase table if connected
+    # 1. Primary: Query live Supabase table if connected (paged to fetch ALL historical records from 1st April 2026 onwards)
     client = get_supabase_client()
     if client:
-        for query_target in [
-            lambda: client.schema("energy_readings").table(atype).select("*").order("reading_datetime", desc=True).limit(100).execute(),
-            lambda: client.table(f"reading_{atype}").select("*").order("reading_datetime", desc=True).limit(100).execute(),
-            lambda: client.schema("energy_readings").table(atype).select("*").order("created_at", desc=True).limit(100).execute(),
+        for table_builder in [
+            lambda: client.schema("energy_readings").table(atype),
+            lambda: client.table(f"reading_{atype}"),
+            lambda: client.table(atype),
         ]:
             try:
-                res = query_target()
-                if res and res.data and len(res.data) > 0:
-                    records = res.data
+                all_rows = []
+                offset = 0
+                page_size = 1000
+                while True:
+                    res = (
+                        table_builder()
+                        .select("*")
+                        .order("reading_datetime", desc=True)
+                        .range(offset, offset + page_size - 1)
+                        .execute()
+                    )
+                    if not res or not res.data:
+                        break
+                    all_rows.extend(res.data)
+                    if len(res.data) < page_size:
+                        break
+                    offset += page_size
+                    if offset >= 50000:
+                        break
+                if all_rows:
+                    records = all_rows
                     break
             except Exception:
                 pass
 
-    # 2. Secondary: If Supabase empty or offline, query authoritative SQLite database
+    # 2. Secondary: If Supabase empty or offline, query authoritative SQLite database (ALL records without limit)
     if not records:
         try:
             conn = get_sqlite_connection()
             cur = conn.cursor()
             tbl = f"energy_readings_{atype}"
-            cur.execute(f"SELECT * FROM {tbl} ORDER BY reading_datetime DESC LIMIT 100")
+            cur.execute(f"SELECT * FROM {tbl} ORDER BY reading_datetime DESC")
             columns = [desc[0] for desc in cur.description]
             rows = cur.fetchall()
             conn.close()

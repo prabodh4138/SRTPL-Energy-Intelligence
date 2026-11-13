@@ -22,6 +22,10 @@ import {
   Sun,
   BatteryCharging,
   Power,
+  ChevronDown,
+  ChevronRight,
+  MinusSquare,
+  CalendarDays,
 } from 'lucide-react';
 
 interface ColumnDef {
@@ -363,6 +367,64 @@ const resolveFieldValue = (row: any, key: string): any => {
   return row[key] ?? '';
 };
 
+// ---------------------------------------------------------------------------
+// Grilled Hierarchical Month & Date Structures
+// ---------------------------------------------------------------------------
+
+interface DateEntry {
+  rawKey: string;
+  display: string;
+  count: number;
+}
+
+interface MonthGroup {
+  monthKey: string;
+  monthLabel: string;
+  year: string;
+  dates: DateEntry[];
+  totalRecords: number;
+}
+
+const MONTH_NAMES_FULL = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'
+];
+
+const MONTH_NAMES_SHORT = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+];
+
+const parseRecordMonth = (val: string): { monthKey: string; monthLabel: string; year: string } => {
+  const s = String(val || '').trim();
+  // Match ISO YYYY-MM (e.g. 2026-04-15 08:00:00 or 2026-04)
+  if (/^\d{4}-\d{2}/.test(s)) {
+    const y = s.slice(0, 4);
+    const mNum = parseInt(s.slice(5, 7), 10);
+    const mName = MONTH_NAMES_FULL[mNum - 1] || s.slice(5, 7);
+    return {
+      monthKey: `${y}-${String(mNum).padStart(2, '0')}`,
+      monthLabel: `${mName} ${y}`,
+      year: y,
+    };
+  }
+  // Match month name (e.g. October 2026 or Oct-2026)
+  for (let idx = 0; idx < MONTH_NAMES_FULL.length; idx++) {
+    const full = MONTH_NAMES_FULL[idx];
+    const short = MONTH_NAMES_SHORT[idx];
+    if (s.toLowerCase().includes(full.toLowerCase()) || s.toLowerCase().includes(short.toLowerCase())) {
+      const matchY = s.match(/\b(20\d\d)\b/);
+      const y = matchY ? matchY[1] : '2026';
+      return {
+        monthKey: `${y}-${String(idx + 1).padStart(2, '0')}`,
+        monthLabel: `${full} ${y}`,
+        year: y,
+      };
+    }
+  }
+  return { monthKey: s, monthLabel: s, year: '2026' };
+};
+
 export const ReportsView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'custom' | 'packs'>('custom');
   const [selectedModule, setSelectedModule] = useState<ModuleType>('bills');
@@ -381,6 +443,8 @@ export const ReportsView: React.FC = () => {
 
   // Filters State
   const [selectedMonths, setSelectedMonths] = useState<string[]>([]);
+  const [selectedDates, setSelectedDates] = useState<string[]>([]);
+  const [expandedMonths, setExpandedMonths] = useState<string[]>([]);
   const [selectedPlazas, setSelectedPlazas] = useState<string[]>([]);
   const [selectedFYears, setSelectedFYears] = useState<string[]>([]);
   const [selectedFeeder, setSelectedFeeder] = useState<string>('ALL');
@@ -542,6 +606,129 @@ export const ReportsView: React.FC = () => {
     return Array.from(new Set(activeRawDataset.map((b) => b.financial_year).filter(Boolean))).sort() as string[];
   }, [activeRawDataset]);
 
+  // Grilled Hierarchical Month & Date Grouping (supports 1st April 2026 onwards)
+  const monthHierarchy = useMemo<MonthGroup[]>(() => {
+    const map = new Map<string, {
+      monthKey: string;
+      monthLabel: string;
+      year: string;
+      datesMap: Map<string, DateEntry>;
+      totalRecords: number;
+    }>();
+
+    activeRawDataset.forEach((row) => {
+      const rawDate = row.date || row.reading_datetime || row.bill_month || row.collections_date;
+      if (!rawDate) return;
+      const s = String(rawDate).trim();
+      const { monthKey, monthLabel, year } = parseRecordMonth(s);
+
+      if (!map.has(monthKey)) {
+        map.set(monthKey, {
+          monthKey,
+          monthLabel,
+          year,
+          datesMap: new Map(),
+          totalRecords: 0,
+        });
+      }
+      const entry = map.get(monthKey)!;
+      entry.totalRecords += 1;
+
+      // Clean readable date display
+      let display = s;
+      if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+        const day = s.slice(8, 10);
+        const mNum = parseInt(s.slice(5, 7), 10);
+        const shortM = MONTH_NAMES_SHORT[mNum - 1] || s.slice(5, 7);
+        const time = s.length >= 16 ? s.slice(11, 16) : '';
+        display = time ? `${day} ${shortM} (${time})` : `${day} ${shortM}`;
+      }
+
+      if (entry.datesMap.has(s)) {
+        entry.datesMap.get(s)!.count += 1;
+      } else {
+        entry.datesMap.set(s, { rawKey: s, display, count: 1 });
+      }
+    });
+
+    const list: MonthGroup[] = Array.from(map.values()).map((mg) => ({
+      monthKey: mg.monthKey,
+      monthLabel: mg.monthLabel,
+      year: mg.year,
+      dates: Array.from(mg.datesMap.values()).sort((a, b) => b.rawKey.localeCompare(a.rawKey)),
+      totalRecords: mg.totalRecords,
+    }));
+
+    // Sort descending so latest month appears first (e.g. October 2026 ... April 2026)
+    return list.sort((a, b) => b.monthKey.localeCompare(a.monthKey));
+  }, [activeRawDataset]);
+
+  const allTotalDates = useMemo(
+    () => monthHierarchy.reduce((acc, m) => acc + m.dates.length, 0),
+    [monthHierarchy]
+  );
+  const allTotalRecords = useMemo(
+    () => monthHierarchy.reduce((acc, m) => acc + m.totalRecords, 0),
+    [monthHierarchy]
+  );
+
+  // Synchronize selectedDates when activeRawDataset changes
+  const prevDatasetRef = React.useRef<any[]>(activeRawDataset);
+  useEffect(() => {
+    if (prevDatasetRef.current !== activeRawDataset) {
+      prevDatasetRef.current = activeRawDataset;
+      const allKeys = monthHierarchy.flatMap((m) => m.dates.map((d) => d.rawKey));
+      setSelectedDates(allKeys);
+      // Auto-expand the latest month so the user sees date-level drilldown right away
+      if (monthHierarchy.length > 0) {
+        setExpandedMonths([monthHierarchy[0].monthKey]);
+      }
+    }
+  }, [activeRawDataset, monthHierarchy]);
+
+  // Grilled Hierarchy Handler Callbacks
+  const handleToggleMonth = (monthKey: string) => {
+    const mg = monthHierarchy.find((m) => m.monthKey === monthKey);
+    if (!mg) return;
+    const monthRawKeys = mg.dates.map((d) => d.rawKey);
+    const allSelected = monthRawKeys.every((k) => selectedDates.includes(k));
+
+    if (allSelected) {
+      setSelectedDates((prev) => prev.filter((k) => !monthRawKeys.includes(k)));
+    } else {
+      setSelectedDates((prev) => Array.from(new Set([...prev, ...monthRawKeys])));
+    }
+  };
+
+  const handleToggleDate = (rawKey: string) => {
+    setSelectedDates((prev) =>
+      prev.includes(rawKey) ? prev.filter((k) => k !== rawKey) : [...prev, rawKey]
+    );
+  };
+
+  const handleSelectAllDates = () => {
+    const all = monthHierarchy.flatMap((m) => m.dates.map((d) => d.rawKey));
+    setSelectedDates(all);
+  };
+
+  const handleClearAllDates = () => {
+    setSelectedDates([]);
+  };
+
+  const handleToggleExpandMonth = (monthKey: string) => {
+    setExpandedMonths((prev) =>
+      prev.includes(monthKey) ? prev.filter((k) => k !== monthKey) : [...prev, monthKey]
+    );
+  };
+
+  const handleExpandAllMonths = () => {
+    setExpandedMonths(monthHierarchy.map((m) => m.monthKey));
+  };
+
+  const handleCollapseAllMonths = () => {
+    setExpandedMonths([]);
+  };
+
   // Filtered Records
   const filteredData = useMemo(() => {
     return activeRawDataset.filter((row) => {
@@ -550,10 +737,19 @@ export const ReportsView: React.FC = () => {
       if (selectedPlazas.length > 0 && row[plazaKey] && !selectedPlazas.includes(row[plazaKey])) {
         return false;
       }
-      // Month / Date Filter
-      const dateVal = row.bill_month || row.date;
-      if (selectedMonths.length > 0 && dateVal && !selectedMonths.includes(dateVal)) {
-        return false;
+      // Grilled Hierarchical Month & Date Filter
+      if (monthHierarchy.length > 0) {
+        if (selectedDates.length === 0) return false;
+        const rawDate = row.date || row.reading_datetime || row.bill_month || row.collections_date;
+        if (rawDate) {
+          const s = String(rawDate).trim();
+          const matches =
+            selectedDates.includes(s) ||
+            (row.bill_month && selectedDates.includes(String(row.bill_month).trim())) ||
+            (row.date && selectedDates.includes(String(row.date).trim())) ||
+            (row.reading_datetime && selectedDates.includes(String(row.reading_datetime).trim()));
+          if (!matches) return false;
+        }
       }
       // Financial Year Filter
       if (selectedFYears.length > 0 && row.financial_year && !selectedFYears.includes(row.financial_year)) {
@@ -817,13 +1013,15 @@ export const ReportsView: React.FC = () => {
 
               <button
                 onClick={() => {
-                  setSelectedMonths(distinctMonths);
                   setSelectedPlazas(distinctPlazas);
                   setSelectedFYears(distinctFYears);
                   setSelectedFeeder('ALL');
                   setSelectedScope('ALL');
                   setSelectedPaymentStatus('ALL');
                   setSearchQuery('');
+                  const allKeys = monthHierarchy.flatMap((m) => m.dates.map((d) => d.rawKey));
+                  setSelectedDates(allKeys);
+                  setExpandedMonths(monthHierarchy.length > 0 ? [monthHierarchy[0].monthKey] : []);
                 }}
                 className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-sky-400 transition ml-auto"
               >
@@ -871,11 +1069,11 @@ export const ReportsView: React.FC = () => {
               <span>Multi-Parameter Slicing & Drilling</span>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {/* Toll Plaza Filter */}
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between text-[11px] text-slate-400">
-                  <span className="font-semibold text-slate-300">Toll Plaza</span>
+                  <span className="font-semibold text-slate-300">Toll Plaza Filter</span>
                   <div className="flex items-center gap-1.5 text-[10px]">
                     <button onClick={() => setSelectedPlazas(distinctPlazas)} className="text-sky-400 hover:underline">
                       Select All
@@ -897,7 +1095,7 @@ export const ReportsView: React.FC = () => {
                             prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]
                           )
                         }
-                        className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition ${
+                        className={`px-3 py-1 rounded-lg text-xs font-bold border transition ${
                           isSel
                             ? 'bg-sky-500/20 text-sky-300 border-sky-500/40'
                             : 'bg-slate-800/60 text-slate-400 border-slate-700/60 hover:text-slate-200'
@@ -909,47 +1107,6 @@ export const ReportsView: React.FC = () => {
                   })}
                   {distinctPlazas.length === 0 && (
                     <span className="text-xs text-slate-500 italic">No plazas found</span>
-                  )}
-                </div>
-              </div>
-
-              {/* Month / Date Filter */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between text-[11px] text-slate-400">
-                  <span className="font-semibold text-slate-300">{selectedModule === 'readings' ? 'Log Date' : 'Bill Month'}</span>
-                  <div className="flex items-center gap-1.5 text-[10px]">
-                    <button onClick={() => setSelectedMonths(distinctMonths)} className="text-sky-400 hover:underline">
-                      Select All
-                    </button>
-                    <span>·</span>
-                    <button onClick={() => setSelectedMonths([])} className="text-slate-500 hover:underline">
-                      Clear
-                    </button>
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pr-1">
-                  {distinctMonths.map((m) => {
-                    const isSel = selectedMonths.includes(m);
-                    return (
-                      <button
-                        key={m}
-                        onClick={() =>
-                          setSelectedMonths((prev) =>
-                            prev.includes(m) ? prev.filter((x) => x !== m) : [...prev, m]
-                          )
-                        }
-                        className={`px-2 py-0.5 rounded-lg text-[11px] font-mono border transition ${
-                          isSel
-                            ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 font-bold'
-                            : 'bg-slate-800/60 text-slate-400 border-slate-700/60 hover:text-slate-200'
-                        }`}
-                      >
-                        {m}
-                      </button>
-                    );
-                  })}
-                  {distinctMonths.length === 0 && (
-                    <span className="text-xs text-slate-500 italic">All available</span>
                   )}
                 </div>
               </div>
@@ -987,7 +1144,7 @@ export const ReportsView: React.FC = () => {
               {/* Payment or Clearance Status */}
               {(selectedModule === 'bills' || selectedModule === 'receipts') && (
                 <div>
-                  <label className="text-[11px] font-semibold text-slate-300 block mb-1">Status Filter</label>
+                  <label className="text-[11px] font-semibold text-slate-300 block mb-1">Payment Status</label>
                   <select
                     value={selectedPaymentStatus}
                     onChange={(e) => setSelectedPaymentStatus(e.target.value)}
@@ -1005,7 +1162,7 @@ export const ReportsView: React.FC = () => {
               {selectedModule === 'bills' && (
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between text-[11px] text-slate-400">
-                    <span className="font-semibold text-slate-300">Period / FY</span>
+                    <span className="font-semibold text-slate-300">Financial Year</span>
                     <div className="flex items-center gap-1.5 text-[10px]">
                       <button onClick={() => setSelectedFYears(distinctFYears)} className="text-sky-400 hover:underline">
                         Select All
@@ -1037,6 +1194,194 @@ export const ReportsView: React.FC = () => {
                   </div>
                 </div>
               )}
+            </div>
+
+            {/* Dedicated Grilled Hierarchical Month & Date Filter */}
+            <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-xl bg-sky-500/10 text-sky-400 border border-sky-500/20">
+                    <CalendarDays className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-slate-100">
+                        {selectedModule === 'readings' ? 'Log Date Telemetry Filter' : 'Period & Month Slicing'}
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
+                        Grilled Hierarchy Active
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-0.5">
+                      Organized month-wise (from 1st April 2026 onwards). Toggle month checkbox to select all dates, or expand chevron to drill down date-wise.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="px-2.5 py-1 rounded-xl bg-slate-800 text-sky-300 font-mono text-[11px] border border-slate-700">
+                    {selectedDates.length} of {allTotalDates} dates selected ({allTotalRecords} logs)
+                  </span>
+                  <div className="flex items-center gap-1.5 text-xs pl-2 border-l border-slate-800">
+                    <button
+                      type="button"
+                      onClick={handleSelectAllDates}
+                      className="px-2 py-1 rounded-lg bg-sky-500/10 text-sky-400 hover:bg-sky-500/20 font-bold transition"
+                    >
+                      Select All
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleClearAllDates}
+                      className="px-2 py-1 rounded-lg bg-slate-800 text-slate-400 hover:text-rose-400 font-semibold transition"
+                    >
+                      Clear
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleExpandAllMonths}
+                      className="px-2 py-1 rounded-lg bg-slate-800 text-slate-300 hover:text-white transition"
+                    >
+                      Expand All
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCollapseAllMonths}
+                      className="px-2 py-1 rounded-lg bg-slate-800 text-slate-300 hover:text-white transition"
+                    >
+                      Collapse All
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Grilled Month Cards Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
+                {monthHierarchy.map((mg) => {
+                  const monthRawKeys = mg.dates.map((d) => d.rawKey);
+                  const selectedInMonth = monthRawKeys.filter((k) => selectedDates.includes(k));
+                  const isFullySel = selectedInMonth.length === monthRawKeys.length && monthRawKeys.length > 0;
+                  const isPartiallySel = selectedInMonth.length > 0 && selectedInMonth.length < monthRawKeys.length;
+                  const isExpanded = expandedMonths.includes(mg.monthKey);
+
+                  return (
+                    <div
+                      key={mg.monthKey}
+                      className={`rounded-2xl border transition-all ${
+                        isFullySel
+                          ? 'bg-slate-900/90 border-sky-500/40 shadow-sm shadow-sky-500/5'
+                          : isPartiallySel
+                          ? 'bg-slate-900/70 border-amber-500/30'
+                          : 'bg-slate-900/40 border-slate-800/80 opacity-70'
+                      }`}
+                    >
+                      {/* Month Header Tile */}
+                      <div className="p-3 flex items-center justify-between gap-2 select-none">
+                        <div
+                          onClick={() => handleToggleMonth(mg.monthKey)}
+                          className="flex items-center gap-2.5 cursor-pointer flex-1 min-w-0"
+                        >
+                          <div className="shrink-0 text-slate-400 hover:text-white transition">
+                            {isFullySel ? (
+                              <CheckSquare className="w-4 h-4 text-sky-400" />
+                            ) : isPartiallySel ? (
+                              <MinusSquare className="w-4 h-4 text-amber-400" />
+                            ) : (
+                              <Square className="w-4 h-4 text-slate-600" />
+                            )}
+                          </div>
+                          <div className="truncate">
+                            <span className={`text-xs font-bold block truncate ${isFullySel ? 'text-slate-100' : 'text-slate-300'}`}>
+                              {mg.monthLabel}
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-mono">
+                              {selectedInMonth.length} of {mg.dates.length} dates · {mg.totalRecords} logs
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Chevron Expand / Collapse */}
+                        <button
+                          type="button"
+                          onClick={() => handleToggleExpandMonth(mg.monthKey)}
+                          className={`p-1.5 rounded-xl text-slate-400 hover:text-sky-300 hover:bg-slate-800 transition shrink-0 ${
+                            isExpanded ? 'bg-slate-800 text-sky-400' : ''
+                          }`}
+                          title={isExpanded ? 'Collapse dates' : 'Expand dates'}
+                        >
+                          {isExpanded ? (
+                            <ChevronDown className="w-4 h-4" />
+                          ) : (
+                            <ChevronRight className="w-4 h-4" />
+                          )}
+                        </button>
+                      </div>
+
+                      {/* Expandable Grilled Date Sub-Section */}
+                      {isExpanded && (
+                        <div className="px-3 pb-3 pt-2 border-t border-slate-800/80 bg-slate-950/60 rounded-b-2xl space-y-2">
+                          <div className="flex items-center justify-between text-[10px] text-slate-400">
+                            <span className="font-semibold text-slate-300">Dates in {mg.monthLabel.split(' ')[0]}:</span>
+                            <div className="flex gap-2">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedDates((prev) => Array.from(new Set([...prev, ...monthRawKeys])));
+                                }}
+                                className="text-sky-400 hover:underline"
+                              >
+                                Select Month
+                              </button>
+                              <span>·</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedDates((prev) => prev.filter((k) => !monthRawKeys.includes(k)));
+                                }}
+                                className="text-slate-500 hover:underline"
+                              >
+                                Clear
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Grilled Date Pills */}
+                          <div className="grid grid-cols-2 gap-1.5 max-h-48 overflow-y-auto pr-1">
+                            {mg.dates.map((d) => {
+                              const isDateSel = selectedDates.includes(d.rawKey);
+                              return (
+                                <button
+                                  key={d.rawKey}
+                                  type="button"
+                                  onClick={() => handleToggleDate(d.rawKey)}
+                                  className={`flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-mono border transition text-left truncate ${
+                                    isDateSel
+                                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 font-semibold'
+                                      : 'bg-slate-800/50 text-slate-400 border-slate-700/60 hover:text-slate-200'
+                                  }`}
+                                  title={d.rawKey}
+                                >
+                                  {isDateSel ? (
+                                    <CheckSquare className="w-3 h-3 text-emerald-400 shrink-0" />
+                                  ) : (
+                                    <Square className="w-3 h-3 text-slate-600 shrink-0" />
+                                  )}
+                                  <span className="truncate">{d.display}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {monthHierarchy.length === 0 && (
+                  <div className="col-span-full p-4 rounded-xl bg-slate-900/50 border border-slate-800 text-center text-xs text-slate-500 italic">
+                    No date records detected in this module.
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Full-text Search Bar */}
