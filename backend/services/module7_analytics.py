@@ -108,6 +108,31 @@ def _number(value: Any) -> float:
         return 0.0
 
 
+def _is_production_runtime() -> bool:
+    """Prevent production analytics from presenting a stale local SQLite mirror."""
+    return (
+        os.getenv("APP_ENV", "").strip().lower() in {"prod", "production"}
+        or os.getenv("RENDER", "").strip().lower() == "true"
+        or bool(os.getenv("RENDER_SERVICE_ID", "").strip())
+    )
+
+
+def _views_unavailable(module_name: str, required: list[str], *, exc: Exception | None = None,
+                       reason: str | None = None) -> dict[str, Any]:
+    code = getattr(exc, "code", None) if exc is not None else None
+    return {
+        "module": module_name,
+        "status": "SQL_VIEWS_UNAVAILABLE",
+        "message": (
+            "Module 7 could not read the live analytics views. No stale local fallback was used. "
+            "Run the read-only preflight, deploy the five submodule view files, then deploy the unified views."
+        ),
+        "required_views": required,
+        "database_error_code": str(code or reason or "SUPABASE_QUERY_FAILED"),
+        "has_data": False,
+    }
+
+
 def _query(client: Any, view: str, module: dict[str, Any], plaza_id: str,
            date_from: date | None, date_to: date | None, order_by: str | None,
            descending: bool) -> Any:
@@ -366,9 +391,7 @@ def get_module7_analytics(module_name: str, plaza_id: str = "ALL", period: str =
     module = MODULES[name]
     required = [module["daily"], *SHARED_VIEWS]
     client = get_supabase_client()
-    use_supabase = bool(client)
-
-    if use_supabase:
+    if client:
         try:
             summary_rows, summary_truncated = _fetch_rows(
                 client, module["daily"], module, plaza_id, start, end,
@@ -376,7 +399,7 @@ def get_module7_analytics(module_name: str, plaza_id: str = "ALL", period: str =
             )
             latest_rows, latest_truncated = _fetch_rows(
                 client, "vw_m7_asset_latest_reading", module, plaza_id, None, None,
-                max_rows=MAX_LATEST_ROWS,
+                max_rows=MAX_LATEST_ROWS, order_by="reading_datetime", descending=True,
             )
             entry_rows, entries_truncated = _fetch_rows(
                 client, "vw_m7_entry_audit", module, plaza_id, start, end,
@@ -392,11 +415,13 @@ def get_module7_analytics(module_name: str, plaza_id: str = "ALL", period: str =
             except Exception:
                 corrections = []
                 correction_audit_available = False
-        except Exception:
-            # Fall back to SQLite mirror if Supabase queries fail or views are not deployed on cloud
-            use_supabase = False
-
-    if not use_supabase:
+        except Exception as exc:
+            # A configured Supabase source that fails must not be hidden by older local data.
+            return _views_unavailable(name, required, exc=exc)
+    else:
+        # Render must never report a local SQLite mirror as current production telemetry.
+        if _is_production_runtime():
+            return _views_unavailable(name, required, reason="SUPABASE_NOT_CONFIGURED")
         try:
             summary_rows, summary_truncated = _fetch_rows_sqlite(
                 module["daily"], module, plaza_id, start, end,
@@ -404,7 +429,7 @@ def get_module7_analytics(module_name: str, plaza_id: str = "ALL", period: str =
             )
             latest_rows, latest_truncated = _fetch_rows_sqlite(
                 "vw_m7_asset_latest_reading", module, plaza_id, None, None,
-                max_rows=MAX_LATEST_ROWS,
+                max_rows=MAX_LATEST_ROWS, order_by="reading_datetime", descending=True,
             )
             entry_rows, entries_truncated = _fetch_rows_sqlite(
                 "vw_m7_entry_audit", module, plaza_id, start, end,
@@ -421,17 +446,7 @@ def get_module7_analytics(module_name: str, plaza_id: str = "ALL", period: str =
                 corrections = []
                 correction_audit_available = False
         except Exception as exc:
-            code = getattr(exc, "code", None)
-            return {
-                "module": name, "status": "SQL_VIEWS_UNAVAILABLE",
-                "message": (
-                    "Module 7 SQL views are missing, inaccessible, or not fully deployed. "
-                    "Run the read-only preflight, deploy the five submodule view files, then deploy the unified views."
-                ),
-                "required_views": required,
-                "database_error_code": str(code) if code else str(exc),
-                "has_data": False,
-            }
+            return _views_unavailable(name, required, exc=exc)
 
     summary = _build_summary(summary_rows, module)
     total = summary["total_records"]
