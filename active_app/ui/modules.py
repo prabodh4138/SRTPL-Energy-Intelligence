@@ -19,6 +19,7 @@ def render_dashboard_module() -> None:
     
     options = [
         "Executive Overview",
+        "Reading Dashboard",
         "Plaza Dashboard",
         "Equipment Dashboard",
         "Operator & Compliance",
@@ -37,6 +38,9 @@ def render_dashboard_module() -> None:
     if active_tab == "Executive Overview":
         from pages.executive_dashboard import render
         render()
+    elif active_tab == "Reading Dashboard":
+        from pages.reading_dashboard import render
+        render()
     elif active_tab == "Plaza Dashboard":
         from pages.plaza_dashboard import render
         render()
@@ -53,6 +57,7 @@ def render_reading_module() -> None:
     st.markdown('<div class="eyebrow">MODULE 2 · READING SECTION (DG, EB, SOLAR, TRANSFORMER, UPS)</div>', unsafe_allow_html=True)
 
     options = [
+        "📊 Dynamic Reading Dashboard",
         "⚡ EB Reading",
         "⚡ DG Reading",
         "☀️ Solar Reading",
@@ -60,7 +65,7 @@ def render_reading_module() -> None:
         "🔋 UPS Reading",
     ]
     if "reading_subtab" not in st.session_state or st.session_state["reading_subtab"] not in options:
-        st.session_state["reading_subtab"] = "⚡ EB Reading"
+        st.session_state["reading_subtab"] = "📊 Dynamic Reading Dashboard"
 
     selected = st.segmented_control(
         "Equipment Reading Views",
@@ -68,9 +73,12 @@ def render_reading_module() -> None:
         key="reading_subtab",
         label_visibility="collapsed",
     )
-    active_tab = selected or st.session_state.get("reading_subtab") or "⚡ EB Reading"
+    active_tab = selected or st.session_state.get("reading_subtab") or "📊 Dynamic Reading Dashboard"
 
-    if active_tab == "⚡ EB Reading":
+    if active_tab == "📊 Dynamic Reading Dashboard":
+        from pages.reading_dashboard import render
+        render()
+    elif active_tab == "⚡ EB Reading":
         from pages.eb import render
         render()
     elif active_tab == "⚡ DG Reading":

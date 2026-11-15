@@ -23,7 +23,8 @@ def render():
         to_date = st.date_input("To", date.today())
 
     if not asset:
-        st.info("No configured asset is available for this equipment type.")
+        from pages.reading_dashboard import render as render_reading_dashboard
+        render_reading_dashboard()
         return
 
     if from_date > to_date:

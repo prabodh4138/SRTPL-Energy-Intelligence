@@ -264,3 +264,60 @@ def test_fastapi_reading_endpoints():
     assert xlsx_resp.media_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     assert "attachment; filename=DG_Readings_and_Last_Asset_Status_" in xlsx_resp.headers["Content-Disposition"]
     assert len(xlsx_resp.body) > 0
+
+
+def test_corridor_audit_excel_export_in_memory_no_temp_file(monkeypatch):
+    """Verify that multi-sheet audit Excel dossier is generated 100% in-memory with zero temporary disk files."""
+    orig_open = open
+    opened_files = []
+
+    def mock_open(*args, **kwargs):
+        file = args[0] if args else kwargs.get("file")
+        mode = kwargs.get("mode") or (args[1] if len(args) > 1 else "r")
+        if any(m in mode for m in ("w", "a", "x")):
+            opened_files.append(str(file))
+        return orig_open(*args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", mock_open)
+
+    from pages.reading_dashboard import _generate_corridor_audit_excel_in_memory
+    xlsx_bytes, filename = _generate_corridor_audit_excel_in_memory()
+
+    assert isinstance(xlsx_bytes, bytes)
+    assert len(xlsx_bytes) > 0
+    assert "Corridor_Reading_Audit_Dossier" in filename
+    assert xlsx_bytes[:2] == b"PK"
+
+    # Verify all 6 sheets exist
+    excel_file = pd.ExcelFile(io.BytesIO(xlsx_bytes), engine="openpyxl")
+    expected_sheets = [
+        "Master_Asset_Audit",
+        "EB_Grid_Meters",
+        "DG_Generators",
+        "Solar_Plants",
+        "Transformers",
+        "UPS_Systems",
+    ]
+    for s in expected_sheets:
+        assert s in excel_file.sheet_names, f"Expected sheet '{s}' in corridor audit dossier"
+
+    # Verify ZERO disk files were created
+    assert len(opened_files) == 0, f"Temporary file was written to disk: {opened_files}"
+
+
+def test_navigation_resolves_reading_dashboard():
+    """Verify navigation routing for Reading Dashboard as a separate module."""
+    from ui.navigation import resolve_page
+    target, sub_key, sub_val = resolve_page("Reading Dashboard")
+    assert target == "2. Reading Section"
+    assert sub_key == "reading_subtab"
+    assert sub_val == "📊 Dynamic Reading Dashboard"
+
+
+def test_reading_dashboard_catches_from_sql_views():
+    """Verify Reading Dashboard catches all 27 assets strictly from SQL Views."""
+    from pages.reading_dashboard import _get_unified_corridor_assets
+    df = _get_unified_corridor_assets()
+    assert len(df) == 27
+    assert set(df["source_type"].unique()) == {"EB", "DG", "SOLAR", "TRANSFORMER", "UPS"}
+

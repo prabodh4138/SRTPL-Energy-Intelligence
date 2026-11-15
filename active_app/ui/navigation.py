@@ -13,7 +13,7 @@ PRIMARY_MODULES = [
 
 MODULE_DISPLAY_NAMES = {
     "1. Dashboard": "1. Dashboard",
-    "2. Reading Section": "2. Reading Section (DG, EB, SOLAR, TRANSFORMER and UPS)",
+    "2. Reading Section": "2. Reading Dashboard & Equipment Logs (DG, EB, Solar, Transformer)",
     "3. Validation and Exceptions": "3. Validation and Exceptions",
     "4. Juno Import Centre": "4. Juno Import Centre (DG, EB, SOLAR, TRANSFORMER and UPS)",
     "5. Bill Reconcilation": "5. Bill Reconcilation (EB Bill Extraction field, and many More)",
@@ -41,6 +41,10 @@ NAVIGATION_MAP: dict[str, tuple[str, str | None, str | None]] = {
     "2. Reading Section": ("2. Reading Section", None, None),
     "Reading Section": ("2. Reading Section", None, None),
     "2. Reading Section(DG,EB,SOLAR,TRANSFORMER and UPS)": ("2. Reading Section", None, None),
+    "Reading Dashboard": ("2. Reading Section", "reading_subtab", "📊 Dynamic Reading Dashboard"),
+    "Reading Dashboard (Audit & KPIs)": ("2. Reading Section", "reading_subtab", "📊 Dynamic Reading Dashboard"),
+    "Equipment Reading Dashboard": ("2. Reading Section", "reading_subtab", "📊 Dynamic Reading Dashboard"),
+    "Dynamic Reading Dashboard": ("2. Reading Section", "reading_subtab", "📊 Dynamic Reading Dashboard"),
     "EB": ("2. Reading Section", "reading_subtab", "⚡ EB Reading"),
     "DG": ("2. Reading Section", "reading_subtab", "⚡ DG Reading"),
     "Solar": ("2. Reading Section", "reading_subtab", "☀️ Solar Reading"),
@@ -136,9 +140,12 @@ def render_navigation() -> str:
     )
     st.sidebar.caption(f"Signed in as: **{st.session_state.get('user', 'admin@srtpl.com')}**")
 
-    # Quick Home Button
-    if st.sidebar.button("🏠 Home (Dashboard)", width="stretch"):
+    # Quick Home & Reading Dashboard Buttons
+    c_btn1, c_btn2 = st.sidebar.columns(2)
+    if c_btn1.button("🏠 Home", width="stretch"):
         navigate_to("1. Dashboard")
+    if c_btn2.button("📊 Readings", width="stretch", help="Open Dynamic Reading Dashboard"):
+        navigate_to("Reading Dashboard")
 
     st.sidebar.divider()
 

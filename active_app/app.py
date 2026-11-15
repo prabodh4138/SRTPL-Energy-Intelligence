@@ -56,6 +56,9 @@ def run_app():
             render_bill_reconciliation_module()
         elif page == "6. Reports":
             render_reports_module()
+        elif page == "Reading Dashboard" or page == "Reading Dashboard (Audit & KPIs)":
+            from pages.reading_dashboard import render
+            render()
         elif page == "Master Data Center":
             from pages.master_data_center import render
             render()

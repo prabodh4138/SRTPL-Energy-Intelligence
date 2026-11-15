@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import date
 import pandas as pd
@@ -17,13 +19,9 @@ class DashboardSummary:
     trend_rows: pd.DataFrame | None = None
 
 class DashboardService:
-    """Read-only dashboard service.
+    """Read-only dashboard service."""
 
-    Replace the data-provider methods with Supabase queries during final
-    integration. The UI does not contain business calculation logic.
-    """
-
-    def executive_summary(self, from_date: date, to_date: date, plazas: list[str]):
+    def executive_summary(self, from_date: date, to_date: date, plazas: list[str]) -> DashboardSummary:
         from core.demo_store import is_demo_mode, get_demo_executive_summary
         if is_demo_mode():
             return get_demo_executive_summary(from_date, to_date, plazas)
@@ -38,10 +36,8 @@ class DashboardService:
             ]),
         )
 
-    def fetch_kpi(self, kpi_code, from_date, to_date, plazas):
-        # Production implementation: query energy_analytics.kpi_result.
+    def fetch_kpi(self, kpi_code: str, from_date: date, to_date: date, plazas: list[str]) -> pd.DataFrame:
         return pd.DataFrame()
 
-    def fetch_exceptions(self, from_date, to_date, plazas):
-        # Production implementation: query energy_validation.exception_master.
+    def fetch_exceptions(self, from_date: date, to_date: date, plazas: list[str]) -> pd.DataFrame:
         return pd.DataFrame()
