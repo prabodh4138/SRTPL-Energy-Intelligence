@@ -1623,17 +1623,28 @@ def get_asset_last_readings():
 
 
 @router.get("/analytics/module/{module_name}")
-def get_module_analytics(module_name: str, plaza_id: str = "ALL"):
-    """
-    Directly queries database SQL views and tables for the given submodule (DG, EB, SOLAR, TRANSFORMER, UPS).
-    Returns real-time KPIs, plaza-wise last readings, night entries (8pm-8am), and wrong entries.
-    If no data exists in database, returns has_data=False.
-    """
+def get_module_analytics(
+    module_name: str,
+    plaza_id: str = "ALL",
+    period: str = "daily",
+    date_from: str | None = None,
+    date_to: str | None = None,
+):
+    """Read Module 7 data exclusively from the versioned SQL analytics views."""
     try:
-        from core.analytics_service import get_submodule_analytics
-        data = get_submodule_analytics(module_name=module_name, plaza_filter=plaza_id)
+        from backend.services.module7_analytics import get_module7_analytics
+
+        data = get_module7_analytics(
+            module_name=module_name,
+            plaza_id=plaza_id,
+            period=period,
+            date_from=date_from,
+            date_to=date_to,
+        )
         return {"status": "SUCCESS", "data": data}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Module analytics query failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"Module 7 analytics query failed: {exc}")
 
 

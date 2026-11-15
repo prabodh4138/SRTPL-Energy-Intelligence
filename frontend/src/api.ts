@@ -685,11 +685,21 @@ export const api = {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return await res.json();
   },
-  getModuleAnalytics: async (moduleName: string, plazaId = 'ALL') => {
+  getModuleAnalytics: async (
+    moduleName: string,
+    plazaId = 'ALL',
+    period = 'daily',
+    dateFrom?: string,
+    dateTo?: string,
+  ) => {
+    const params = new URLSearchParams({ plaza_id: plazaId, period });
+    if (dateFrom) params.set('date_from', dateFrom);
+    if (dateTo) params.set('date_to', dateTo);
     const res = await fetch(
-      `${getApiBase()}/energy/analytics/module/${encodeURIComponent(moduleName)}?plaza_id=${encodeURIComponent(plazaId)}`
+      getApiBase() + '/energy/analytics/module/' + encodeURIComponent(moduleName) + '?' + params.toString()
     );
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload.detail || 'Could not load Module 7 analytics.');
+    return payload;
   },
 };

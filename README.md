@@ -1,61 +1,24 @@
-# SRTPL Energy Intelligence — Phase 5.1 Master Project Assembly
+# SRTPL Energy Intelligence
 
-## Purpose
-This package consolidates Phases 2 through 5.0 into one master project for controlled
-integration testing against real JUNO CSV exports.
+SRTPL Energy Intelligence runs on Render as a React/Vite web app and a FastAPI backend, with Supabase PostgreSQL as its data store. Render configuration is in render.yaml.
 
-### Browser-first operating model
-JUNO → download CSV → browser upload → original CSV preserved → duplicate check →
-validation → normalized readings → KPI calculation → dashboard / reports / audit.
+## Deploy on Render
 
-The office laptop does **not** need Python, an EXE, or Excel upload. The final deployed
-application is intended to be accessed through a browser.
+1. Push this repository's main branch to GitHub.
+2. In Render, create a Blueprint from this repository and apply render.yaml.
+3. Set SUPABASE_URL, SUPABASE_KEY, and SUPABASE_SERVICE_ROLE_KEY for the backend service.
+4. Confirm the frontend service's VITE_API_URL points to the backend's public Render URL.
 
-## What Phase 5.1 does
-- One master project root and one browser-facing Streamlit entry point.
-- Later phase modules win source-file collisions; every original phase is preserved under
-  `legacy_phases/`.
-- SQL installation order is centralized under `sql/master_install/`.
-- Previous phase SQL is archived under `sql/phase_archive/`.
-- Production environment template is centralized.
-- Master integration/test documents are added.
-- Real JUNO CSVs are expected to be used as integration-test inputs.
-- No fake production KPI values are inserted.
+The backend starts with uvicorn backend.main:app; the frontend is built from frontend/ and served as a static site.
 
-## Important status
-**This is an integration assembly baseline, not a declaration of production readiness.**
-Actual Supabase credentials, RLS verification, database migration execution, Storage
-permissions, master-data mapping, and live JUNO end-to-end tests must pass before release.
+## Module 7 Analytics
 
-## Required production traceability
-Every KPI should remain traceable:
-KPI → normalized reading → raw JUNO row → import row → import file → original CSV.
+Module 7 uses the React Analytics page and the FastAPI route at /api/energy/analytics/module/{module_name}. It reads the additive SQL views for DG, EB, Solar, Transformer, and UPS, along with the shared Module 7 views.
 
-## NULL rule
-Blank JUNO fields remain NULL. NULL must never be silently converted to zero.
+The proposed view package, deployment order, and read-only preflight are in sql/module7_analytics_proposed/. Deploy the five submodule view files before the unified views. The correction-audit view is optional. If required SQL views are not available, the Analytics page reports that state instead of substituting fabricated KPI values.
 
-## Duplicate rule
-File-level SHA-256 and record-level duplicate checks are expected. Re-uploading the same
-file must be idempotent.
+Approved monitoring rules include universal Total Records = VALID + EXCEPTION, entry delay of at least 24 hours, and independent night indicators from 22:00 inclusive to 06:00 exclusive in Asia/Kolkata. DG cumulative runtime is interpreted as HH.MM and presented as HH:MM.
 
-## Invalid data
-Invalid source rows are retained and routed to validation/exception workflows; they are
-not silently deleted.
+## Project status
 
-## Transformer caution
-Transformer loss/efficiency remains disabled until measurement boundaries, CT/PT ratio,
-rating, and meter semantics are formally confirmed.
-
-## EB caution
-Maximum-demand unit/interpretation remains source-only until the TPWODL/meter definition
-is confirmed.
-
-## Next gate after Phase 5.1
-1. Configure staging Supabase.
-2. Apply SQL in controlled order.
-3. Load approved master data (no fake operational IDs).
-4. Configure Storage bucket/RLS.
-5. Run the real JUNO Solar/DG/EB/Transformer/UPS CSVs.
-6. Compare import counts, validation results and KPIs with source records.
-7. Fix integration defects.
-8. Only then perform production deployment/UAT.
+The repository contains legacy modules and local source data alongside the Render application. Production readiness still depends on confirming the target Supabase schema, deploying the Module 7 SQL views, configuring Render secrets, and completing deployment validation.
