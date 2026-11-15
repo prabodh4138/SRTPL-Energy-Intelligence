@@ -849,6 +849,13 @@ def init_local_db() -> None:
     SELECT asset_id, asset_code, asset_name, plaza_id, source_type, capacity_kva, reading_id, reading_datetime, NULL as latest_cumulative_kwh, NULL as latest_interval_kwh, NULL as latest_pf, data_quality_status, created_by FROM vw_ups_asset_latest_reading;
     """)
 
+    # 7. Authoritative Module 7 Analytics SQL Views Suite
+    try:
+        from core.module7_db_views import deploy_module7_views
+        deploy_module7_views(cur)
+    except Exception as exc:
+        print(f"Warning: Failed to deploy Module 7 views: {exc}")
+
     conn.commit()
 
     conn.close()

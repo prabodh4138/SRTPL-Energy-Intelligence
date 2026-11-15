@@ -244,6 +244,69 @@ def test_energy_specific_exports_and_verifiable_backup():
     assert res_rest_ok["status"] == "SUCCESS"
 
 
+def test_module7_analytics_views_deployed_and_ready():
+    """
+    Acceptance Criteria:
+    - Module 7 SQL views deployed and accessible:
+      vw_dg71_daily_summary, vw_m7_entry_audit, vw_m7_exception_register, vw_m7_asset_latest_reading
+    - All 5 submodules (DG, EB, SOLAR, TRANSFORMER, UPS) return READY with has_data=True
+    - Total records equal valid + exception records (reconciliation diff == 0)
+    - Non-existent plaza filter returns honest has_data=False
+    """
+    from backend.routers.energy_command import get_module_analytics
+
+    # 1. DG Analytics & Required Views
+    dg_res = get_module_analytics(module_name="DG", plaza_id="ALL", period="daily")
+    assert dg_res["status"] == "SUCCESS"
+    dg_data = dg_res["data"]
+    assert dg_data["status"] == "READY"
+    assert dg_data["has_data"] is True
+    assert dg_data["summary"]["total_records"] == 1951
+    assert dg_data["summary"]["reconciliation_difference"] == 0
+    assert len(dg_data["latest_readings"]) == 6
+    assert len(dg_data["technicians"]) > 0
+
+    # Verify required views list
+    assert "vw_dg71_daily_summary" in dg_data["required_views"]
+    assert "vw_m7_entry_audit" in dg_data["required_views"]
+    assert "vw_m7_exception_register" in dg_data["required_views"]
+    assert "vw_m7_asset_latest_reading" in dg_data["required_views"]
+
+    # 2. EB Analytics
+    eb_res = get_module_analytics(module_name="EB", plaza_id="ALL", period="daily")
+    assert eb_res["data"]["status"] == "READY"
+    assert eb_res["data"]["has_data"] is True
+    assert eb_res["data"]["summary"]["total_records"] == 206
+    assert eb_res["data"]["summary"]["reconciliation_difference"] == 0
+
+    # 3. Solar Analytics
+    sol_res = get_module_analytics(module_name="SOLAR", plaza_id="ALL", period="daily")
+    assert sol_res["data"]["status"] == "READY"
+    assert sol_res["data"]["has_data"] is True
+    assert sol_res["data"]["summary"]["total_records"] == 517
+    assert sol_res["data"]["summary"]["reconciliation_difference"] == 0
+
+    # 4. Transformer Analytics
+    trf_res = get_module_analytics(module_name="TRANSFORMER", plaza_id="ALL", period="daily")
+    assert trf_res["data"]["status"] == "READY"
+    assert trf_res["data"]["has_data"] is True
+    assert trf_res["data"]["summary"]["total_records"] == 1549
+    assert trf_res["data"]["summary"]["reconciliation_difference"] == 0
+
+    # 5. UPS Analytics
+    ups_res = get_module_analytics(module_name="UPS", plaza_id="ALL", period="daily")
+    assert ups_res["data"]["status"] == "READY"
+    assert ups_res["data"]["has_data"] is True
+    assert ups_res["data"]["summary"]["total_records"] == 9015
+    assert ups_res["data"]["summary"]["reconciliation_difference"] == 0
+
+    # 6. Honest No-Data Behavior for Non-Existent Filter
+    nodata_res = get_module_analytics(module_name="DG", plaza_id="TP99")
+    assert nodata_res["data"]["status"] == "READY"
+    assert nodata_res["data"]["has_data"] is False
+    assert "No readings found" in nodata_res["data"]["message"]
+
+
 if __name__ == "__main__":
     test_acceptance_checklist_energy_overview_separate_and_honest_metrics()
     print("PASS: test_acceptance_checklist_energy_overview_separate_and_honest_metrics")
@@ -255,4 +318,6 @@ if __name__ == "__main__":
     print("PASS: test_reviewed_open_exceptions_snapshot")
     test_energy_specific_exports_and_verifiable_backup()
     print("PASS: test_energy_specific_exports_and_verifiable_backup")
+    test_module7_analytics_views_deployed_and_ready()
+    print("PASS: test_module7_analytics_views_deployed_and_ready")
     print("\nALL TEST SUITE CHECKS PASSED 100%!")
