@@ -49,6 +49,12 @@ def init_local_db() -> None:
         section TEXT,
         category TEXT,
         status TEXT DEFAULT 'ACTIVE',
+        asset_code TEXT,
+        division_name TEXT,
+        usage_type TEXT DEFAULT 'Street Light',
+        location TEXT,
+        remarks TEXT,
+        is_active INTEGER DEFAULT 1,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
     """)
@@ -59,6 +65,8 @@ def init_local_db() -> None:
         bill_number TEXT PRIMARY KEY,
         source_filename TEXT,
         consumer_account_no TEXT,
+        toll_plaza_id TEXT,
+        asset_code TEXT,
         consumer_id TEXT,
         old_consumer_no TEXT,
         bill_type TEXT DEFAULT 'LT',
@@ -135,6 +143,7 @@ def init_local_db() -> None:
         receipt_no TEXT PRIMARY KEY,
         consumer_no TEXT,
         account_no TEXT,
+        toll_plaza_id TEXT,
         consumer_name TEXT,
         collections_date TEXT,
         payment_date TEXT,
@@ -425,17 +434,49 @@ def init_local_db() -> None:
 
     conn.commit()
 
-    # Seed 60 Consumers if empty
-    cur.execute("SELECT COUNT(*) FROM energy_consumer_master")
-    if cur.fetchone()[0] == 0:
+    # Column migrations for existing tables
+    cur.execute("PRAGMA table_info(energy_consumer_master)")
+    existing_c_cols = {c[1] for c in cur.fetchall()}
+    for col_name, col_def in [
+        ("asset_code", "TEXT"),
+        ("division_name", "TEXT"),
+        ("usage_type", "TEXT DEFAULT 'Street Light'"),
+        ("location", "TEXT"),
+        ("remarks", "TEXT"),
+        ("is_active", "INTEGER DEFAULT 1"),
+    ]:
+        if col_name not in existing_c_cols:
+            cur.execute(f"ALTER TABLE energy_consumer_master ADD COLUMN {col_name} {col_def}")
+
+    cur.execute("PRAGMA table_info(energy_bills)")
+    existing_b_cols = {c[1] for c in cur.fetchall()}
+    for col_name, col_def in [
+        ("toll_plaza_id", "TEXT"),
+        ("asset_code", "TEXT"),
+    ]:
+        if col_name not in existing_b_cols:
+            cur.execute(f"ALTER TABLE energy_bills ADD COLUMN {col_name} {col_def}")
+
+    cur.execute("PRAGMA table_info(payment_receipts)")
+    existing_r_cols = {c[1] for c in cur.fetchall()}
+    if "toll_plaza_id" not in existing_r_cols:
+        cur.execute("ALTER TABLE payment_receipts ADD COLUMN toll_plaza_id TEXT")
+
+    conn.commit()
+
+    # Seed or synchronize all 60 Consumers with complete attributes
+    cur.execute("SELECT COUNT(*) FROM energy_consumer_master WHERE asset_code IS NOT NULL AND asset_code != ''")
+    has_valid_assets = cur.fetchone()[0] > 0
+    if not has_valid_assets:
         from core.db_sync import DEFAULT_CONSUMER_ACCOUNTS
         for acc in DEFAULT_CONSUMER_ACCOUNTS:
             cur.execute("""
             INSERT OR REPLACE INTO energy_consumer_master (
                 consumer_account_no, consumer_name, toll_plaza_id, bill_type, consumer_scope,
                 sanctioned_load_kw, contract_demand, meter_sl_no, division, sub_division,
-                section, category, status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                section, category, status, asset_code, division_name, usage_type, location,
+                remarks, is_active
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 str(acc.get("consumer_account_no") or ""),
                 str(acc.get("consumer_name") or ""),
@@ -445,13 +486,370 @@ def init_local_db() -> None:
                 float(acc.get("sanctioned_load_kw") or 10.0),
                 str(acc.get("contract_demand") or "10 KW"),
                 str(acc.get("meter_sl_no") or ""),
-                str(acc.get("division") or "SAMBALPUR"),
+                str(acc.get("division") or acc.get("division_name") or "SAMBALPUR"),
                 str(acc.get("sub_division") or "SAMBALPUR"),
                 str(acc.get("section") or "SAMBALPUR"),
-                str(acc.get("category") or "PUBLIC LIGHT"),
-                str(acc.get("status") or "ACTIVE")
+                str(acc.get("category") or acc.get("usage_type") or "PUBLIC LIGHT"),
+                str(acc.get("status") or ("ACTIVE" if acc.get("is_active", True) else "INACTIVE")),
+                str(acc.get("asset_code") or ""),
+                str(acc.get("division_name") or acc.get("division") or "SED"),
+                str(acc.get("usage_type") or "Street Light"),
+                str(acc.get("location") or ""),
+                str(acc.get("remarks") or ""),
+                1 if acc.get("is_active", True) else 0,
             ))
         conn.commit()
+
+    # Seed or synchronize default payment receipts if missing
+    cur.execute("SELECT COUNT(*) FROM payment_receipts")
+    receipts_count = cur.fetchone()[0]
+    if receipts_count < 6:
+        from core.db_sync import DEFAULT_PAYMENT_RECEIPTS
+        for r in DEFAULT_PAYMENT_RECEIPTS:
+            cur.execute("""
+            INSERT OR REPLACE INTO payment_receipts (
+                receipt_no, consumer_no, account_no, consumer_name, collections_date,
+                payment_date, amount_paid, payment_type, transaction_id, bill_month,
+                category, office_name, source_pdf, toll_plaza_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                r.get("receipt_no"),
+                r.get("consumer_no"),
+                r.get("account_no"),
+                r.get("consumer_name"),
+                r.get("collections_date"),
+                r.get("payment_date"),
+                float(r.get("amount_paid") or 0.0),
+                r.get("payment_type"),
+                r.get("transaction_id"),
+                r.get("bill_month"),
+                r.get("category"),
+                r.get("office_name"),
+                r.get("source_pdf"),
+                r.get("toll_plaza_id") or ("TP03" if str(r.get("consumer_no", "")).startswith("81") else "TP01")
+            ))
+        conn.commit()
+
+    # Enrich toll_plaza_id in energy_bills and payment_receipts if empty
+    cur.execute("""
+    UPDATE payment_receipts
+    SET toll_plaza_id = (
+        SELECT c.toll_plaza_id FROM energy_consumer_master c
+        WHERE c.consumer_account_no = payment_receipts.consumer_no
+           OR c.consumer_account_no = payment_receipts.account_no
+    )
+    WHERE toll_plaza_id IS NULL OR toll_plaza_id = ''
+    """)
+    cur.execute("""
+    UPDATE energy_bills
+    SET toll_plaza_id = (
+        SELECT c.toll_plaza_id FROM energy_consumer_master c
+        WHERE c.consumer_account_no = energy_bills.consumer_account_no
+    )
+    WHERE toll_plaza_id IS NULL OR toll_plaza_id = ''
+    """)
+    cur.execute("""
+    UPDATE energy_bills
+    SET toll_plaza_id = 'TP02'
+    WHERE consumer_account_no LIKE '413%' AND (toll_plaza_id IS NULL OR toll_plaza_id = '' OR toll_plaza_id = 'TP01')
+    """)
+    conn.commit()
+
+    # Master Asset Table and Seeding for Cloud & Local Parity
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS energy_master_asset (
+        asset_id TEXT PRIMARY KEY,
+        asset_code TEXT NOT NULL UNIQUE,
+        asset_name TEXT NOT NULL,
+        plaza_id TEXT,
+        source_type TEXT NOT NULL,
+        capacity_kva REAL,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+    """)
+    cur.execute("SELECT COUNT(*) FROM energy_master_asset")
+    if cur.fetchone()[0] == 0:
+        from core.db_sync import DEFAULT_ASSETS
+        for a in DEFAULT_ASSETS:
+            cur.execute("""
+            INSERT OR REPLACE INTO energy_master_asset (
+                asset_id, asset_code, asset_name, plaza_id, source_type, capacity_kva, is_active
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                a.get("asset_id"), a.get("asset_code"), a.get("asset_name"),
+                a.get("plaza_id"), a.get("source_type"), float(a.get("capacity_kva") or 0.0),
+                1 if a.get("is_active", True) else 0
+            ))
+        conn.commit()
+
+    # =========================================================================
+    # SQL VIEWS: EQUIPMENT KPIS & LATEST READINGS PER ASSET (LOCAL & CLOUD PARITY)
+    # =========================================================================
+    # 1. EB
+    cur.execute("DROP VIEW IF EXISTS vw_eb_asset_latest_reading")
+    cur.execute("""
+    CREATE VIEW vw_eb_asset_latest_reading AS
+    SELECT 
+        a.asset_id,
+        a.asset_code,
+        a.asset_name,
+        a.plaza_id,
+        a.source_type,
+        a.capacity_kva,
+        r.reading_id,
+        r.reading_datetime,
+        r.cumulative_kwh AS latest_cumulative_kwh,
+        r.interval_kwh AS latest_interval_kwh,
+        r.cumulative_kvah AS latest_cumulative_kvah,
+        r.interval_kvah AS latest_interval_kvah,
+        r.cumulative_kvarh AS latest_cumulative_kvarh,
+        r.interval_kvarh AS latest_interval_kvarh,
+        r.pf AS latest_pf,
+        r.maximum_demand AS latest_maximum_demand,
+        r.data_quality_status,
+        r.created_by,
+        r.remarks
+    FROM energy_master_asset a
+    LEFT JOIN energy_readings_eb r ON (r.asset_code = a.asset_code OR r.asset_id = a.asset_id)
+        AND r.reading_datetime = (
+            SELECT MAX(r2.reading_datetime)
+            FROM energy_readings_eb r2
+            WHERE r2.asset_code = a.asset_code OR r2.asset_id = a.asset_id
+        )
+    WHERE a.source_type = 'EB'
+    ORDER BY a.plaza_id, a.asset_code;
+    """)
+
+    cur.execute("DROP VIEW IF EXISTS vw_eb_reading_kpis")
+    cur.execute("""
+    CREATE VIEW vw_eb_reading_kpis AS
+    SELECT
+        'EB' AS source_type,
+        COUNT(DISTINCT r.asset_code) AS active_meters,
+        COALESCE(SUM(r.cumulative_kwh), 0.0) AS total_cumulative_kwh,
+        COALESCE(SUM(r.interval_kwh), 0.0) AS total_interval_kwh,
+        COALESCE(SUM(r.cumulative_kvah), 0.0) AS total_cumulative_kvah,
+        COALESCE(SUM(r.interval_kvah), 0.0) AS total_interval_kvah,
+        COALESCE(AVG(CASE WHEN r.pf > 0 THEN r.pf ELSE NULL END), 0.98) AS avg_power_factor,
+        COALESCE(MAX(r.maximum_demand), 0.0) AS peak_demand,
+        COUNT(r.reading_id) AS total_reading_count,
+        COALESCE(SUM(CASE WHEN r.data_quality_status = 'VALID' THEN 1 ELSE 0 END), 0) AS valid_count,
+        COALESCE(SUM(CASE WHEN r.data_quality_status != 'VALID' THEN 1 ELSE 0 END), 0) AS exception_count
+    FROM energy_readings_eb r;
+    """)
+
+    # 2. DG
+    cur.execute("DROP VIEW IF EXISTS vw_dg_asset_latest_reading")
+    cur.execute("""
+    CREATE VIEW vw_dg_asset_latest_reading AS
+    SELECT 
+        a.asset_id,
+        a.asset_code,
+        a.asset_name,
+        a.plaza_id,
+        a.source_type,
+        a.capacity_kva,
+        r.reading_id,
+        r.reading_datetime,
+        r.cumulative_kwh AS latest_cumulative_kwh,
+        r.interval_kwh AS latest_interval_kwh,
+        r.cumulative_running_hours AS latest_run_hours,
+        r.interval_running_hours AS latest_interval_run_hours,
+        r.diesel_level AS latest_fuel_level,
+        r.load_percentage AS latest_load_pct,
+        r.pf AS latest_pf,
+        r.status AS operational_status,
+        r.data_quality_status,
+        r.created_by,
+        r.remarks
+    FROM energy_master_asset a
+    LEFT JOIN energy_readings_dg r ON (r.asset_code = a.asset_code OR r.asset_id = a.asset_id)
+        AND r.reading_datetime = (
+            SELECT MAX(r2.reading_datetime)
+            FROM energy_readings_dg r2
+            WHERE r2.asset_code = a.asset_code OR r2.asset_id = a.asset_id
+        )
+    WHERE a.source_type = 'DG'
+    ORDER BY a.plaza_id, a.asset_code;
+    """)
+
+    cur.execute("DROP VIEW IF EXISTS vw_dg_reading_kpis")
+    cur.execute("""
+    CREATE VIEW vw_dg_reading_kpis AS
+    SELECT
+        'DG' AS source_type,
+        COUNT(DISTINCT r.asset_code) AS active_generators,
+        COALESCE(SUM(r.cumulative_kwh), 0.0) AS total_cumulative_kwh,
+        COALESCE(SUM(r.interval_kwh), 0.0) AS total_interval_kwh,
+        COALESCE(SUM(r.cumulative_running_hours), 0.0) AS total_cumulative_run_hours,
+        COALESCE(SUM(r.interval_running_hours), 0.0) AS total_interval_run_hours,
+        COALESCE(SUM(r.diesel_level), 0.0) AS total_fuel_level,
+        COALESCE(AVG(CASE WHEN r.pf > 0 THEN r.pf ELSE NULL END), 0.98) AS avg_power_factor,
+        COUNT(r.reading_id) AS total_log_count,
+        COALESCE(SUM(CASE WHEN r.data_quality_status = 'VALID' THEN 1 ELSE 0 END), 0) AS valid_count,
+        COALESCE(SUM(CASE WHEN r.data_quality_status != 'VALID' THEN 1 ELSE 0 END), 0) AS exception_count
+    FROM energy_readings_dg r;
+    """)
+
+    # 3. Solar
+    cur.execute("DROP VIEW IF EXISTS vw_solar_asset_latest_reading")
+    cur.execute("""
+    CREATE VIEW vw_solar_asset_latest_reading AS
+    SELECT 
+        a.asset_id,
+        a.asset_code,
+        a.asset_name,
+        a.plaza_id,
+        a.source_type,
+        a.capacity_kva,
+        r.reading_id,
+        r.reading_datetime,
+        r.cumulative_kwh AS latest_cumulative_kwh,
+        r.interval_kwh AS latest_interval_kwh,
+        r.data_quality_status,
+        r.created_by,
+        r.remarks
+    FROM energy_master_asset a
+    LEFT JOIN energy_readings_solar r ON (r.asset_code = a.asset_code OR r.asset_id = a.asset_id)
+        AND r.reading_datetime = (
+            SELECT MAX(r2.reading_datetime)
+            FROM energy_readings_solar r2
+            WHERE r2.asset_code = a.asset_code OR r2.asset_id = a.asset_id
+        )
+    WHERE a.source_type = 'SOLAR'
+    ORDER BY a.plaza_id, a.asset_code;
+    """)
+
+    cur.execute("DROP VIEW IF EXISTS vw_solar_reading_kpis")
+    cur.execute("""
+    CREATE VIEW vw_solar_reading_kpis AS
+    SELECT
+        'SOLAR' AS source_type,
+        COUNT(DISTINCT r.asset_code) AS active_plants,
+        COALESCE(SUM(r.cumulative_kwh), 0.0) AS total_cumulative_kwh,
+        COALESCE(SUM(r.interval_kwh), 0.0) AS total_interval_kwh,
+        COALESCE(SUM(r.interval_kwh) * 0.82, 0.0) AS co2_avoided_kg,
+        COUNT(r.reading_id) AS total_log_count,
+        COALESCE(SUM(CASE WHEN r.data_quality_status = 'VALID' THEN 1 ELSE 0 END), 0) AS valid_count,
+        COALESCE(SUM(CASE WHEN r.data_quality_status != 'VALID' THEN 1 ELSE 0 END), 0) AS exception_count
+    FROM energy_readings_solar r;
+    """)
+
+    # 4. Transformer
+    cur.execute("DROP VIEW IF EXISTS vw_transformer_asset_latest_reading")
+    cur.execute("""
+    CREATE VIEW vw_transformer_asset_latest_reading AS
+    SELECT 
+        a.asset_id,
+        a.asset_code,
+        a.asset_name,
+        a.plaza_id,
+        a.source_type,
+        a.capacity_kva,
+        r.reading_id,
+        r.reading_datetime,
+        r.cumulative_kwh AS latest_cumulative_kwh,
+        r.interval_kwh AS latest_interval_kwh,
+        r.primary_v_ry AS latest_primary_v_ry,
+        r.primary_i_r AS latest_primary_i_r,
+        r.oil_temperature AS latest_oil_temp,
+        r.winding_temperature AS latest_winding_temp,
+        r.pf AS latest_pf,
+        r.data_quality_status,
+        r.created_by,
+        r.remarks
+    FROM energy_master_asset a
+    LEFT JOIN energy_readings_transformer r ON (r.asset_code = a.asset_code OR r.asset_id = a.asset_id)
+        AND r.reading_datetime = (
+            SELECT MAX(r2.reading_datetime)
+            FROM energy_readings_transformer r2
+            WHERE r2.asset_code = a.asset_code OR r2.asset_id = a.asset_id
+        )
+    WHERE a.source_type = 'TRANSFORMER'
+    ORDER BY a.plaza_id, a.asset_code;
+    """)
+
+    cur.execute("DROP VIEW IF EXISTS vw_transformer_reading_kpis")
+    cur.execute("""
+    CREATE VIEW vw_transformer_reading_kpis AS
+    SELECT
+        'TRANSFORMER' AS source_type,
+        COUNT(DISTINCT r.asset_code) AS active_transformers,
+        COALESCE(SUM(r.cumulative_kwh), 0.0) AS total_cumulative_kwh,
+        COALESCE(SUM(r.interval_kwh), 0.0) AS total_interval_kwh,
+        COALESCE(AVG(r.oil_temperature), 0.0) AS avg_oil_temp,
+        COALESCE(AVG(r.winding_temperature), 0.0) AS avg_winding_temp,
+        COALESCE(AVG(CASE WHEN r.pf > 0 THEN r.pf ELSE NULL END), 0.98) AS avg_power_factor,
+        COUNT(r.reading_id) AS total_log_count,
+        COALESCE(SUM(CASE WHEN r.data_quality_status = 'VALID' THEN 1 ELSE 0 END), 0) AS valid_count,
+        COALESCE(SUM(CASE WHEN r.data_quality_status != 'VALID' THEN 1 ELSE 0 END), 0) AS exception_count
+    FROM energy_readings_transformer r;
+    """)
+
+    # 5. UPS
+    cur.execute("DROP VIEW IF EXISTS vw_ups_asset_latest_reading")
+    cur.execute("""
+    CREATE VIEW vw_ups_asset_latest_reading AS
+    SELECT 
+        a.asset_id,
+        a.asset_code,
+        a.asset_name,
+        a.plaza_id,
+        a.source_type,
+        a.capacity_kva,
+        r.reading_id,
+        r.reading_datetime,
+        r.output_voltage AS latest_output_voltage,
+        r.output_current AS latest_output_current,
+        r.output_frequency AS latest_output_frequency,
+        r.battery_vdc AS latest_battery_vdc,
+        r.battery_temperature AS latest_battery_temp,
+        r.data_quality_status,
+        r.created_by,
+        r.remarks
+    FROM energy_master_asset a
+    LEFT JOIN energy_readings_ups r ON (r.asset_code = a.asset_code OR r.asset_id = a.asset_id)
+        AND r.reading_datetime = (
+            SELECT MAX(r2.reading_datetime)
+            FROM energy_readings_ups r2
+            WHERE r2.asset_code = a.asset_code OR r2.asset_id = a.asset_id
+        )
+    WHERE a.source_type = 'UPS'
+    ORDER BY a.plaza_id, a.asset_code;
+    """)
+
+    cur.execute("DROP VIEW IF EXISTS vw_ups_reading_kpis")
+    cur.execute("""
+    CREATE VIEW vw_ups_reading_kpis AS
+    SELECT
+        'UPS' AS source_type,
+        COUNT(DISTINCT r.asset_code) AS active_systems,
+        COALESCE(AVG(r.output_voltage), 230.0) AS avg_output_voltage,
+        COALESCE(AVG(r.battery_vdc), 380.0) AS avg_battery_vdc,
+        COALESCE(AVG(r.battery_temperature), 25.0) AS avg_battery_temp,
+        COUNT(r.reading_id) AS total_log_count,
+        COALESCE(SUM(CASE WHEN r.data_quality_status = 'VALID' THEN 1 ELSE 0 END), 0) AS valid_count,
+        COALESCE(SUM(CASE WHEN r.data_quality_status != 'VALID' THEN 1 ELSE 0 END), 0) AS exception_count
+    FROM energy_readings_ups r;
+    """)
+
+    # 6. Unified all assets latest reading
+    cur.execute("DROP VIEW IF EXISTS vw_all_assets_latest_reading")
+    cur.execute("""
+    CREATE VIEW vw_all_assets_latest_reading AS
+    SELECT asset_id, asset_code, asset_name, plaza_id, source_type, capacity_kva, reading_id, reading_datetime, latest_cumulative_kwh, latest_interval_kwh, latest_pf, data_quality_status, created_by FROM vw_eb_asset_latest_reading
+    UNION ALL
+    SELECT asset_id, asset_code, asset_name, plaza_id, source_type, capacity_kva, reading_id, reading_datetime, latest_cumulative_kwh, latest_interval_kwh, latest_pf, data_quality_status, created_by FROM vw_dg_asset_latest_reading
+    UNION ALL
+    SELECT asset_id, asset_code, asset_name, plaza_id, source_type, capacity_kva, reading_id, reading_datetime, latest_cumulative_kwh, latest_interval_kwh, NULL as latest_pf, data_quality_status, created_by FROM vw_solar_asset_latest_reading
+    UNION ALL
+    SELECT asset_id, asset_code, asset_name, plaza_id, source_type, capacity_kva, reading_id, reading_datetime, latest_cumulative_kwh, latest_interval_kwh, latest_pf, data_quality_status, created_by FROM vw_transformer_asset_latest_reading
+    UNION ALL
+    SELECT asset_id, asset_code, asset_name, plaza_id, source_type, capacity_kva, reading_id, reading_datetime, NULL as latest_cumulative_kwh, NULL as latest_interval_kwh, NULL as latest_pf, data_quality_status, created_by FROM vw_ups_asset_latest_reading;
+    """)
+
+    conn.commit()
 
     conn.close()
 
@@ -465,6 +863,65 @@ def fetch_consumers_from_sqlite() -> pd.DataFrame:
         return df
     except Exception:
         return pd.DataFrame()
+
+
+def save_consumer_to_sqlite(record: dict[str, Any]) -> bool:
+    """Authoritative upsert of a consumer account into SQLite database."""
+    try:
+        init_local_db()
+        conn = get_sqlite_connection()
+        cur = conn.cursor()
+        ac_no = str(record.get("consumer_account_no") or "").strip()
+        if not ac_no:
+            conn.close()
+            return False
+        cur.execute("""
+        INSERT OR REPLACE INTO energy_consumer_master (
+            consumer_account_no, consumer_name, toll_plaza_id, bill_type, consumer_scope,
+            sanctioned_load_kw, contract_demand, meter_sl_no, division, sub_division,
+            section, category, status, asset_code, division_name, usage_type, location,
+            remarks, is_active
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            ac_no,
+            str(record.get("consumer_name") or ""),
+            str(record.get("toll_plaza_id") or "TP01"),
+            str(record.get("bill_type") or "LT"),
+            str(record.get("consumer_scope") or "HIGHWAY"),
+            float(record.get("sanctioned_load_kw") or 10.0),
+            str(record.get("contract_demand") or "10 KW"),
+            str(record.get("meter_sl_no") or ""),
+            str(record.get("division") or record.get("division_name") or "SAMBALPUR"),
+            str(record.get("sub_division") or "SAMBALPUR"),
+            str(record.get("section") or "SAMBALPUR"),
+            str(record.get("category") or record.get("usage_type") or "PUBLIC LIGHT"),
+            str(record.get("status") or ("ACTIVE" if record.get("is_active", True) else "INACTIVE")),
+            str(record.get("asset_code") or ""),
+            str(record.get("division_name") or record.get("division") or "SED"),
+            str(record.get("usage_type") or "Street Light"),
+            str(record.get("location") or ""),
+            str(record.get("remarks") or ""),
+            1 if record.get("is_active", True) else 0,
+        ))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+
+def delete_consumer_from_sqlite(consumer_account_no: str) -> bool:
+    """Authoritative deletion of a consumer account from SQLite database."""
+    try:
+        init_local_db()
+        conn = get_sqlite_connection()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM energy_consumer_master WHERE consumer_account_no = ?", (str(consumer_account_no).strip(),))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception:
+        return False
 
 
 def fetch_energy_bills_from_sqlite() -> pd.DataFrame:

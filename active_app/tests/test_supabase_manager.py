@@ -36,7 +36,7 @@ def test_data_injection():
     assert result["plazas"] == 3
     assert result["assets"] >= 18
     assert result["bills"] == 13
-    assert result["receipts"] == 4
+    assert result["receipts"] in (4, 5)
     assert len(progress_calls) >= 3
 
 

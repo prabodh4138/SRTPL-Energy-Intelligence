@@ -163,6 +163,9 @@ def test_save_consumer_account_cloud():
         df = get_all_consumer_accounts()
         assert "888001078888" in df["consumer_account_no"].astype(str).tolist()
 
+        # Clean up to preserve authoritative 60 consumer count
+        delete_consumer_account("888001078888")
+
 
 def test_correlated_consumer_reconciliation():
     corr_df = get_correlated_consumer_reconciliation()

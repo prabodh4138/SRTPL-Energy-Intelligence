@@ -20,6 +20,9 @@ from core.live_pipeline import (
     clear_local_ingestion_hashes,
 )
 from core.supabase_manager import remove_all_database_data
+from supabase_import.pipeline import ImportPipeline
+from energy_validation.persistence import NormalizationPersistence
+from analytics.solar_phase5_5 import calculate_solar_kpis
 
 
 def _save_uploaded(uploaded) -> Path:

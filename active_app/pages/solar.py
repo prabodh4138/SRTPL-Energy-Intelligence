@@ -7,34 +7,31 @@ ACTIVE_APP = Path(__file__).resolve().parents[1]
 if str(ACTIVE_APP) not in sys.path:
     sys.path.insert(0, str(ACTIVE_APP))
 
-import streamlit as st
+from core.reading_view_ui import render_equipment_reading_view
 
 
 def render():
-    st.title("☀️ Solar Analytics & Plant Overview")
-    st.caption("Phase 5.5 • Solar generation monitoring, availability scoring, and cumulative delta validation.")
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Inventoried Plants", "3", help="SR-E-AP-SPX-000001, 000002, 000003")
-    c2.metric("Active Standard KPI", "SOL-GEN-D", "Daily Generation (kWh)")
-    c3.metric("Availability Metric", "SOL-AVAIL-D", "% reporting uptime")
-
-    st.subheader("Validation Rules")
-    st.markdown("""
-    - **VAL-SOL-001**: Non-decreasing cumulative generation rule. Any decrease in cumulative kWh is flagged as an anomaly.
-    - **Interval Derivation**: Daily generation = `cumulative_kwh(t) - cumulative_kwh(t-1)`.
-    - **NULL Preservation**: Missing readings remain `NULL` and are excluded from generation sums.
-    """)
-
-    st.subheader("Inventoried Solar Plants")
-    plants = [
-        {"Plant Code": "SR-E-AP-SPX-000001", "Source File": "Solar_Plant_Log_25thSep2026_4168_Solar Log.csv", "Capacity": "Operational", "Status": "ONLINE"},
-        {"Plant Code": "SR-E-AP-SPX-000002", "Source File": "Solar_Plant_Log_25thSep2026_2719_Solar Log.csv", "Capacity": "Operational", "Status": "ONLINE"},
-        {"Plant Code": "SR-E-AP-SPX-000003", "Source File": "Solar_Plant_Log_25thSep2026_2764_Solar Log.csv", "Capacity": "Operational", "Status": "ONLINE"},
+    sample_plants = [
+        {"Plant Code": "SR-E-AP-SPX-000001", "Plaza": "TP01", "Capacity": "100 kWp", "Records": "4,168 logs", "Status": "ONLINE"},
+        {"Plant Code": "SR-E-AP-SPX-000002", "Plaza": "TP02", "Capacity": "100 kWp", "Records": "2,719 logs", "Status": "ONLINE"},
+        {"Plant Code": "SR-E-AP-SPX-000003", "Plaza": "TP03", "Capacity": "100 kWp", "Records": "2,764 logs", "Status": "ONLINE"},
     ]
-    st.table(plants)
-
-    st.info("To process fresh Solar logs, navigate to **Solar JUNO Import** in the sidebar.")
+    rules = [
+        "VAL-SOL-001: Non-decreasing cumulative generation rule (cumulative kWh decrease triggers exception)",
+        "VAL-SOLAR-001: Non-negative diurnal generation profile",
+        "VAL-SOLAR-002: Peak irradiance generation ceiling (≤ Capacity * 1.1)",
+        "Interval Derivation: Daily generation = cumulative_kwh(t) - cumulative_kwh(t-1)",
+        "NULL Preservation: Missing readings remain NULL and are excluded from generation sums.",
+    ]
+    render_equipment_reading_view(
+        asset_type="solar",
+        title="☀️ Solar Analytics & Plant Overview",
+        subtitle="Phase 5.5 • Solar generation monitoring, availability scoring, and cumulative delta validation.",
+        unit_label="kWh",
+        default_meter="SR-E-AP-SPX-000001",
+        sample_assets=sample_plants,
+        rules=rules,
+    )
 
 
 if __name__ == "__main__":

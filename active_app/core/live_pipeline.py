@@ -54,13 +54,18 @@ _LOCAL_INGESTED_HASHES: set[str] = set()
 
 
 def clear_local_ingestion_hashes() -> None:
-    """Clear in-memory and session-state duplicate tracking caches."""
+    """Clear in-memory, session-state, and SQLite duplicate tracking caches."""
     global _LOCAL_INGESTED_HASHES
     _LOCAL_INGESTED_HASHES.clear()
     try:
         import streamlit as st
         if "imported_file_hashes" in st.session_state:
             st.session_state["imported_file_hashes"].clear()
+    except Exception:
+        pass
+    try:
+        from core.local_db import wipe_only_juno_data_sqlite
+        wipe_only_juno_data_sqlite()
     except Exception:
         pass
 

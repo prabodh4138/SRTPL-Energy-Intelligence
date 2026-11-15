@@ -675,11 +675,11 @@ DEFAULT_CONSUMER_ACCOUNTS = [   {   'asset_code': 'SR-E-EM-EB-5-200',
 
         'location': 'SAHAPARA',
 
-        'remarks': 'TP01 - SAHAPARA (LT)',
+        'remarks': 'TP02 - SAHAPARA (LT)',
 
         'sanctioned_load_kw': 16.0,
 
-        'toll_plaza_id': 'TP01',
+        'toll_plaza_id': 'TP02',
 
         'usage_type': 'Street Light'},
 
@@ -719,11 +719,11 @@ DEFAULT_CONSUMER_ACCOUNTS = [   {   'asset_code': 'SR-E-EM-EB-5-200',
 
         'location': 'BTM Chowk-53 COS',
 
-        'remarks': 'TP01 - BTM Chowk-53 COS (LT)',
+        'remarks': 'TP02 - BTM Chowk-53 COS (LT)',
 
         'sanctioned_load_kw': 40.0,
 
-        'toll_plaza_id': 'TP01',
+        'toll_plaza_id': 'TP02',
 
         'usage_type': 'Street Light'},
 
@@ -1079,7 +1079,7 @@ DEFAULT_CONSUMER_ACCOUNTS = [   {   'asset_code': 'SR-E-EM-EB-5-200',
 
         'usage_type': 'Street Light'},
 
-    {   'asset_code': 'SR-E-EM-EB-78-950',
+    {   'asset_code': 'SR-E-EM-EB-148-500',
 
         'bill_type': 'LT',
 
@@ -1093,11 +1093,11 @@ DEFAULT_CONSUMER_ACCOUNTS = [   {   'asset_code': 'SR-E-EM-EB-5-200',
 
         'location': 'BHAWANIPUR',
 
-        'remarks': 'TP02 - BHAWANIPUR (LT)',
+        'remarks': 'TP03 - BHAWANIPUR (LT)',
 
         'sanctioned_load_kw': 28.0,
 
-        'toll_plaza_id': 'TP02',
+        'toll_plaza_id': 'TP03',
 
         'usage_type': 'Street Light'},
 
@@ -2025,6 +2025,12 @@ def save_consumer_account(record: dict[str, Any]) -> dict[str, Any]:
 
     st.session_state["custom_consumer_accounts"] = sorted(existing, key=lambda x: str(x.get("consumer_account_no")))
 
+    try:
+        from core.local_db import save_consumer_to_sqlite
+        save_consumer_to_sqlite(payload)
+    except Exception:
+        pass
+
 
 
     return {"status": "SUCCESS", "cloud_synced": cloud_synced, "payload": payload, "cloud_error": cloud_error}
@@ -2096,6 +2102,12 @@ def delete_consumer_account(consumer_account_no: str) -> dict[str, Any]:
             if str(c.get("consumer_account_no")) != target_ac
 
         ]
+
+    try:
+        from core.local_db import delete_consumer_from_sqlite
+        delete_consumer_from_sqlite(target_ac)
+    except Exception:
+        pass
 
 
 
@@ -3992,6 +4004,15 @@ def get_all_energy_bills() -> pd.DataFrame:
     init_local_db()
     sqlite_bills = fetch_energy_bills_from_sqlite()
     if not sqlite_bills.empty:
+        if "toll_plaza_id" not in sqlite_bills.columns or sqlite_bills["toll_plaza_id"].isna().any():
+            c_map = get_consumer_mapping_dict()
+            def _res_bill_plz(row):
+                p = row.get("toll_plaza_id")
+                if p and str(p).strip() and str(p).lower() != "none":
+                    return str(p).strip()
+                cno = str(row.get("consumer_account_no") or "").strip()
+                return c_map.get(cno, {}).get("toll_plaza_id", "TP01")
+            sqlite_bills["toll_plaza_id"] = sqlite_bills.apply(_res_bill_plz, axis=1)
         return sqlite_bills
 
     # Check in-memory uploaded bills store
@@ -4531,7 +4552,104 @@ def delete_provisional_energy_bill(bill_number: str) -> dict[str, Any]:
 
 
 
-DEFAULT_PAYMENT_RECEIPTS: list[dict[str, Any]] = []
+DEFAULT_PAYMENT_RECEIPTS: list[dict[str, Any]] = [
+    {
+        "receipt_no": "657221120326HDFC0007",
+        "consumer_no": "416001111004",
+        "account_no": "416001111004",
+        "consumer_name": "L/T SAMBALPUR ROURKELA TOLLWAY LTD",
+        "collections_date": "15/05/2025",
+        "payment_date": "15/05/2025",
+        "amount_paid": 7678.00,
+        "payment_type": "PG_HDFC",
+        "transaction_id": "HDFC0007_TXN",
+        "bill_month": "04/2025",
+        "category": "GENERAL PURPOSE < 110 KVA",
+        "office_name": "ESO SASON",
+        "source_pdf": "657221120326HDFC0007.pdf",
+        "toll_plaza_id": "TP01",
+    },
+    {
+        "receipt_no": "657221120326HDFC0008",
+        "consumer_no": "416001070090",
+        "account_no": "416001070090",
+        "consumer_name": "L/T SAMBALPUR ROURKELA TOLLWAY LTD",
+        "collections_date": "15/09/2025",
+        "payment_date": "15/09/2025",
+        "amount_paid": 15316.00,
+        "payment_type": "PG_HDFC",
+        "transaction_id": "HDFC0008_TXN",
+        "bill_month": "08/2025",
+        "category": "PUBLIC LIGHT",
+        "office_name": "ESO RENGALI",
+        "source_pdf": "657221120326HDFC0008.pdf",
+        "toll_plaza_id": "TP01",
+    },
+    {
+        "receipt_no": "657221120326HDFC0009",
+        "consumer_no": "416001070084",
+        "account_no": "416001070084",
+        "consumer_name": "L/T SAMBALPUR ROURKELA TOLLWAY LTD",
+        "collections_date": "15/09/2025",
+        "payment_date": "15/09/2025",
+        "amount_paid": 22660.00,
+        "payment_type": "PG_HDFC",
+        "transaction_id": "HDFC0009_TXN",
+        "bill_month": "08/2025",
+        "category": "PUBLIC LIGHT",
+        "office_name": "ESO RENGALI",
+        "source_pdf": "657221120326HDFC0009.pdf",
+        "toll_plaza_id": "TP01",
+    },
+    {
+        "receipt_no": "657221120326HDFC0010",
+        "consumer_no": "416001070086",
+        "account_no": "416001070086",
+        "consumer_name": "L/T SAMBALPUR ROURKELA TOLLWAY LTD",
+        "collections_date": "15/09/2025",
+        "payment_date": "15/09/2025",
+        "amount_paid": 33399.00,
+        "payment_type": "PG_HDFC",
+        "transaction_id": "HDFC0010_TXN",
+        "bill_month": "08/2025",
+        "category": "PUBLIC LIGHT",
+        "office_name": "ESO RENGALI",
+        "source_pdf": "657221120326HDFC0010.pdf",
+        "toll_plaza_id": "TP01",
+    },
+    {
+        "receipt_no": "657221120326HDFC0011",
+        "consumer_no": "411001070208",
+        "account_no": "411001070208",
+        "consumer_name": "L/T SAMBALPUR ROURKELA TOLLWAY LTD",
+        "collections_date": "15/09/2025",
+        "payment_date": "15/09/2025",
+        "amount_paid": 13583.00,
+        "payment_type": "PG_HDFC",
+        "transaction_id": "HDFC0011_TXN",
+        "bill_month": "08/2025",
+        "category": "PUBLIC LIGHT",
+        "office_name": "ESO RE SECTION",
+        "source_pdf": "657221120326HDFC0011.pdf",
+        "toll_plaza_id": "TP01",
+    },
+    {
+        "receipt_no": "657221120326HDFC0018",
+        "consumer_no": "812001070018",
+        "account_no": "812001070018",
+        "consumer_name": "L/T SAMBALPUR ROURKELA TOLLWAY LTD",
+        "collections_date": "14/10/2026",
+        "payment_date": "14/10/2026",
+        "amount_paid": 31828.00,
+        "payment_type": "PG_HDFC",
+        "transaction_id": "HDFC0018_TXN",
+        "bill_month": "09/2026",
+        "category": "PUBLIC LIGHT",
+        "office_name": "ESO NO-I",
+        "source_pdf": "657221120326HDFC0018.pdf",
+        "toll_plaza_id": "TP03",
+    },
+]
 
 
 
@@ -4561,6 +4679,15 @@ def get_all_payment_receipts() -> pd.DataFrame:
     init_local_db()
     sqlite_receipts = fetch_payment_receipts_from_sqlite()
     if not sqlite_receipts.empty:
+        if "toll_plaza_id" not in sqlite_receipts.columns or sqlite_receipts["toll_plaza_id"].isna().any():
+            c_map = get_consumer_mapping_dict()
+            def _res_plz(row):
+                p = row.get("toll_plaza_id")
+                if p and str(p).strip() and str(p).lower() != "none":
+                    return str(p).strip()
+                cno = str(row.get("consumer_no") or row.get("account_no") or "").strip()
+                return c_map.get(cno, {}).get("toll_plaza_id", "TP01")
+            sqlite_receipts["toll_plaza_id"] = sqlite_receipts.apply(_res_plz, axis=1)
         return sqlite_receipts
 
     # Check module in-memory store (FastAPI & Streamlit compatible)
@@ -6090,6 +6217,8 @@ def _ensure_official_register_columns(df: pd.DataFrame) -> pd.DataFrame:
         # Rebate Availed vs Rebate Loss audit
 
         pay_dt = str(r.get("latest_payment_date") or r.get("collections_date") or r.get("Payment Date") or "").strip()
+        r["collections_date"] = pay_dt
+        r["latest_payment_date"] = pay_dt
 
         paid_val = _clean_kpi_num(r.get("amount_paid") or r.get("total_paid") or 0.0)
 

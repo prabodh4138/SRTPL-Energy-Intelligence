@@ -65,6 +65,21 @@ def run_app():
         elif page == "System Health":
             from pages.system_health import render
             render()
+        elif page == "EB JUNO Import":
+            from pages.eb_juno_import import render
+            render()
+        elif page == "DG JUNO Import":
+            from pages.dg_juno_import import render
+            render()
+        elif page == "Solar JUNO Import":
+            from pages.solar_juno_import import render
+            render()
+        elif page == "Transformer JUNO Import":
+            from pages.transformer_juno_import import render
+            render()
+        elif page == "UPS JUNO Import":
+            from pages.ups_juno_import import render
+            render()
         else:
             # Fallback resolver for any programmatic navigation alias
             target, sub_key, sub_val = resolve_page(page)

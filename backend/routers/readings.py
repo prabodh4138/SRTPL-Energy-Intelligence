@@ -364,12 +364,60 @@ def get_readings(asset_type: str):
             {"label": "Data Quality", "value": "100%", "sub": "Zero validation defects"},
         ]
 
+    # Authoritative KPIs directly from SQL View (if available)
+    try:
+        from core.cloud_views_service import fetch_module_kpis_from_sql_view
+        view_kpis = fetch_module_kpis_from_sql_view(atype)
+        if view_kpis and view_kpis.get("cards"):
+            kpis = view_kpis["cards"]
+    except Exception:
+        pass
+
     return {
         "title": cfg["title"],
         "kpis": kpis,
         "rules": cfg["rules"],
         "records": normalized_records,
     }
+
+
+@router.get("/{asset_type}/sql-kpis")
+def get_sql_kpis(asset_type: str, plaza: str | None = None):
+    atype = asset_type.lower().strip()
+    if atype not in EQUIPMENT_CONFIG:
+        raise HTTPException(status_code=404, detail=f"Asset type '{asset_type}' not recognized.")
+    from core.cloud_views_service import fetch_module_kpis_from_sql_view
+    return fetch_module_kpis_from_sql_view(atype, plaza=plaza)
+
+
+@router.get("/{asset_type}/latest-assets")
+def get_latest_assets(asset_type: str, plaza: str | None = None):
+    atype = asset_type.lower().strip()
+    if atype not in EQUIPMENT_CONFIG:
+        raise HTTPException(status_code=404, detail=f"Asset type '{asset_type}' not recognized.")
+    from core.cloud_views_service import fetch_asset_latest_readings_from_sql_view
+    df = fetch_asset_latest_readings_from_sql_view(atype, plaza=plaza)
+    return {
+        "source_type": atype.upper(),
+        "count": len(df),
+        "assets": df.to_dict(orient="records"),
+    }
+
+
+@router.get("/{asset_type}/export")
+def export_readings(asset_type: str, format: str = "csv", plaza: str | None = None):
+    atype = asset_type.lower().strip()
+    if atype not in EQUIPMENT_CONFIG:
+        raise HTTPException(status_code=404, detail=f"Asset type '{asset_type}' not recognized.")
+    from fastapi.responses import Response
+    from core.cloud_views_service import extract_equipment_readings_in_memory
+    data_bytes, filename = extract_equipment_readings_in_memory(atype, format_type=format, plaza=plaza)
+    media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" if format.lower() == "excel" else "text/csv"
+    return Response(
+        content=data_bytes,
+        media_type=media_type,
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 @router.post("/{asset_type}")
@@ -417,6 +465,67 @@ def add_reading(asset_type: str, payload: AddReadingPayload):
         "remarks": payload.notes,
     }
     records.insert(0, new_record)
+
+    # SQLite local persistence
+    try:
+        conn = get_sqlite_connection()
+        cur = conn.cursor()
+        tbl = f"energy_readings_{atype}"
+        if atype == "eb":
+            cur.execute(f"""
+            INSERT OR REPLACE INTO {tbl} (
+                reading_id, asset_id, asset_code, reading_datetime, cumulative_kwh, cumulative_kvah,
+                interval_kwh, interval_kvah, pf, remarks, data_quality_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                new_record["reading_id"], payload.meter_code, payload.meter_code, now_iso,
+                payload.reading_value, payload.reading_value, 0.0, 0.0, 0.98, payload.notes, "VALID"
+            ))
+        elif atype == "dg":
+            cur.execute(f"""
+            INSERT OR REPLACE INTO {tbl} (
+                reading_id, asset_id, asset_code, reading_datetime, cumulative_kwh, cumulative_running_hours,
+                interval_kwh, interval_running_hours, pf, remarks, data_quality_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                new_record["reading_id"], payload.meter_code, payload.meter_code, now_iso,
+                payload.reading_value, payload.reading_value / 25.0 if payload.reading_value > 0 else 0.0,
+                0.0, 0.0, 0.98, payload.notes, "VALID"
+            ))
+        elif atype == "solar":
+            cur.execute(f"""
+            INSERT OR REPLACE INTO {tbl} (
+                reading_id, asset_id, asset_code, reading_datetime, cumulative_kwh,
+                interval_kwh, remarks, data_quality_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                new_record["reading_id"], payload.meter_code, payload.meter_code, now_iso,
+                payload.reading_value, 0.0, payload.notes, "VALID"
+            ))
+        elif atype == "transformer":
+            cur.execute(f"""
+            INSERT OR REPLACE INTO {tbl} (
+                reading_id, asset_id, asset_code, reading_datetime, cumulative_kwh,
+                interval_kwh, remarks, data_quality_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                new_record["reading_id"], payload.meter_code, payload.meter_code, now_iso,
+                payload.reading_value, 0.0, payload.notes, "VALID"
+            ))
+        elif atype == "ups":
+            cur.execute(f"""
+            INSERT OR REPLACE INTO {tbl} (
+                reading_id, asset_id, asset_code, reading_datetime, output_voltage,
+                battery_vdc, remarks, data_quality_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                new_record["reading_id"], payload.meter_code, payload.meter_code, now_iso,
+                230.0, payload.reading_value, payload.notes, "VALID"
+            ))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
     # Cloud sync if available
     client = get_supabase_client()
