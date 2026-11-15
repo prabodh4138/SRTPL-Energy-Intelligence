@@ -663,4 +663,26 @@ export const api = {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return await res.json();
   },
+
+  // Forensic Analytics & Audit
+  getForensicSummary: async (refresh = false) => {
+    const res = await fetch(`${getApiBase()}/energy/analytics/forensic-summary?refresh=${refresh}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  },
+  getPlazaNeglectScorecard: async () => {
+    const res = await fetch(`${getApiBase()}/energy/analytics/plaza-neglect-scorecard`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  },
+  getTechnicianRanking: async () => {
+    const res = await fetch(`${getApiBase()}/energy/analytics/technician-ranking`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  },
+  getAssetLastReadings: async () => {
+    const res = await fetch(`${getApiBase()}/energy/analytics/asset-last-readings`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  },
 };

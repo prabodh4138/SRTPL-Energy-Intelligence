@@ -12,6 +12,7 @@ from ui.modules import (
     render_juno_import_module,
     render_bill_reconciliation_module,
     render_reports_module,
+    render_forensic_analytics_module,
 )
 
 
@@ -56,6 +57,8 @@ def run_app():
             render_bill_reconciliation_module()
         elif page == "6. Reports":
             render_reports_module()
+        elif page == "7. Forensic Energy Analytics & Audit":
+            render_forensic_analytics_module()
         elif page == "Reading Dashboard" or page == "Reading Dashboard (Audit & KPIs)":
             from pages.reading_dashboard import render
             render()
@@ -100,6 +103,8 @@ def run_app():
                 render_bill_reconciliation_module()
             elif target == "6. Reports":
                 render_reports_module()
+            elif target == "7. Forensic Energy Analytics & Audit":
+                render_forensic_analytics_module()
             elif target == "Master Data Center":
                 from pages.master_data_center import render
                 render()

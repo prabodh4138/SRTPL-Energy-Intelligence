@@ -9,6 +9,7 @@ PRIMARY_MODULES = [
     "4. Juno Import Centre",
     "5. Bill Reconcilation",
     "6. Reports",
+    "7. Forensic Energy Analytics & Audit",
 ]
 
 MODULE_DISPLAY_NAMES = {
@@ -18,6 +19,7 @@ MODULE_DISPLAY_NAMES = {
     "4. Juno Import Centre": "4. Juno Import Centre (DG, EB, SOLAR, TRANSFORMER and UPS)",
     "5. Bill Reconcilation": "5. Bill Reconcilation (EB Bill Extraction field, and many More)",
     "6. Reports": "6. Reports (Excel, CSV and Pdf)",
+    "7. Forensic Energy Analytics & Audit": "7. Forensic Energy Analytics & Audit (Plaza Neglect, Night Entries, Last Readings)",
 }
 
 ADMIN_PAGES = [
@@ -81,6 +83,15 @@ NAVIGATION_MAP: dict[str, tuple[str, str | None, str | None]] = {
     "Reports": ("6. Reports", "reports_subtab", "📑 Reports & Export Center"),
     "6. Reports(Excel,CSV and Pdf)": ("6. Reports", "reports_subtab", "📑 Reports & Export Center"),
     "Audit": ("6. Reports", "reports_subtab", "📜 Audit Log & System Trail"),
+
+    # 7. Forensic Energy Analytics & Audit
+    "7. Forensic Energy Analytics & Audit": ("7. Forensic Energy Analytics & Audit", None, None),
+    "Forensic Energy Analytics": ("7. Forensic Energy Analytics & Audit", None, None),
+    "Forensic Analytics": ("7. Forensic Energy Analytics & Audit", None, None),
+    "Plaza Neglect Scorecard": ("7. Forensic Energy Analytics & Audit", "forensic_subtab", "🏆 Plaza Neglect Scorecard"),
+    "Technician Night Audit": ("7. Forensic Energy Analytics & Audit", "forensic_subtab", "👨‍🔧 Technician Night Audit (8p–8a)"),
+    "Wrong Entries Register": ("7. Forensic Energy Analytics & Audit", "forensic_subtab", "⚠️ Wrong Entries Register"),
+    "Asset Last Readings": ("7. Forensic Energy Analytics & Audit", "forensic_subtab", "⚡ Asset-Wise Last Readings"),
 
     # Administrative Workspaces
     "Master Data": ("Master Data Center", None, None),

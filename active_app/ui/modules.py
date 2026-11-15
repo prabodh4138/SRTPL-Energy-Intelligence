@@ -200,3 +200,10 @@ def render_reports_module() -> None:
     elif active_tab == "📜 Audit Log & System Trail":
         from pages.audit_log import render
         render()
+
+
+def render_forensic_analytics_module() -> None:
+    """Module 7: Forensic Energy Analytics & Audit."""
+    from pages.forensic_analytics_page import render
+    render()
+
