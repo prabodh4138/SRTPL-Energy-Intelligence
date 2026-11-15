@@ -1621,3 +1621,19 @@ def get_asset_last_readings():
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to fetch asset last readings: {exc}")
 
+
+@router.get("/analytics/module/{module_name}")
+def get_module_analytics(module_name: str, plaza_id: str = "ALL"):
+    """
+    Directly queries database SQL views and tables for the given submodule (DG, EB, SOLAR, TRANSFORMER, UPS).
+    Returns real-time KPIs, plaza-wise last readings, night entries (8pm-8am), and wrong entries.
+    If no data exists in database, returns has_data=False.
+    """
+    try:
+        from core.analytics_service import get_submodule_analytics
+        data = get_submodule_analytics(module_name=module_name, plaza_filter=plaza_id)
+        return {"status": "SUCCESS", "data": data}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Module analytics query failed: {exc}")
+
+

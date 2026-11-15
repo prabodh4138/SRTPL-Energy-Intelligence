@@ -685,4 +685,11 @@ export const api = {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return await res.json();
   },
+  getModuleAnalytics: async (moduleName: string, plazaId = 'ALL') => {
+    const res = await fetch(
+      `${getApiBase()}/energy/analytics/module/${encodeURIComponent(moduleName)}?plaza_id=${encodeURIComponent(plazaId)}`
+    );
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  },
 };

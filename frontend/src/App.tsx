@@ -9,7 +9,7 @@ import { AssetMasterView } from './pages/AssetMasterView';
 import { EnergyImportView } from './pages/EnergyImportView';
 import { ExceptionManagementView } from './pages/ExceptionManagementView';
 import { EnergyExportsBackupView } from './pages/EnergyExportsBackupView';
-import { ForensicAnalyticsView } from './pages/ForensicAnalyticsView';
+import { AnalyticsView } from './pages/AnalyticsView';
 
 // Preserved & Protected Modules (Scope Freeze)
 import { DashboardView } from './pages/DashboardView';
@@ -67,7 +67,7 @@ export function App() {
           {activeModule === 'energy-import' && <EnergyImportView />}
           {activeModule === 'exceptions' && <ExceptionManagementView />}
           {activeModule === 'energy-exports' && <EnergyExportsBackupView />}
-          {activeModule === 'forensic-analytics' && <ForensicAnalyticsView />}
+          {activeModule === 'analytics' && <AnalyticsView />}
 
           {/* Protected Modules (Preserved & Accessible) */}
           {activeModule === 'bills' && <BillReconciliationView />}

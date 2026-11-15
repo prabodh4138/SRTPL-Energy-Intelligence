@@ -20,7 +20,7 @@ export type ModuleKey =
   | 'energy-import'
   | 'exceptions'
   | 'energy-exports'
-  | 'forensic-analytics'
+  | 'analytics'
   | 'bills'
   | 'juno'
   | 'reports'
@@ -41,7 +41,7 @@ export const ENERGY_MODULES: { id: ModuleKey; label: string; number: string; ico
   { id: 'energy-import', label: 'Energy Import Wizard', number: '4', icon: UploadCloud },
   { id: 'exceptions', label: 'Exception Center', number: '5', icon: ShieldAlert },
   { id: 'energy-exports', label: 'Exports & Backup', number: '6', icon: Archive },
-  { id: 'forensic-analytics', label: 'Forensic Audit & Analytics', number: '7', icon: AlertTriangle },
+  { id: 'analytics', label: 'Analytics', number: '7', icon: AlertTriangle },
 ];
 
 export const PROTECTED_MODULES: { id: ModuleKey; label: string; tag: string; icon: React.FC<{ className?: string }> }[] = [
