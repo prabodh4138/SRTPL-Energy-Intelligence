@@ -1549,3 +1549,75 @@ def get_audit_log(limit: int = 100):
         "count": len(logs),
         "logs": logs
     }
+
+
+# -----------------------------------------------------------------------------
+# Forensic Energy Analytics Endpoints (Schema: energy_analytics)
+# -----------------------------------------------------------------------------
+
+@router.get("/analytics/forensic-summary")
+def get_forensic_summary(refresh: bool = False):
+    """
+    Returns full forensic energy analysis across all 5 modules:
+    - Plaza comparison & neglect ranking
+    - Technician performance & night entries (8:00 PM to 8:00 AM)
+    - Asset-wise last readings
+    - Defective wrong entries register
+    """
+    try:
+        from backend.services.forensic_analytics import run_forensic_analysis
+        data = run_forensic_analysis(force_refresh=refresh)
+        return {"status": "SUCCESS", "data": data}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Forensic analysis failed: {exc}")
+
+
+@router.get("/analytics/plaza-neglect-scorecard")
+def get_plaza_neglect_scorecard():
+    """
+    Plaza neglect scorecard ranking TP01, TP02, TP03 by error rate,
+    night entry proportion, and asset monitoring coverage.
+    """
+    try:
+        from backend.services.forensic_analytics import run_forensic_analysis
+        data = run_forensic_analysis()
+        return {
+            "status": "SUCCESS",
+            "scorecard": data["plaza_neglect_scorecard"]
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch plaza scorecard: {exc}")
+
+
+@router.get("/analytics/technician-ranking")
+def get_technician_ranking():
+    """
+    Technician audit register detailing total submissions, night entries (8pm - 8am),
+    wrong entries / technical defects, and submission latency days.
+    """
+    try:
+        from backend.services.forensic_analytics import run_forensic_analysis
+        data = run_forensic_analysis()
+        return {
+            "status": "SUCCESS",
+            "technicians": data["technician_performance_register"]
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch technician ranking: {exc}")
+
+
+@router.get("/analytics/asset-last-readings")
+def get_asset_last_readings():
+    """
+    Plaza-wise, module-wise, asset-wise last reading register with health status.
+    """
+    try:
+        from backend.services.forensic_analytics import run_forensic_analysis
+        data = run_forensic_analysis()
+        return {
+            "status": "SUCCESS",
+            "asset_readings": data["asset_last_readings"]
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch asset last readings: {exc}")
+

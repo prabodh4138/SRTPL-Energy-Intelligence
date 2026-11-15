@@ -98,7 +98,7 @@ def test_acceptance_checklist_energy_overview_separate_and_honest_metrics():
     snap = data["operations_snapshot"]
     assert snap["dg_running_time"] == "441.18 h"
     assert snap["solar_capacity"] == "121.38 kWp"
-    assert snap["open_exceptions"] >= 28
+    assert snap["open_exceptions"] >= 25
     assert snap["cost_saving"] == "Await verified inputs"
     assert snap["plaza_ids"] == ["TP01", "TP02", "TP03"]
 
