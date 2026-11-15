@@ -446,4 +446,221 @@ export const api = {
     if (!res.ok) throw new Error('Failed to fetch unbilled consumers');
     return res.json();
   },
+
+  // --- SRTPL Energy Command Center APIs ---
+  getEnergyOverview: async (plazaId = 'ALL', period = 'reviewed_baseline') => {
+    const params = new URLSearchParams({ plaza_id: plazaId, period });
+    const res = await fetch(`${getApiBase()}/energy/overview?${params}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  },
+
+  getEnergyAssets: async (plazaId?: string, sourceType?: string, search?: string) => {
+    const params = new URLSearchParams();
+    if (plazaId && plazaId !== 'ALL') params.append('plaza_id', plazaId);
+    if (sourceType && sourceType !== 'ALL') params.append('source_type', sourceType);
+    if (search) params.append('search', search);
+    const res = await fetch(`${getApiBase()}/energy/assets?${params}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  },
+
+  createEnergyAsset: async (payload: {
+    asset_code: string;
+    asset_name: string;
+    plaza_id: string;
+    source_type: string;
+    capacity_val: number;
+    capacity_unit?: string;
+    approval_reason: string;
+    actor?: string;
+  }) => {
+    const res = await fetch(`${getApiBase()}/energy/assets`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Asset creation failed');
+    }
+    return await res.json();
+  },
+
+  updateEnergyAsset: async (assetId: string, payload: {
+    asset_name?: string;
+    capacity_val?: number;
+    is_active?: boolean;
+    reason: string;
+    actor?: string;
+  }) => {
+    const res = await fetch(`${getApiBase()}/energy/assets/${encodeURIComponent(assetId)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Asset update failed');
+    }
+    return await res.json();
+  },
+
+  deactivateEnergyAsset: async (assetId: string, reason: string, actor = 'admin@srtpl.com') => {
+    const formData = new FormData();
+    formData.append('reason', reason);
+    formData.append('actor', actor);
+    const res = await fetch(`${getApiBase()}/energy/assets/${encodeURIComponent(assetId)}/deactivate`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Deactivation failed');
+    }
+    return await res.json();
+  },
+
+  getEnergyReadings: async (module = 'eb', plazaId = 'ALL', status = 'ALL') => {
+    const params = new URLSearchParams({ module, plaza_id: plazaId, status });
+    const res = await fetch(`${getApiBase()}/energy/readings?${params}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  },
+
+  correctEnergyReading: async (payload: {
+    reading_id: string;
+    module: string;
+    asset_code: string;
+    plaza_id: string;
+    field_name: string;
+    original_value: number;
+    proposed_value: number;
+    reason: string;
+    actor?: string;
+  }) => {
+    const res = await fetch(`${getApiBase()}/energy/readings/correct`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Correction failed');
+    }
+    return await res.json();
+  },
+
+  addEnergyReading: async (payload: {
+    module: string;
+    asset_code: string;
+    plaza_id: string;
+    reading_datetime: string;
+    cumulative_value: number;
+    interval_value?: number;
+    power_factor?: number;
+    notes?: string;
+    actor?: string;
+  }) => {
+    const res = await fetch(`${getApiBase()}/energy/readings/entry`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Reading submission failed');
+    }
+    return await res.json();
+  },
+
+  previewEnergyImport: async (file: File, module = 'eb') => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('module', module);
+    const res = await fetch(`${getApiBase()}/energy/import/preview`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Import preview failed');
+    }
+    return await res.json();
+  },
+
+  approveEnergyImport: async (payload: {
+    filename: string;
+    module: string;
+    total_rows: number;
+    valid_rows: any[];
+    sha256: string;
+    approval_reason?: string;
+    actor?: string;
+  }) => {
+    const res = await fetch(`${getApiBase()}/energy/import/approve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Import approval failed');
+    }
+    return await res.json();
+  },
+
+  getEnergyExceptions: async (severity = 'ALL', status = 'ALL', plazaId = 'ALL', module = 'ALL') => {
+    const params = new URLSearchParams({ severity, status, plaza_id: plazaId, module });
+    const res = await fetch(`${getApiBase()}/energy/exceptions?${params}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  },
+
+  reviewEnergyException: async (exceptionId: string, payload: {
+    action: string;
+    reason: string;
+    proposed_correction?: number;
+    actor?: string;
+  }) => {
+    const res = await fetch(`${getApiBase()}/energy/exceptions/${encodeURIComponent(exceptionId)}/review`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Exception review failed');
+    }
+    return await res.json();
+  },
+
+  get downloadEnergyExcelUrl() {
+    return `${getApiBase()}/energy/exports/excel`;
+  },
+  get downloadEnergyPdfUrl() {
+    return `${getApiBase()}/energy/exports/pdf`;
+  },
+  get downloadEnergyBackupUrl() {
+    return `${getApiBase()}/energy/backup/export`;
+  },
+
+  restoreEnergyBackup: async (payload: { confirm: boolean; reason: string; actor?: string; backup_json: string }) => {
+    const res = await fetch(`${getApiBase()}/energy/backup/restore`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Restore failed');
+    }
+    return await res.json();
+  },
+
+  getEnergyAuditLog: async (limit = 100) => {
+    const res = await fetch(`${getApiBase()}/energy/audit-log?limit=${limit}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  },
 };

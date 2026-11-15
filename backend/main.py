@@ -24,6 +24,7 @@ from backend.routers.validation import router as validation_router
 from backend.routers.juno import router as juno_router
 from backend.routers.consumers import router as consumers_router
 from backend.routers.reports import router as reports_router
+from backend.routers.energy_command import router as energy_command_router
 from core.supabase_manager import test_database_connection
 
 # In-memory fast cache for database connection state (60s TTL)
@@ -82,6 +83,7 @@ app.include_router(juno_router)
 app.include_router(bills_router)
 app.include_router(consumers_router)
 app.include_router(reports_router)
+app.include_router(energy_command_router)
 
 
 @app.get("/")
