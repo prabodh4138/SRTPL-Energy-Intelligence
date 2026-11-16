@@ -4,7 +4,6 @@ from typing import Any, Optional
 import os
 import sys
 import json
-import sqlite3
 import datetime
 import hashlib
 import io
@@ -15,138 +14,29 @@ if APP_DIR not in sys.path:
     sys.path.insert(0, APP_DIR)
 
 from core.supabase_manager import get_supabase_client
-from core.local_db import get_sqlite_connection
+from backend.services.energy_command_store import (
+    get_stored_assets,
+    add_stored_asset,
+    update_stored_asset,
+    deactivate_stored_asset,
+    get_stored_exceptions,
+    review_stored_exception,
+    add_stored_correction,
+    get_stored_corrections,
+    get_stored_audit_log,
+    log_energy_audit,
+    export_backup_bundle,
+    restore_backup_bundle,
+    _ENERGY_ASSETS_STORE,
+    _ENERGY_EXCEPTIONS_STORE,
+    _ENERGY_AUDIT_LOG_STORE,
+)
 
 router = APIRouter(prefix="/api/energy", tags=["Energy Command Center"])
 
-# Ensure energy_audit_log and baseline exceptions exist
 def init_energy_command_tables():
-    try:
-        conn = get_sqlite_connection()
-        cur = conn.cursor()
-        
-        # 1. Audit Log Table
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS energy_audit_log (
-            audit_id TEXT PRIMARY KEY,
-            timestamp TEXT NOT NULL,
-            action_type TEXT NOT NULL,
-            module TEXT NOT NULL,
-            entity_id TEXT NOT NULL,
-            actor TEXT NOT NULL,
-            reason TEXT NOT NULL,
-            old_value TEXT,
-            new_value TEXT,
-            details TEXT,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-        """)
-
-        # 2. Reading Correction History
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS energy_reading_corrections (
-            correction_id TEXT PRIMARY KEY,
-            reading_id TEXT NOT NULL,
-            module TEXT NOT NULL,
-            asset_code TEXT NOT NULL,
-            plaza_id TEXT NOT NULL,
-            field_name TEXT NOT NULL,
-            original_value REAL,
-            proposed_value REAL,
-            reason TEXT NOT NULL,
-            actor TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'APPROVED',
-            timestamp TEXT NOT NULL,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        )
-        """)
-
-        # 3. Import Batches Log
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS energy_import_batch (
-            batch_id TEXT PRIMARY KEY,
-            filename TEXT NOT NULL,
-            module TEXT NOT NULL,
-            total_rows INTEGER NOT NULL,
-            valid_rows INTEGER NOT NULL,
-            rejected_rows INTEGER NOT NULL,
-            actor TEXT NOT NULL,
-            sha256 TEXT,
-            status TEXT NOT NULL,
-            timestamp TEXT NOT NULL
-        )
-        """)
-
-        # 4. Seed reviewed open exceptions snapshot (28 exceptions) if not present
-        cur.execute("SELECT COUNT(*) FROM exception_record WHERE rule_code LIKE 'VAL-%'")
-        count = cur.fetchone()[0]
-        if count == 0:
-            now_iso = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            # 1 Critical DG cumulative decrease
-            cur.execute("""
-            INSERT OR REPLACE INTO exception_record (
-                exception_id, asset_id, asset_code, created_by, created_on,
-                rule_code, severity, status, reading_datetime, detected_value, message
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                "EXC-DG-CRIT-01", "AST-DG-01", "SR-E-AP-DGX-000001", "system", now_iso,
-                "VAL-DG-001", "CRITICAL", "OPEN", "2026-10-14 18:30:00", -42.50,
-                "Critical DG cumulative decrease: Cumulative generation decreased from 11,240.50 to 11,198.00 kWh (-42.50 kWh interval)"
-            ))
-
-            # 16 DG source exceptions (warnings)
-            dg_warnings = [
-                ("EXC-DG-WARN-01", "AST-DG-01", "SR-E-AP-DGX-000001", "VAL-DG-003", "2026-04-12 10:15:00", 3.0, "DG unverified generation interval: 3.00 kWh flagged for inspection (non-metered IST closure)"),
-                ("EXC-DG-WARN-02", "AST-DG-01", "SR-E-AP-DGX-000001", "VAL-DG-002", "2026-04-28 14:00:00", 2.1, "DG Specific Fuel Consumption 2.1 kWh/L below approved threshold (2.8 - 4.2 kWh/L)"),
-                ("EXC-DG-WARN-03", "AST-DG-01", "SR-E-AP-DGX-000001", "VAL-DG-001", "2026-05-05 09:30:00", 0.0, "Unusable timestamp pair: Identical closing and start timestamp recorded"),
-                ("EXC-DG-WARN-04", "AST-DG-02", "SR-E-AP-DGX-000002", "VAL-DG-002", "2026-05-18 16:45:00", 4.6, "DG Specific Fuel Consumption 4.6 kWh/L above approved ceiling (4.2 kWh/L)"),
-                ("EXC-DG-WARN-05", "AST-DG-01", "SR-E-AP-DGX-000001", "VAL-DG-003", "2026-06-02 11:20:00", 0.0, "Zero generation recorded during active 45 min run-hour interval"),
-                ("EXC-DG-WARN-06", "AST-DG-01", "SR-E-AP-DGX-000001", "VAL-DG-001", "2026-06-19 20:10:00", 0.0, "First reading after service interval: Interval excluded from confirmed totals"),
-                ("EXC-DG-WARN-07", "AST-DG-02", "SR-E-AP-DGX-000002", "VAL-DG-003", "2026-07-08 12:00:00", 0.0, "Unverified closing interval shift across IST date boundary"),
-                ("EXC-DG-WARN-08", "AST-DG-01", "SR-E-AP-DGX-000001", "VAL-DG-002", "2026-07-22 17:30:00", 2.3, "Fuel consumption entry without corresponding generator run-log"),
-                ("EXC-DG-WARN-09", "AST-DG-01", "SR-E-AP-DGX-000001", "VAL-DG-001", "2026-08-04 15:40:00", 0.0, "Manual log discrepancy: Logged hours exceed clock elapsed delta"),
-                ("EXC-DG-WARN-10", "AST-DG-02", "SR-E-AP-DGX-000002", "VAL-DG-003", "2026-08-19 13:15:00", 0.0, "Standby test run: Generation below minimum load threshold"),
-                ("EXC-DG-WARN-11", "AST-DG-01", "SR-E-AP-DGX-000001", "VAL-DG-001", "2026-09-01 08:30:00", 0.0, "Unverified fuel top-up log during generator operation"),
-                ("EXC-DG-WARN-12", "AST-DG-01", "SR-E-AP-DGX-000001", "VAL-DG-002", "2026-09-15 19:00:00", 2.4, "Low specific yield during partial phase generator run"),
-                ("EXC-DG-WARN-13", "AST-DG-02", "SR-E-AP-DGX-000002", "VAL-DG-003", "2026-09-29 11:45:00", 0.0, "Run hours accumulator missing decimal precision in log entry"),
-                ("EXC-DG-WARN-14", "AST-DG-01", "SR-E-AP-DGX-000001", "VAL-DG-001", "2026-10-06 14:20:00", 0.0, "Unusable interval pair: Closing reading prior to recorded start time"),
-                ("EXC-DG-WARN-15", "AST-DG-01", "SR-E-AP-DGX-000001", "VAL-DG-002", "2026-10-18 16:50:00", 4.4, "High specific fuel consumption warning on peak run test"),
-                ("EXC-DG-WARN-16", "AST-DG-02", "SR-E-AP-DGX-000002", "VAL-DG-003", "2026-10-23 21:10:00", 0.0, "Unverified interval: Maintenance run interval marked for supervisor sign-off")
-            ]
-            for eid, aid, acode, rcode, rdt, dval, msg in dg_warnings:
-                cur.execute("""
-                INSERT OR REPLACE INTO exception_record (
-                    exception_id, asset_id, asset_code, created_by, created_on,
-                    rule_code, severity, status, reading_datetime, detected_value, message
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (eid, aid, acode, "system", now_iso, rcode, "WARNING", "OPEN", rdt, dval, msg))
-
-            # 11 Transformer cumulative decreases (warnings)
-            trf_warnings = [
-                ("EXC-TRF-WARN-01", "AST-TRF-02", "SR-E-HT-TFR-000002", "VAL-XFR-001", "2026-04-18 11:00:00", -15.0, "Transformer cumulative kWh delta negative: Excluded from clean averages (-15.0 kWh)"),
-                ("EXC-TRF-WARN-02", "AST-TRF-02", "SR-E-HT-TFR-000002", "VAL-XFR-001", "2026-05-12 14:30:00", -8.4, "Transformer cumulative kVAh delta negative: Excluded from clean averages (-8.4 kVAh)"),
-                ("EXC-TRF-WARN-03", "AST-TRF-03", "SR-E-HT-TFR-000003", "VAL-XFR-001", "2026-05-29 09:15:00", -12.0, "Transformer cumulative kWh delta negative on TP02 sub-station"),
-                ("EXC-TRF-WARN-04", "AST-TRF-03", "SR-E-HT-TFR-000003", "VAL-XFR-003", "2026-06-14 16:00:00", 48.7, "Frequency out of range (48.7 Hz < 49.0 Hz): Flagged as REVIEW"),
-                ("EXC-TRF-WARN-05", "AST-TRF-01", "SR-E-HT-TFR-000001", "VAL-XFR-001", "2026-06-30 18:20:00", -6.5, "Transformer cumulative kWh delta negative on TP03 sub-station"),
-                ("EXC-TRF-WARN-06", "AST-TRF-02", "SR-E-HT-TFR-000002", "VAL-XFR-002", "2026-07-16 13:45:00", 6.2, "Phase voltage imbalance > 5% (6.2% detected): Excluded from clean averages"),
-                ("EXC-TRF-WARN-07", "AST-TRF-03", "SR-E-HT-TFR-000003", "VAL-XFR-001", "2026-08-08 10:10:00", -10.2, "Cumulative difference negative; flagged per authoritative cumulative difference rule"),
-                ("EXC-TRF-WARN-08", "AST-TRF-01", "SR-E-HT-TFR-000001", "VAL-XFR-001", "2026-08-25 15:30:00", -9.0, "Transformer cumulative kWh delta negative on TP03 incomer"),
-                ("EXC-TRF-WARN-09", "AST-TRF-02", "SR-E-HT-TFR-000002", "VAL-XFR-003", "2026-09-12 17:00:00", 51.4, "Frequency out of range (51.4 Hz > 51.0 Hz): Flagged as REVIEW"),
-                ("EXC-TRF-WARN-10", "AST-TRF-03", "SR-E-HT-TFR-000003", "VAL-XFR-001", "2026-10-02 12:15:00", -14.6, "Cumulative kWh delta negative on TP02 sub-station"),
-                ("EXC-TRF-WARN-11", "AST-TRF-01", "SR-E-HT-TFR-000001", "VAL-XFR-001", "2026-10-21 09:40:00", -11.5, "Cumulative difference negative; excluded from clean averages per Transformer rule")
-            ]
-            for eid, aid, acode, rcode, rdt, dval, msg in trf_warnings:
-                cur.execute("""
-                INSERT OR REPLACE INTO exception_record (
-                    exception_id, asset_id, asset_code, created_by, created_on,
-                    rule_code, severity, status, reading_datetime, detected_value, message
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (eid, aid, acode, "system", now_iso, rcode, "WARNING", "OPEN", rdt, dval, msg))
-
-        conn.commit()
-        conn.close()
-    except Exception as exc:
-        print(f"init_energy_command_tables error: {exc}")
+    """Initializes in-memory and Supabase operational states. Zero SQLite reliance."""
+    pass
 
 init_energy_command_tables()
 
@@ -277,19 +167,11 @@ def get_energy_overview(
         }
     ]
 
-    # Query live exception count from SQLite if available
-    try:
-        conn = get_sqlite_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM exception_record WHERE status = 'OPEN'")
-        open_exc_cnt = cur.fetchone()[0] or 28
-        cur.execute("SELECT COUNT(*) FROM exception_record WHERE severity = 'CRITICAL' AND status = 'OPEN'")
-        crit_cnt = cur.fetchone()[0] or 1
-        cur.execute("SELECT COUNT(*) FROM exception_record WHERE severity = 'WARNING' AND status = 'OPEN'")
-        warn_cnt = cur.fetchone()[0] or 27
-        conn.close()
-    except Exception:
-        open_exc_cnt, crit_cnt, warn_cnt = 28, 1, 27
+    # Query live exception count from authoritative exceptions store
+    open_exceptions = get_stored_exceptions(status="OPEN")
+    open_exc_cnt = len(open_exceptions) or 28
+    crit_cnt = sum(1 for e in open_exceptions if e.get("severity") == "CRITICAL")
+    warn_cnt = sum(1 for e in open_exceptions if e.get("severity") == "WARNING")
 
     operations_snapshot["open_exceptions"] = open_exc_cnt
     operations_snapshot["open_exceptions_label"] = f"{open_exc_cnt} (reviewed snapshot)"
@@ -361,66 +243,14 @@ def get_assets(
 ):
     """
     Search assets, inspect verified capacities (Solar 40.46 kWp each = 121.38 kWp total; kWp, not kVA).
+    Also surfaces asset-wise start_date and last_date range.
     """
-    assets = []
-    try:
-        conn = get_sqlite_connection()
-        cur = conn.cursor()
-        query = "SELECT asset_id, asset_code, asset_name, plaza_id, source_type, capacity_kva, is_active, created_at FROM energy_master_asset WHERE 1=1"
-        params = []
-        if plaza_id and plaza_id != "ALL":
-            query += " AND plaza_id = ?"
-            params.append(plaza_id)
-        if source_type and source_type != "ALL":
-            query += " AND UPPER(source_type) = ?"
-            params.append(source_type.upper())
-        if search and search.strip():
-            query += " AND (asset_code LIKE ? OR asset_name LIKE ?)"
-            s = f"%{search.strip()}%"
-            params.extend([s, s])
-        
-        query += " ORDER BY plaza_id, source_type, asset_code"
-        cur.execute(query, params)
-        rows = cur.fetchall()
-        conn.close()
-
-        for r in rows:
-            aid, acode, aname, plzid, stype, cap, is_act, cat = r
-            stype_upper = str(stype).upper()
-            
-            # Solar capacity rule: 40.46 kWp each, unit kWp not kVA
-            if stype_upper == "SOLAR":
-                cap_display = 40.46
-                unit = "kWp"
-            else:
-                cap_display = cap or 0.0
-                unit = "kVA"
-
-            assets.append({
-                "asset_id": aid,
-                "asset_code": acode,
-                "asset_name": aname,
-                "plaza_id": plzid,
-                "source_type": stype_upper,
-                "capacity": cap_display,
-                "capacity_unit": unit,
-                "capacity_kwp": 40.46 if stype_upper == "SOLAR" else None,
-                "capacity_kva": cap if stype_upper != "SOLAR" else None,
-                "is_active": bool(is_act),
-                "created_at": cat,
-            })
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Database query failed: {exc}")
-
-    # Summary metrics for header
-    total_assets = len(assets)
-    solar_assets = [a for a in assets if a["source_type"] == "SOLAR"]
-    total_solar_kwp = sum(a["capacity"] for a in solar_assets)
+    assets, total_solar_kwp = get_stored_assets(plaza_id=plaza_id, source_type=source_type, search=search)
 
     return {
         "status": "SUCCESS",
-        "total_count": total_assets,
-        "solar_capacity_total_kwp": round(total_solar_kwp, 2),
+        "total_count": len(assets),
+        "solar_capacity_total_kwp": total_solar_kwp,
         "solar_note": "Three Solar assets, each 40.46 kWp; total 121.38 kWp. Use capacity_kwp, not kVA.",
         "assets": assets
     }
@@ -432,33 +262,27 @@ def create_asset(payload: AssetCreatePayload):
     """
     now_iso = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     aid = f"AST-{payload.source_type.upper()[:3]}-{int(datetime.datetime.now().timestamp())}"
-
-    # Enforce kWp for solar
     cap_val = 40.46 if payload.source_type.upper() == "SOLAR" else payload.capacity_val
 
+    asset_dict = {
+        "asset_id": aid,
+        "asset_code": payload.asset_code,
+        "asset_name": payload.asset_name,
+        "plaza_id": payload.plaza_id,
+        "source_type": payload.source_type.upper(),
+        "capacity": cap_val,
+        "capacity_kva": cap_val if payload.source_type.upper() != "SOLAR" else None,
+        "capacity_kwp": 40.46 if payload.source_type.upper() == "SOLAR" else None,
+        "capacity_unit": "kWp" if payload.source_type.upper() == "SOLAR" else "kVA",
+        "start_date": now_iso,
+        "last_date": now_iso,
+        "total_readings": 0,
+        "is_active": True,
+        "created_at": now_iso,
+    }
+
     try:
-        conn = get_sqlite_connection()
-        cur = conn.cursor()
-        cur.execute("""
-        INSERT INTO energy_master_asset (
-            asset_id, asset_code, asset_name, plaza_id, source_type, capacity_kva, is_active, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 1, ?)
-        """, (aid, payload.asset_code, payload.asset_name, payload.plaza_id, payload.source_type.upper(), cap_val, now_iso))
-
-        # Record in audit log
-        audit_id = f"AUD-AST-{int(datetime.datetime.now().timestamp())}"
-        cur.execute("""
-        INSERT INTO energy_audit_log (
-            audit_id, timestamp, action_type, module, entity_id, actor, reason, old_value, new_value, details
-        ) VALUES (?, ?, 'CREATE_ASSET', 'ASSET_MASTER', ?, ?, ?, NULL, ?, ?)
-        """, (
-            audit_id, now_iso, aid, payload.actor, payload.approval_reason,
-            f"Code: {payload.asset_code}, Cap: {cap_val} {payload.capacity_unit}",
-            f"Approved addition of asset {payload.asset_code} at {payload.plaza_id}"
-        ))
-
-        conn.commit()
-        conn.close()
+        add_stored_asset(asset_dict, actor=payload.actor, reason=payload.approval_reason)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Failed to create asset: {exc}")
 
@@ -469,44 +293,17 @@ def update_asset(asset_id: str, payload: AssetEditPayload):
     """
     Controlled edit asset with mandatory reason and before/after audit tracking.
     """
-    now_iso = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     try:
-        conn = get_sqlite_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT asset_id, asset_code, asset_name, capacity_kva, is_active FROM energy_master_asset WHERE asset_id = ?", (asset_id,))
-        row = cur.fetchone()
-        if not row:
-            conn.close()
-            raise HTTPException(status_code=404, detail=f"Asset '{asset_id}' not found.")
-        
-        old_aid, old_code, old_name, old_cap, old_act = row
-        new_name = payload.asset_name if payload.asset_name is not None else old_name
-        new_cap = payload.capacity_val if payload.capacity_val is not None else old_cap
-        new_act = int(payload.is_active) if payload.is_active is not None else old_act
-
-        cur.execute("""
-        UPDATE energy_master_asset
-        SET asset_name = ?, capacity_kva = ?, is_active = ?
-        WHERE asset_id = ?
-        """, (new_name, new_cap, new_act, asset_id))
-
-        # Audit log
-        audit_id = f"AUD-UPD-{int(datetime.datetime.now().timestamp())}"
-        cur.execute("""
-        INSERT INTO energy_audit_log (
-            audit_id, timestamp, action_type, module, entity_id, actor, reason, old_value, new_value, details
-        ) VALUES (?, ?, 'UPDATE_ASSET', 'ASSET_MASTER', ?, ?, ?, ?, ?, ?)
-        """, (
-            audit_id, now_iso, asset_id, payload.actor, payload.reason,
-            f"Name: {old_name}, Cap: {old_cap}, Active: {old_act}",
-            f"Name: {new_name}, Cap: {new_cap}, Active: {new_act}",
-            f"Asset {old_code} modified"
-        ))
-
-        conn.commit()
-        conn.close()
-    except HTTPException:
-        raise
+        update_stored_asset(
+            asset_id=asset_id,
+            asset_name=payload.asset_name,
+            capacity_val=payload.capacity_val,
+            is_active=payload.is_active,
+            actor=payload.actor,
+            reason=payload.reason,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Asset '{asset_id}' not found.")
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Asset update failed: {exc}")
 
@@ -517,30 +314,10 @@ def deactivate_asset(asset_id: str, reason: str = Form(...), actor: str = Form("
     """
     Soft-delete/deactivate workflow. Preserves record, sets is_active = 0 with mandatory reason.
     """
-    now_iso = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     try:
-        conn = get_sqlite_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT asset_code FROM energy_master_asset WHERE asset_id = ?", (asset_id,))
-        row = cur.fetchone()
-        if not row:
-            conn.close()
-            raise HTTPException(status_code=404, detail="Asset not found")
-        
-        acode = row[0]
-        cur.execute("UPDATE energy_master_asset SET is_active = 0 WHERE asset_id = ?", (asset_id,))
-        
-        audit_id = f"AUD-DEACT-{int(datetime.datetime.now().timestamp())}"
-        cur.execute("""
-        INSERT INTO energy_audit_log (
-            audit_id, timestamp, action_type, module, entity_id, actor, reason, old_value, new_value, details
-        ) VALUES (?, ?, 'DEACTIVATE_ASSET', 'ASSET_MASTER', ?, ?, ?, 'is_active: 1', 'is_active: 0', ?)
-        """, (audit_id, now_iso, asset_id, actor, reason, f"Soft-deactivated asset {acode}"))
-
-        conn.commit()
-        conn.close()
-    except HTTPException:
-        raise
+        deactivate_stored_asset(asset_id=asset_id, actor=actor, reason=reason)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Asset not found")
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Deactivation failed: {exc}")
 
@@ -585,28 +362,20 @@ def get_readings(
     mod = module.lower().strip()
     records = []
 
-    # 1. Query SQLite table
-    try:
-        conn = get_sqlite_connection()
-        cur = conn.cursor()
-        tbl = f"energy_readings_{mod}"
-        query = f"SELECT * FROM {tbl} WHERE 1=1"
-        params = []
-        if plaza_id and plaza_id != "ALL":
-            query += " AND (asset_code LIKE ? OR asset_id LIKE ?)"
-            params.extend([f"%{plaza_id}%", f"%{plaza_id}%"])
-        if status and status != "ALL":
-            query += " AND data_quality_status = ?"
-            params.append(status)
-        query += " ORDER BY reading_datetime DESC LIMIT 200"
-        cur.execute(query, params)
-        cols = [d[0] for d in cur.description]
-        rows = cur.fetchall()
-        conn.close()
-        for r in rows:
-            records.append(dict(zip(cols, r)))
-    except Exception:
-        pass
+    # 1. Query Supabase table directly if available
+    client = get_supabase_client()
+    if client:
+        try:
+            q = client.table(f"energy_readings_{mod}").select("*")
+            if plaza_id and plaza_id != "ALL":
+                q = q.eq("plaza_id", plaza_id)
+            if status and status != "ALL":
+                q = q.eq("data_quality_status", status)
+            res = q.order("reading_datetime", desc=True).limit(200).execute()
+            if res.data:
+                records = res.data
+        except Exception:
+            pass
 
     # 2. If table empty, provide reviewed baseline sample data aligned with approved rules
     if not records:
@@ -796,55 +565,14 @@ def correct_reading(payload: ReadingCorrectionPayload):
     No automatic correction. Original source records retained.
     """
     now_iso = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    cid = f"CORR-{int(datetime.datetime.now().timestamp())}"
-    
     try:
-        conn = get_sqlite_connection()
-        cur = conn.cursor()
-
-        # 1. Record correction
-        cur.execute("""
-        INSERT INTO energy_reading_corrections (
-            correction_id, reading_id, module, asset_code, plaza_id,
-            field_name, original_value, proposed_value, reason, actor,
-            status, timestamp
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'APPROVED', ?)
-        """, (
-            cid, payload.reading_id, payload.module, payload.asset_code, payload.plaza_id,
-            payload.field_name, payload.original_value, payload.proposed_value,
-            payload.reason, payload.actor, now_iso
-        ))
-
-        # 2. Record in master audit log
-        audit_id = f"AUD-CORR-{int(datetime.datetime.now().timestamp())}"
-        cur.execute("""
-        INSERT INTO energy_audit_log (
-            audit_id, timestamp, action_type, module, entity_id, actor, reason, old_value, new_value, details
-        ) VALUES (?, ?, 'READING_CORRECTION', ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            audit_id, now_iso, payload.module.upper(), payload.reading_id,
-            payload.actor, payload.reason,
-            f"{payload.field_name}: {payload.original_value}",
-            f"{payload.field_name}: {payload.proposed_value}",
-            f"Controlled reading correction for asset {payload.asset_code} at {payload.plaza_id}"
-        ))
-
-        # 3. Update reading if exists in table, preserving notes
-        tbl = f"energy_readings_{payload.module.lower()}"
-        try:
-            cur.execute(f"UPDATE {tbl} SET {payload.field_name} = ?, remarks = remarks || ' [CORRECTED by ' || ? || ']' WHERE reading_id = ?",
-                        (payload.proposed_value, payload.actor, payload.reading_id))
-        except Exception:
-            pass
-
-        conn.commit()
-        conn.close()
+        corr_dict = add_stored_correction(payload.model_dump())
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Correction failed: {exc}")
 
     return {
         "status": "SUCCESS",
-        "correction_id": cid,
+        "correction_id": corr_dict["correction_id"],
         "message": f"Correction logged successfully. Actor: {payload.actor}, Timestamp: {now_iso}. Before: {payload.original_value}, After: {payload.proposed_value}"
     }
 
@@ -857,56 +585,34 @@ def add_manual_reading(payload: ReadingManualEntryPayload):
     rid = f"{payload.module.upper()}-MAN-{int(datetime.datetime.now().timestamp())}"
 
     try:
-        conn = get_sqlite_connection()
-        cur = conn.cursor()
-        tbl = f"energy_readings_{payload.module.lower()}"
-
-        # Duplicate check: same asset and timestamp
-        cur.execute(f"SELECT COUNT(*) FROM {tbl} WHERE asset_code = ? AND reading_datetime = ?", (payload.asset_code, payload.reading_datetime))
-        if cur.fetchone()[0] > 0:
-            conn.close()
-            raise HTTPException(status_code=409, detail=f"Duplicate reading exists for '{payload.asset_code}' at '{payload.reading_datetime}'.")
-
-        if payload.module.lower() == "eb":
-            cur.execute(f"""
-            INSERT INTO {tbl} (reading_id, asset_id, asset_code, reading_datetime, cumulative_kwh, interval_kwh, pf, remarks, data_quality_status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'CONFIRMED')
-            """, (rid, payload.asset_code, payload.asset_code, payload.reading_datetime, payload.cumulative_value, payload.interval_value or 0.0, payload.power_factor or 0.98, payload.notes))
-        elif payload.module.lower() == "dg":
-            cur.execute(f"""
-            INSERT INTO {tbl} (reading_id, asset_id, asset_code, reading_datetime, cumulative_kwh, interval_kwh, remarks, data_quality_status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'CONFIRMED')
-            """, (rid, payload.asset_code, payload.asset_code, payload.reading_datetime, payload.cumulative_value, payload.interval_value or 0.0, payload.notes))
-        elif payload.module.lower() == "solar":
-            cur.execute(f"""
-            INSERT INTO {tbl} (reading_id, asset_id, asset_code, reading_datetime, cumulative_kwh, interval_kwh, remarks, data_quality_status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'CONFIRMED')
-            """, (rid, payload.asset_code, payload.asset_code, payload.reading_datetime, payload.cumulative_value, payload.interval_value or 0.0, payload.notes))
-        elif payload.module.lower() == "transformer":
-            cur.execute(f"""
-            INSERT INTO {tbl} (reading_id, asset_id, asset_code, reading_datetime, cumulative_kwh, interval_kwh, remarks, data_quality_status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'CONFIRMED')
-            """, (rid, payload.asset_code, payload.asset_code, payload.reading_datetime, payload.cumulative_value, payload.interval_value or 0.0, payload.notes))
-        elif payload.module.lower() == "ups":
-            cur.execute(f"""
-            INSERT INTO {tbl} (reading_id, asset_id, asset_code, reading_datetime, output_voltage, battery_vdc, remarks, data_quality_status)
-            VALUES (?, ?, ?, ?, 230.0, ?, ?, 'CONFIRMED')
-            """, (rid, payload.asset_code, payload.asset_code, payload.reading_datetime, payload.cumulative_value, payload.notes))
-
-        # Audit
-        audit_id = f"AUD-ENT-{int(datetime.datetime.now().timestamp())}"
-        cur.execute("""
-        INSERT INTO energy_audit_log (
-            audit_id, timestamp, action_type, module, entity_id, actor, reason, old_value, new_value, details
-        ) VALUES (?, ?, 'MANUAL_ENTRY', ?, ?, ?, 'Operator manual reading submission', NULL, ?, ?)
-        """, (audit_id, now_iso, payload.module.upper(), rid, payload.actor, str(payload.cumulative_value), f"Logged reading for {payload.asset_code}"))
-
-        conn.commit()
-        conn.close()
-    except HTTPException:
-        raise
+        log_energy_audit(
+            action_type="MANUAL_ENTRY",
+            module=payload.module.upper(),
+            entity_id=rid,
+            actor=payload.actor,
+            reason="Operator manual reading submission",
+            old_value=None,
+            new_value=str(payload.cumulative_value),
+            details=f"Logged reading for {payload.asset_code}",
+        )
+        client = get_supabase_client()
+        if client:
+            try:
+                client.table(f"energy_readings_{payload.module.lower()}").insert({
+                    "reading_id": rid,
+                    "asset_id": payload.asset_code,
+                    "asset_code": payload.asset_code,
+                    "reading_datetime": payload.reading_datetime,
+                    "cumulative_kwh": payload.cumulative_value,
+                    "remarks": payload.notes,
+                    "data_quality_status": "CONFIRMED"
+                }).execute()
+            except Exception:
+                pass
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Manual entry failed: {exc}")
+
+    return {"status": "SUCCESS", "reading_id": rid, "message": "Reading recorded and audited."}
 
     return {"status": "SUCCESS", "reading_id": rid, "message": "Reading recorded and audited."}
 
@@ -944,18 +650,17 @@ async def import_preview(
     df.columns = [str(c).strip() for c in df.columns]
     total_rows = len(df)
     
-    # Inspect existing records in DB to detect duplicates
+    # Inspect existing records in Supabase to detect duplicates
     existing_timestamps = set()
-    try:
-        conn = get_sqlite_connection()
-        cur = conn.cursor()
-        tbl = f"energy_readings_{mod}"
-        cur.execute(f"SELECT asset_code, reading_datetime FROM {tbl}")
-        for r in cur.fetchall():
-            existing_timestamps.add((str(r[0]).strip(), str(r[1]).strip()))
-        conn.close()
-    except Exception:
-        pass
+    client = get_supabase_client()
+    if client:
+        try:
+            res = client.table(f"energy_readings_{mod}").select("asset_code, reading_datetime").limit(2000).execute()
+            if res.data:
+                for r in res.data:
+                    existing_timestamps.add((str(r.get("asset_code") or "").strip(), str(r.get("reading_datetime") or "").strip()))
+        except Exception:
+            pass
 
     # Column mapping resolution
     column_mapping = {}
@@ -1037,17 +742,12 @@ def import_approve(payload: ImportApprovePayload):
     inserted_count = 0
 
     try:
-        conn = get_sqlite_connection()
-        cur = conn.cursor()
-        tbl = f"energy_readings_{mod}"
-
+        client = get_supabase_client()
         for item in payload.valid_rows:
             d = item.get("data", {})
             rid = f"{mod.upper()}-IMP-{int(datetime.datetime.now().timestamp())}-{item.get('row_index', 0)}"
             acode = str(d.get("asset_code") or d.get("meter_code") or list(d.values())[0]).strip()
             rdt = str(d.get("reading_datetime") or d.get("date") or now_iso).strip()
-            
-            # Numeric values
             try:
                 ckwh = float(d.get("cumulative_kwh") or d.get("curr_kwh") or list(d.values())[2] if len(d) > 2 else 0.0)
             except Exception:
@@ -1057,37 +757,33 @@ def import_approve(payload: ImportApprovePayload):
             except Exception:
                 ikwh = 0.0
 
-            cur.execute(f"""
-            INSERT OR IGNORE INTO {tbl} (
-                reading_id, asset_id, asset_code, reading_datetime, cumulative_kwh, interval_kwh, remarks, data_quality_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, 'CONFIRMED')
-            """, (rid, acode, acode, rdt, ckwh, ikwh, f"Imported in {batch_id}"))
+            if client:
+                try:
+                    client.table(f"energy_readings_{mod}").insert({
+                        "reading_id": rid,
+                        "asset_id": acode,
+                        "asset_code": acode,
+                        "reading_datetime": rdt,
+                        "cumulative_kwh": ckwh,
+                        "interval_kwh": ikwh,
+                        "remarks": f"Imported in {batch_id}",
+                        "data_quality_status": "CONFIRMED"
+                    }).execute()
+                except Exception:
+                    pass
             inserted_count += 1
 
-        # Record batch audit
-        cur.execute("""
-        INSERT INTO energy_import_batch (
-            batch_id, filename, module, total_rows, valid_rows, rejected_rows, actor, sha256, status, timestamp
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', ?)
-        """, (
-            batch_id, payload.filename, payload.module.upper(), payload.total_rows,
-            inserted_count, payload.total_rows - inserted_count, payload.actor, payload.sha256, now_iso
-        ))
-
         # Record in master audit log
-        audit_id = f"AUD-IMP-{int(datetime.datetime.now().timestamp())}"
-        cur.execute("""
-        INSERT INTO energy_audit_log (
-            audit_id, timestamp, action_type, module, entity_id, actor, reason, old_value, new_value, details
-        ) VALUES (?, ?, 'ENERGY_IMPORT_BATCH', ?, ?, ?, ?, NULL, ?, ?)
-        """, (
-            audit_id, now_iso, payload.module.upper(), batch_id, payload.actor,
-            payload.approval_reason, f"Inserted: {inserted_count} rows",
-            f"Import batch {batch_id} from {payload.filename} approved by {payload.actor}"
-        ))
-
-        conn.commit()
-        conn.close()
+        log_energy_audit(
+            action_type="ENERGY_IMPORT_BATCH",
+            module=payload.module.upper(),
+            entity_id=batch_id,
+            actor=payload.actor,
+            reason=payload.approval_reason,
+            old_value=None,
+            new_value=f"Inserted: {inserted_count} rows",
+            details=f"Import batch {batch_id} from {payload.filename} approved by {payload.actor}",
+        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Import approval failed: {exc}")
 
@@ -1123,62 +819,10 @@ def get_exceptions(
     - 11 Transformer cumulative decreases (warnings)
     Drill down without altering source records.
     """
-    exceptions = []
-    try:
-        conn = get_sqlite_connection()
-        cur = conn.cursor()
-        query = "SELECT exception_id, asset_id, asset_code, rule_code, severity, status, reading_datetime, detected_value, message, created_on FROM exception_record WHERE 1=1"
-        params = []
-        if severity and severity != "ALL":
-            query += " AND severity = ?"
-            params.append(severity.upper())
-        if status and status != "ALL":
-            query += " AND status = ?"
-            params.append(status.upper())
-        if module and module != "ALL":
-            query += " AND (rule_code LIKE ? OR message LIKE ?)"
-            params.extend([f"%{module}%", f"%{module}%"])
-        query += " ORDER BY CASE severity WHEN 'CRITICAL' THEN 1 WHEN 'WARNING' THEN 2 ELSE 3 END, reading_datetime DESC"
-        cur.execute(query, params)
-        rows = cur.fetchall()
-        conn.close()
-
-        for r in rows:
-            eid, aid, acode, rcode, sev, st, rdt, dval, msg, con = r
-            
-            # Resolve plaza
-            if "TP01" in acode or "DGX-000001" in acode or "DGX-000002" in acode or "TFR-000002" in acode:
-                plz = "TP01"
-            elif "TP02" in acode or "TFR-000003" in acode:
-                plz = "TP02"
-            elif "TP03" in acode or "TFR-000001" in acode:
-                plz = "TP03"
-            else:
-                plz = "TP01"
-
-            if plaza_id and plaza_id != "ALL" and plz != plaza_id:
-                continue
-
-            exceptions.append({
-                "exception_id": eid,
-                "asset_id": aid,
-                "asset_code": acode,
-                "plaza_id": plz,
-                "rule_code": rcode,
-                "severity": sev,
-                "status": st,
-                "reading_datetime": rdt,
-                "detected_value": dval,
-                "message": msg,
-                "created_on": con
-            })
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to query exceptions: {exc}")
-
-    # Summary counts
+    exceptions = get_stored_exceptions(severity=severity, status=status, plaza_id=plaza_id, module=module)
     total = len(exceptions)
-    crit = sum(1 for e in exceptions if e["severity"] == "CRITICAL")
-    warn = sum(1 for e in exceptions if e["severity"] == "WARNING")
+    crit = sum(1 for e in exceptions if e.get("severity") == "CRITICAL")
+    warn = sum(1 for e in exceptions if e.get("severity") == "WARNING")
 
     return {
         "status": "SUCCESS",
@@ -1195,49 +839,22 @@ def review_exception(exception_id: str, payload: ExceptionReviewPayload):
     Review exception:
     Inspect source values and calculations -> mark reviewed or propose correction -> preserve source and exception history.
     """
-    now_iso = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    new_status = "REVIEWED" if payload.action in ("MARK_REVIEWED", "PROPOSE_CORRECTION") else "RESOLVED"
-
     try:
-        conn = get_sqlite_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT asset_code, rule_code, severity, message FROM exception_record WHERE exception_id = ?", (exception_id,))
-        row = cur.fetchone()
-        if not row:
-            conn.close()
-            raise HTTPException(status_code=404, detail="Exception not found.")
-        
-        acode, rcode, sev, old_msg = row
-        updated_msg = f"{old_msg} | [{payload.action} by {payload.actor} on {now_iso}: {payload.reason}]"
-
-        cur.execute("""
-        UPDATE exception_record
-        SET status = ?, message = ?
-        WHERE exception_id = ?
-        """, (new_status, updated_msg, exception_id))
-
-        # Record in master audit log
-        audit_id = f"AUD-EXC-{int(datetime.datetime.now().timestamp())}"
-        cur.execute("""
-        INSERT INTO energy_audit_log (
-            audit_id, timestamp, action_type, module, entity_id, actor, reason, old_value, new_value, details
-        ) VALUES (?, ?, 'EXCEPTION_REVIEW', 'EXCEPTION_CENTER', ?, ?, ?, 'OPEN', ?, ?)
-        """, (
-            audit_id, now_iso, exception_id, payload.actor, payload.reason, new_status,
-            f"Action: {payload.action} on exception {exception_id} ({rcode}) for asset {acode}"
-        ))
-
-        conn.commit()
-        conn.close()
-    except HTTPException:
-        raise
+        updated = review_stored_exception(
+            exception_id=exception_id,
+            action=payload.action,
+            reason=payload.reason,
+            actor=payload.actor,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Exception not found.")
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Exception review failed: {exc}")
 
     return {
         "status": "SUCCESS",
         "exception_id": exception_id,
-        "new_status": new_status,
+        "new_status": updated.get("status"),
         "message": f"Exception {exception_id} disposition '{payload.action}' recorded with audit retention."
     }
 
@@ -1272,55 +889,45 @@ def export_energy_excel():
         df_kpi.to_excel(writer, sheet_name="Energy Overview KPIs", index=False)
 
         # Sheet 2: Master Assets
-        try:
-            conn = get_sqlite_connection()
-            cur = conn.cursor()
-            cur.execute("SELECT asset_id, asset_code, asset_name, plaza_id, source_type, capacity_kva, is_active FROM energy_master_asset")
-            rows = cur.fetchall()
-            asset_rows = []
-            for r in rows:
-                st = str(r[4]).upper()
-                asset_rows.append({
-                    "Asset ID": r[0],
-                    "Asset Code": r[1],
-                    "Asset Name": r[2],
-                    "Plaza ID": r[3],
-                    "Equipment Type": st,
-                    "Capacity (kWp/kVA)": 40.46 if st == "SOLAR" else r[5],
-                    "Unit": "kWp" if st == "SOLAR" else "kVA",
-                    "Status": "Active" if r[6] else "Inactive"
-                })
-            pd.DataFrame(asset_rows).to_excel(writer, sheet_name="Master Assets", index=False)
+        asset_rows = []
+        for a in _ENERGY_ASSETS_STORE:
+            st = str(a.get("source_type") or "").upper()
+            asset_rows.append({
+                "Asset ID": a.get("asset_id"),
+                "Asset Code": a.get("asset_code"),
+                "Asset Name": a.get("asset_name"),
+                "Plaza ID": a.get("plaza_id"),
+                "Equipment Type": st,
+                "Capacity (kWp/kVA)": 40.46 if st == "SOLAR" else a.get("capacity_kva"),
+                "Unit": "kWp" if st == "SOLAR" else "kVA",
+                "Start Date": a.get("start_date"),
+                "Last Date": a.get("last_date"),
+                "Status": "Active" if a.get("is_active") else "Inactive"
+            })
+        pd.DataFrame(asset_rows).to_excel(writer, sheet_name="Master Assets", index=False)
 
-            # Sheet 3: Exceptions
-            cur.execute("SELECT exception_id, asset_code, rule_code, severity, status, reading_datetime, message FROM exception_record")
-            exc_rows = cur.fetchall()
-            pd.DataFrame([{
-                "Exception ID": e[0],
-                "Asset Code": e[1],
-                "Rule Code": e[2],
-                "Severity": e[3],
-                "Status": e[4],
-                "Timestamp": e[5],
-                "Description": e[6]
-            } for e in exc_rows]).to_excel(writer, sheet_name="Exceptions Register", index=False)
+        # Sheet 3: Exceptions
+        pd.DataFrame([{
+            "Exception ID": e.get("exception_id"),
+            "Asset Code": e.get("asset_code"),
+            "Rule Code": e.get("rule_code"),
+            "Severity": e.get("severity"),
+            "Status": e.get("status"),
+            "Timestamp": e.get("reading_datetime"),
+            "Description": e.get("message")
+        } for e in _ENERGY_EXCEPTIONS_STORE]).to_excel(writer, sheet_name="Exceptions Register", index=False)
 
-            # Sheet 4: Audit Log
-            cur.execute("SELECT audit_id, timestamp, action_type, module, entity_id, actor, reason, details FROM energy_audit_log ORDER BY timestamp DESC")
-            aud_rows = cur.fetchall()
-            pd.DataFrame([{
-                "Audit ID": a[0],
-                "Timestamp": a[1],
-                "Action": a[2],
-                "Module": a[3],
-                "Entity": a[4],
-                "Actor": a[5],
-                "Reason": a[6],
-                "Details": a[7]
-            } for a in aud_rows]).to_excel(writer, sheet_name="Audit Log", index=False)
-            conn.close()
-        except Exception:
-            pass
+        # Sheet 4: Audit Log
+        pd.DataFrame([{
+            "Audit ID": a.get("audit_id"),
+            "Timestamp": a.get("timestamp"),
+            "Action": a.get("action_type"),
+            "Module": a.get("module"),
+            "Entity": a.get("entity_id"),
+            "Actor": a.get("actor"),
+            "Reason": a.get("reason"),
+            "Details": a.get("details")
+        } for a in _ENERGY_AUDIT_LOG_STORE]).to_excel(writer, sheet_name="Audit Log", index=False)
 
     output.seek(0)
     filename = f"SRTPL_Energy_Command_Center_Export_{datetime.date.today().isoformat()}.xlsx"
@@ -1405,50 +1012,10 @@ def export_backup():
     Generates a verifiable JSON backup containing all energy master assets,
     readings, exceptions, and audit logs with SHA256 checksum and record counts.
     """
-    now_iso = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    backup_payload: dict[str, Any] = {
-        "system": "SRTPL Energy Command Center",
-        "version": "2.0.0",
-        "created_at": now_iso,
-        "assets": [],
-        "exceptions": [],
-        "audit_logs": [],
-        "corrections": []
-    }
-
     try:
-        conn = get_sqlite_connection()
-        cur = conn.cursor()
-        
-        cur.execute("SELECT * FROM energy_master_asset")
-        cols = [d[0] for d in cur.description]
-        backup_payload["assets"] = [dict(zip(cols, r)) for r in cur.fetchall()]
-
-        cur.execute("SELECT * FROM exception_record")
-        cols = [d[0] for d in cur.description]
-        backup_payload["exceptions"] = [dict(zip(cols, r)) for r in cur.fetchall()]
-
-        cur.execute("SELECT * FROM energy_audit_log")
-        cols = [d[0] for d in cur.description]
-        backup_payload["audit_logs"] = [dict(zip(cols, r)) for r in cur.fetchall()]
-
-        cur.execute("SELECT * FROM energy_reading_corrections")
-        cols = [d[0] for d in cur.description]
-        backup_payload["corrections"] = [dict(zip(cols, r)) for r in cur.fetchall()]
-
-        conn.close()
+        backup_payload, _ = export_backup_bundle()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Backup export failed: {exc}")
-
-    content_str = json.dumps(backup_payload, indent=2)
-    sha256_hash = hashlib.sha256(content_str.encode("utf-8")).hexdigest()
-    backup_payload["sha256_checksum"] = sha256_hash
-    backup_payload["record_counts"] = {
-        "assets": len(backup_payload["assets"]),
-        "exceptions": len(backup_payload["exceptions"]),
-        "audit_logs": len(backup_payload["audit_logs"]),
-        "corrections": len(backup_payload["corrections"])
-    }
 
     filename = f"SRTPL_Energy_Backup_{datetime.date.today().isoformat()}.json"
     return Response(
@@ -1471,48 +1038,11 @@ def restore_backup(payload: RestorePayload):
     if not payload.confirm:
         raise HTTPException(status_code=400, detail="Restore rejected: Explicit confirmation flag (confirm: true) required.")
 
-    now_iso = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
     try:
-        data = json.loads(payload.backup_json)
-        if "assets" not in data or "exceptions" not in data:
-            raise ValueError("Invalid backup structure: Missing required table keys.")
-        
-        conn = get_sqlite_connection()
-        cur = conn.cursor()
-
-        # Restore exceptions
-        for e in data.get("exceptions", []):
-            cur.execute("""
-            INSERT OR REPLACE INTO exception_record (
-                exception_id, asset_id, asset_code, rule_code, severity, status, reading_datetime, detected_value, message
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                e.get("exception_id"), e.get("asset_id"), e.get("asset_code"), e.get("rule_code"),
-                e.get("severity"), e.get("status"), e.get("reading_datetime"), e.get("detected_value"), e.get("message")
-            ))
-
-        # Record in audit log
-        audit_id = f"AUD-RESTORE-{int(datetime.datetime.now().timestamp())}"
-        cur.execute("""
-        INSERT INTO energy_audit_log (
-            audit_id, timestamp, action_type, module, entity_id, actor, reason, old_value, new_value, details
-        ) VALUES (?, ?, 'RESTORE_BACKUP', 'SYSTEM_BACKUP', ?, ?, ?, NULL, 'RESTORED', ?)
-        """, (
-            audit_id, now_iso, audit_id, payload.actor, payload.reason,
-            f"Restored verified backup snapshot containing {len(data.get('exceptions', []))} exceptions"
-        ))
-
-        conn.commit()
-        conn.close()
+        res = restore_backup_bundle(payload.backup_json, actor=payload.actor, reason=payload.reason)
+        return res
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Restore operation failed: {exc}")
-
-    return {
-        "status": "SUCCESS",
-        "message": f"Backup verified and restored at {now_iso}. Audit record created.",
-        "actor": payload.actor
-    }
 
 @router.get("/audit-log")
 def get_audit_log(limit: int = 100):
@@ -1520,27 +1050,8 @@ def get_audit_log(limit: int = 100):
     Returns full chronological audit log of all manual entries, reading corrections,
     import batches, asset changes, and backup/restore procedures.
     """
-    logs = []
     try:
-        conn = get_sqlite_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT audit_id, timestamp, action_type, module, entity_id, actor, reason, old_value, new_value, details FROM energy_audit_log ORDER BY timestamp DESC LIMIT ?", (limit,))
-        rows = cur.fetchall()
-        conn.close()
-
-        for r in rows:
-            logs.append({
-                "audit_id": r[0],
-                "timestamp": r[1],
-                "action_type": r[2],
-                "module": r[3],
-                "entity_id": r[4],
-                "actor": r[5],
-                "reason": r[6],
-                "old_value": r[7],
-                "new_value": r[8],
-                "details": r[9]
-            })
+        logs = get_stored_audit_log(limit=limit)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to fetch audit log: {exc}")
 

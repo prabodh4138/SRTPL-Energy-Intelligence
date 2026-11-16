@@ -40,8 +40,7 @@ from core.cloud_views_service import (
     fetch_asset_latest_readings_from_sql_view,
     extract_equipment_readings_in_memory,
 )
-from core.local_db import get_sqlite_connection, init_local_db
-from core.supabase_manager import get_supabase_client
+from core.supabase_manager import get_supabase_client, get_asset_date_ranges
 
 
 def _get_unified_corridor_assets(plaza: str | None = None, source_type: str | None = None) -> pd.DataFrame:
@@ -62,25 +61,25 @@ def _get_unified_corridor_assets(plaza: str | None = None, source_type: str | No
         except Exception:
             pass
 
-    if not data:
-        try:
-            init_local_db()
-            conn = get_sqlite_connection()
-            query = "SELECT * FROM vw_all_assets_latest_reading"
-            clauses = []
-            if plaza and plaza != "ALL":
-                clauses.append(f"plaza_id = '{plaza.strip().upper()}'")
-            if source_type and source_type != "ALL":
-                clauses.append(f"source_type = '{source_type.strip().upper()}'")
-            if clauses:
-                query += " WHERE " + " AND ".join(clauses)
-            df = pd.read_sql_query(query, conn)
-            conn.close()
-            return df
-        except Exception:
-            return pd.DataFrame()
-
-    return pd.DataFrame(data)
+    df = pd.DataFrame(data)
+    if not df.empty:
+        ranges = get_asset_date_ranges()
+        if "start_date" not in df.columns:
+            df["start_date"] = df.apply(
+                lambda r: ranges.get(r.get("asset_code"), {}).get("start_date") or r.get("reading_datetime") or "—",
+                axis=1,
+            )
+        if "last_date" not in df.columns:
+            df["last_date"] = df.apply(
+                lambda r: ranges.get(r.get("asset_code"), {}).get("last_date") or r.get("reading_datetime") or "—",
+                axis=1,
+            )
+        if "total_readings" not in df.columns:
+            df["total_readings"] = df.apply(
+                lambda r: ranges.get(r.get("asset_code"), {}).get("total_readings") or (1 if pd.notna(r.get("reading_datetime")) else 0),
+                axis=1,
+            )
+    return df
 
 
 def _generate_corridor_audit_excel_in_memory(plaza: str | None = None) -> tuple[bytes, str]:
@@ -292,6 +291,9 @@ def render() -> None:
             "asset_name": "Asset Name",
             "plaza_id": "Toll Plaza",
             "capacity_kva": "Capacity (kVA/kW)",
+            "start_date": "Start Date",
+            "last_date": "Last Date",
+            "total_readings": "Total Readings",
             "reading_datetime": "Last Verified Timestamp",
             "latest_cumulative_kwh": "Cumulative Energy (kWh)",
             "latest_interval_kwh": "Interval Delta (kWh)",

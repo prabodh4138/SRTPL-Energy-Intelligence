@@ -18,7 +18,6 @@ from typing import Any
 import pandas as pd
 
 from core.supabase_manager import get_supabase_client
-from core.local_db import get_sqlite_connection, init_local_db
 
 
 def fetch_module_kpis_from_sql_view(
@@ -49,19 +48,6 @@ def fetch_module_kpis_from_sql_view(
                     data = res.data
             except Exception:
                 pass
-
-    # 2. Local SQLite view parity fallback
-    if not data:
-        try:
-            init_local_db()
-            conn = get_sqlite_connection()
-            query = f"SELECT * FROM {view_name}"
-            df_kpis = pd.read_sql_query(query, conn)
-            conn.close()
-            if not df_kpis.empty:
-                data = df_kpis.to_dict(orient="records")
-        except Exception:
-            pass
 
     record = data[0] if data else {}
 
@@ -254,20 +240,6 @@ def fetch_asset_latest_readings_from_sql_view(
             except Exception:
                 pass
 
-    # 2. Local SQLite view parity fallback
-    if not data:
-        try:
-            init_local_db()
-            conn = get_sqlite_connection()
-            query = f"SELECT * FROM {view_name}"
-            if plaza and plaza != "ALL":
-                query += f" WHERE plaza_id = '{plaza.strip().upper()}'"
-            df_assets = pd.read_sql_query(query, conn)
-            conn.close()
-            return df_assets
-        except Exception:
-            return pd.DataFrame()
-
     return pd.DataFrame(data)
 
 
@@ -284,21 +256,21 @@ def extract_equipment_readings_in_memory(
     # Fetch latest readings per asset
     latest_df = fetch_asset_latest_readings_from_sql_view(stype, plaza=plaza)
 
-    # Fetch historical meter logs from table
+    # Fetch historical meter logs from Supabase table directly
     history_df = pd.DataFrame()
-    if include_history:
+    if include_history and client:
         try:
-            init_local_db()
-            conn = get_sqlite_connection()
-            query = f"SELECT * FROM energy_readings_{stype}"
-            if plaza and plaza != "ALL":
-                # Filter through master asset plaza mapping if column missing
-                query += f" WHERE asset_code IN (SELECT asset_code FROM energy_master_asset WHERE plaza_id = '{plaza.strip().upper()}')"
-            query += " ORDER BY reading_datetime DESC LIMIT 10000"
-            history_df = pd.read_sql_query(query, conn)
-            conn.close()
+            query = client.table(f"energy_readings_{stype}").select("*").order("reading_datetime", desc=True).limit(10000)
+            res = query.execute()
+            if res.data:
+                history_df = pd.DataFrame(res.data)
         except Exception:
-            pass
+            try:
+                res = client.schema("energy_readings").table(stype).select("*").order("reading_datetime", desc=True).limit(10000).execute()
+                if res.data:
+                    history_df = pd.DataFrame(res.data)
+            except Exception:
+                pass
 
     if format_type.lower() == "excel":
         # Create Excel in-memory buffer with zero temporary disk files

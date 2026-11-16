@@ -3,14 +3,12 @@ from pydantic import BaseModel
 from typing import Any
 import sys
 import os
-import sqlite3
 
 APP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "active_app"))
 if APP_DIR not in sys.path:
     sys.path.insert(0, APP_DIR)
 
 from core.supabase_manager import get_supabase_client
-from core.local_db import get_sqlite_connection
 
 router = APIRouter(prefix="/api/readings", tags=["Readings"])
 
@@ -290,22 +288,7 @@ def get_readings(asset_type: str):
             except Exception:
                 pass
 
-    # 2. Secondary: If Supabase empty or offline, query authoritative SQLite database (ALL records without limit)
-    if not records:
-        try:
-            conn = get_sqlite_connection()
-            cur = conn.cursor()
-            tbl = f"energy_readings_{atype}"
-            cur.execute(f"SELECT * FROM {tbl} ORDER BY reading_datetime DESC")
-            columns = [desc[0] for desc in cur.description]
-            rows = cur.fetchall()
-            conn.close()
-            for row in rows:
-                records.append(dict(zip(columns, row)))
-        except Exception:
-            pass
-
-    # 3. Fallback: In-memory session store
+    # 2. Secondary: If Supabase empty or offline, fallback to in-memory session store
     if not records:
         records = list(_RUNTIME_READINGS.get(atype, []))
 
@@ -466,68 +449,7 @@ def add_reading(asset_type: str, payload: AddReadingPayload):
     }
     records.insert(0, new_record)
 
-    # SQLite local persistence
-    try:
-        conn = get_sqlite_connection()
-        cur = conn.cursor()
-        tbl = f"energy_readings_{atype}"
-        if atype == "eb":
-            cur.execute(f"""
-            INSERT OR REPLACE INTO {tbl} (
-                reading_id, asset_id, asset_code, reading_datetime, cumulative_kwh, cumulative_kvah,
-                interval_kwh, interval_kvah, pf, remarks, data_quality_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                new_record["reading_id"], payload.meter_code, payload.meter_code, now_iso,
-                payload.reading_value, payload.reading_value, 0.0, 0.0, 0.98, payload.notes, "VALID"
-            ))
-        elif atype == "dg":
-            cur.execute(f"""
-            INSERT OR REPLACE INTO {tbl} (
-                reading_id, asset_id, asset_code, reading_datetime, cumulative_kwh, cumulative_running_hours,
-                interval_kwh, interval_running_hours, pf, remarks, data_quality_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                new_record["reading_id"], payload.meter_code, payload.meter_code, now_iso,
-                payload.reading_value, payload.reading_value / 25.0 if payload.reading_value > 0 else 0.0,
-                0.0, 0.0, 0.98, payload.notes, "VALID"
-            ))
-        elif atype == "solar":
-            cur.execute(f"""
-            INSERT OR REPLACE INTO {tbl} (
-                reading_id, asset_id, asset_code, reading_datetime, cumulative_kwh,
-                interval_kwh, remarks, data_quality_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                new_record["reading_id"], payload.meter_code, payload.meter_code, now_iso,
-                payload.reading_value, 0.0, payload.notes, "VALID"
-            ))
-        elif atype == "transformer":
-            cur.execute(f"""
-            INSERT OR REPLACE INTO {tbl} (
-                reading_id, asset_id, asset_code, reading_datetime, cumulative_kwh,
-                interval_kwh, remarks, data_quality_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                new_record["reading_id"], payload.meter_code, payload.meter_code, now_iso,
-                payload.reading_value, 0.0, payload.notes, "VALID"
-            ))
-        elif atype == "ups":
-            cur.execute(f"""
-            INSERT OR REPLACE INTO {tbl} (
-                reading_id, asset_id, asset_code, reading_datetime, output_voltage,
-                battery_vdc, remarks, data_quality_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                new_record["reading_id"], payload.meter_code, payload.meter_code, now_iso,
-                230.0, payload.reading_value, payload.notes, "VALID"
-            ))
-        conn.commit()
-        conn.close()
-    except Exception:
-        pass
-
-    # Cloud sync if available
+    # Cloud sync directly to Supabase PostgreSQL if available
     client = get_supabase_client()
     if client:
         try:

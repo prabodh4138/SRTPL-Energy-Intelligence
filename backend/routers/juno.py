@@ -14,11 +14,6 @@ if APP_DIR not in sys.path:
 from core.db_sync import log_audit_event
 from core.supabase_manager import get_supabase_client
 from core.live_pipeline import execute_live_juno_ingestion
-from core.local_db import (
-    init_local_db,
-    is_juno_file_duplicate_sqlite,
-    fetch_juno_batches_sqlite,
-)
 
 router = APIRouter(prefix="/api/juno", tags=["Juno Import"])
 
@@ -94,17 +89,7 @@ def get_import_batches() -> list[dict[str, Any]]:
         except Exception:
             pass
 
-    # 2. Merge from local SQLite database
-    try:
-        sqlite_batches = fetch_juno_batches_sqlite()
-        for b in sqlite_batches:
-            sha = b.get("sha256")
-            if sha and sha not in batches_map:
-                batches_map[sha] = b
-    except Exception:
-        pass
-
-    # 3. Merge from in-memory cache
+    # 2. Merge from in-memory cache
     for b in IMPORT_BATCHES:
         sha = b.get("sha256")
         if sha and sha not in batches_map:
@@ -157,29 +142,6 @@ def _process_single_juno_upload(
                 "valid_count": b.get("records_count", 0),
                 "cloud_injected": False,
             }
-
-    # Check local SQLite database
-    is_sq_dup, sq_match = is_juno_file_duplicate_sqlite(sha256_hash)
-    if is_sq_dup and sq_match:
-        sq_rtype = str(sq_match.get("report_type") or "EB").upper()
-        sq_label = EQUIPMENT_LABEL_MAP.get(sq_rtype, f"⚡ {sq_rtype}")
-        sq_asset = sq_match.get("asset_code") or "—"
-        msg = f"⛔ DUPLICATE REJECTED (Application Level): File '{filename}' (SHA-256: {sha256_hash[:16]}...) was already ingested on {sq_match.get('created_at')}."
-        log_audit_event("DUPLICATE_REJECTED", msg, "FILE", filename, "REJECTED")
-        return {
-            "status": "DUPLICATE_REJECTED",
-            "success": False,
-            "message": msg,
-            "sha256": sha256_hash,
-            "filename": filename,
-            "existing_batch": sq_match,
-            "equipment": sq_rtype,
-            "equipment_label": sq_label,
-            "asset_code": sq_asset,
-            "records_count": sq_match.get("valid_row_count", 0),
-            "valid_count": sq_match.get("valid_row_count", 0),
-            "cloud_injected": False,
-        }
 
     # Check Supabase cloud database if connected
     client = get_supabase_client()
@@ -450,10 +412,7 @@ def reset_all_juno_data() -> dict[str, Any]:
     IMPORT_BATCHES.clear()
     clear_local_ingestion_hashes()
 
-    # 2. Wipe SQLite
-    sqlite_res = wipe_all_operational_data_sqlite()
-
-    # 3. Wipe Supabase if connected
+    # 2. Wipe Supabase if connected
     supabase_wiped = False
     client = get_supabase_client()
     if client:
@@ -479,8 +438,7 @@ def reset_all_juno_data() -> dict[str, Any]:
 
     return {
         "status": "SUCCESS",
-        "message": "All Juno reading data, batches, and deduplication hashes successfully wiped.",
-        "sqlite_wiped": sqlite_res,
+        "message": "All Juno reading data, batches, and deduplication hashes successfully wiped from memory and Supabase.",
         "supabase_wiped": supabase_wiped,
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
     }

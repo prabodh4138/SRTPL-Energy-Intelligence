@@ -39,6 +39,9 @@ SELECT
     a.plaza_id,
     a.source_type,
     a.capacity_kva,
+    s.start_date,
+    s.last_date,
+    COALESCE(s.total_readings, 0)::bigint AS total_readings,
     r.reading_id,
     r.reading_datetime,
     r.cumulative_kwh AS latest_cumulative_kwh,
@@ -53,6 +56,14 @@ SELECT
     r.created_by,
     r.remarks
 FROM energy_master.asset a
+LEFT JOIN LATERAL (
+    SELECT 
+        MIN(e.reading_datetime) AS start_date,
+        MAX(e.reading_datetime) AS last_date,
+        COUNT(e.reading_id) AS total_readings
+    FROM energy_readings.eb e
+    WHERE e.asset_code = a.asset_code OR e.asset_id = a.asset_id
+) s ON true
 LEFT JOIN LATERAL (
     SELECT *
     FROM energy_readings.eb e
@@ -91,6 +102,9 @@ SELECT
     a.plaza_id,
     a.source_type,
     a.capacity_kva,
+    s.start_date,
+    s.last_date,
+    COALESCE(s.total_readings, 0)::bigint AS total_readings,
     r.reading_id,
     r.reading_datetime,
     r.cumulative_kwh AS latest_cumulative_kwh,
@@ -105,6 +119,14 @@ SELECT
     r.created_by,
     r.remarks
 FROM energy_master.asset a
+LEFT JOIN LATERAL (
+    SELECT 
+        MIN(d.reading_datetime) AS start_date,
+        MAX(d.reading_datetime) AS last_date,
+        COUNT(d.reading_id) AS total_readings
+    FROM energy_readings.dg d
+    WHERE d.asset_code = a.asset_code OR d.asset_id = a.asset_id
+) s ON true
 LEFT JOIN LATERAL (
     SELECT *
     FROM energy_readings.dg d
@@ -143,6 +165,9 @@ SELECT
     a.plaza_id,
     a.source_type,
     a.capacity_kva,
+    s.start_date,
+    s.last_date,
+    COALESCE(s.total_readings, 0)::bigint AS total_readings,
     r.reading_id,
     r.reading_datetime,
     r.cumulative_kwh AS latest_cumulative_kwh,
@@ -152,10 +177,18 @@ SELECT
     r.remarks
 FROM energy_master.asset a
 LEFT JOIN LATERAL (
+    SELECT 
+        MIN(sol.reading_datetime) AS start_date,
+        MAX(sol.reading_datetime) AS last_date,
+        COUNT(sol.reading_id) AS total_readings
+    FROM energy_readings.solar sol
+    WHERE sol.asset_code = a.asset_code OR sol.asset_id = a.asset_id
+) s ON true
+LEFT JOIN LATERAL (
     SELECT *
-    FROM energy_readings.solar s
-    WHERE s.asset_code = a.asset_code OR s.asset_id = a.asset_id
-    ORDER BY s.reading_datetime DESC NULLS LAST
+    FROM energy_readings.solar sol
+    WHERE sol.asset_code = a.asset_code OR sol.asset_id = a.asset_id
+    ORDER BY sol.reading_datetime DESC NULLS LAST
     LIMIT 1
 ) r ON true
 WHERE a.source_type = 'SOLAR'
@@ -186,6 +219,9 @@ SELECT
     a.plaza_id,
     a.source_type,
     a.capacity_kva,
+    s.start_date,
+    s.last_date,
+    COALESCE(s.total_readings, 0)::bigint AS total_readings,
     r.reading_id,
     r.reading_datetime,
     r.cumulative_kwh AS latest_cumulative_kwh,
@@ -199,6 +235,14 @@ SELECT
     r.created_by,
     r.remarks
 FROM energy_master.asset a
+LEFT JOIN LATERAL (
+    SELECT 
+        MIN(t.reading_datetime) AS start_date,
+        MAX(t.reading_datetime) AS last_date,
+        COUNT(t.reading_id) AS total_readings
+    FROM energy_readings.transformer t
+    WHERE t.asset_code = a.asset_code OR t.asset_id = a.asset_id
+) s ON true
 LEFT JOIN LATERAL (
     SELECT *
     FROM energy_readings.transformer t
@@ -236,6 +280,9 @@ SELECT
     a.plaza_id,
     a.source_type,
     a.capacity_kva,
+    s.start_date,
+    s.last_date,
+    COALESCE(s.total_readings, 0)::bigint AS total_readings,
     r.reading_id,
     r.reading_datetime,
     r.output_voltage AS latest_output_voltage,
@@ -247,6 +294,14 @@ SELECT
     r.created_by,
     r.remarks
 FROM energy_master.asset a
+LEFT JOIN LATERAL (
+    SELECT 
+        MIN(u.reading_datetime) AS start_date,
+        MAX(u.reading_datetime) AS last_date,
+        COUNT(u.reading_id) AS total_readings
+    FROM energy_readings.ups u
+    WHERE u.asset_code = a.asset_code OR u.asset_id = a.asset_id
+) s ON true
 LEFT JOIN LATERAL (
     SELECT *
     FROM energy_readings.ups u
@@ -275,15 +330,15 @@ FROM energy_readings.ups r;
 -- ============================================================================
 DROP VIEW IF EXISTS public.vw_all_assets_latest_reading CASCADE;
 CREATE OR REPLACE VIEW public.vw_all_assets_latest_reading AS
-SELECT asset_id, asset_code, asset_name, plaza_id, source_type, capacity_kva, reading_id, reading_datetime, latest_cumulative_kwh, latest_interval_kwh, latest_pf, data_quality_status, created_by FROM public.vw_eb_asset_latest_reading
+SELECT asset_id, asset_code, asset_name, plaza_id, source_type, capacity_kva, start_date, last_date, total_readings, reading_id, reading_datetime, latest_cumulative_kwh, latest_interval_kwh, latest_pf, data_quality_status, created_by FROM public.vw_eb_asset_latest_reading
 UNION ALL
-SELECT asset_id, asset_code, asset_name, plaza_id, source_type, capacity_kva, reading_id, reading_datetime, latest_cumulative_kwh, latest_interval_kwh, latest_pf, data_quality_status, created_by FROM public.vw_dg_asset_latest_reading
+SELECT asset_id, asset_code, asset_name, plaza_id, source_type, capacity_kva, start_date, last_date, total_readings, reading_id, reading_datetime, latest_cumulative_kwh, latest_interval_kwh, latest_pf, data_quality_status, created_by FROM public.vw_dg_asset_latest_reading
 UNION ALL
-SELECT asset_id, asset_code, asset_name, plaza_id, source_type, capacity_kva, reading_id, reading_datetime, latest_cumulative_kwh, latest_interval_kwh, NULL as latest_pf, data_quality_status, created_by FROM public.vw_solar_asset_latest_reading
+SELECT asset_id, asset_code, asset_name, plaza_id, source_type, capacity_kva, start_date, last_date, total_readings, reading_id, reading_datetime, latest_cumulative_kwh, latest_interval_kwh, NULL as latest_pf, data_quality_status, created_by FROM public.vw_solar_asset_latest_reading
 UNION ALL
-SELECT asset_id, asset_code, asset_name, plaza_id, source_type, capacity_kva, reading_id, reading_datetime, latest_cumulative_kwh, latest_interval_kwh, latest_pf, data_quality_status, created_by FROM public.vw_transformer_asset_latest_reading
+SELECT asset_id, asset_code, asset_name, plaza_id, source_type, capacity_kva, start_date, last_date, total_readings, reading_id, reading_datetime, latest_cumulative_kwh, latest_interval_kwh, latest_pf, data_quality_status, created_by FROM public.vw_transformer_asset_latest_reading
 UNION ALL
-SELECT asset_id, asset_code, asset_name, plaza_id, source_type, capacity_kva, reading_id, reading_datetime, NULL as latest_cumulative_kwh, NULL as latest_interval_kwh, NULL as latest_pf, data_quality_status, created_by FROM public.vw_ups_asset_latest_reading;
+SELECT asset_id, asset_code, asset_name, plaza_id, source_type, capacity_kva, start_date, last_date, total_readings, reading_id, reading_datetime, NULL as latest_cumulative_kwh, NULL as latest_interval_kwh, NULL as latest_pf, data_quality_status, created_by FROM public.vw_ups_asset_latest_reading;
 
 -- Grants for API access
 GRANT USAGE ON SCHEMA energy_master, energy_readings, energy_analytics TO anon, authenticated, service_role;

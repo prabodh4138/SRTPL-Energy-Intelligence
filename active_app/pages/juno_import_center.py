@@ -245,6 +245,31 @@ def render():
     st.subheader(f"📁 Queued Files ({len(files_to_process)} CSV file{'s' if len(files_to_process) > 1 else ''})")
     st.dataframe(pd.DataFrame(overview_rows), width="stretch", hide_index=True)
 
+    # Module-Wise Pre-Ingestion Data Counts
+    module_stats = {
+        "EB": {"files": 0, "rows": 0, "icon": "⚡"},
+        "DG": {"files": 0, "rows": 0, "icon": "🛢️"},
+        "SOLAR": {"files": 0, "rows": 0, "icon": "☀️"},
+        "TRANSFORMER": {"files": 0, "rows": 0, "icon": "🔌"},
+        "UPS": {"files": 0, "rows": 0, "icon": "🔋"},
+    }
+    for item in inspected_files:
+        rtype = str(item.get("rtype", "")).upper()
+        if rtype in module_stats:
+            module_stats[rtype]["files"] += 1
+            module_stats[rtype]["rows"] += item["inspection"]["record_count"]
+
+    st.markdown("#### 📦 Queued Data Breakdown (Module-Wise)")
+    st.caption("Pre-ingestion telemetry row count and files queued per module:")
+    qc1, qc2, qc3, qc4, qc5 = st.columns(5)
+    cols = [qc1, qc2, qc3, qc4, qc5]
+    for idx, (m_code, m_info) in enumerate(module_stats.items()):
+        cols[idx].metric(
+            label=f"{m_info['icon']} {m_code}",
+            value=f"{m_info['rows']:,} rows",
+            delta=f"{m_info['files']} file(s)",
+        )
+
     reimport_override = st.checkbox(
         "Force re-import / overwrite if previously ingested",
         value=False,
@@ -275,6 +300,13 @@ def render():
                     allow_reimport=reimport_override,
                 )
             _render_single_center_results(res, rtype, it["path"], it["is_temp"])
+            from core.supabase_manager import get_live_module_counts
+            live_counts = get_live_module_counts()
+            st.divider()
+            st.markdown("#### 🏛️ Live Supabase PostgreSQL Record Count (Post-Ingestion)")
+            mod_code = rtype.upper()
+            live_val = live_counts.get(mod_code, 0)
+            st.metric(f"⚡ {mod_code} Live Records in Supabase", f"{live_val:,} records", help="Direct live query on Supabase PostgreSQL")
 
     # If Multiple Files
     else:
@@ -323,6 +355,39 @@ def render():
                 status_icon = "✅" if res.get("status") == "SUCCESS" else ("⛔" if res.get("status") == "DUPLICATE_FILE" else "❌")
                 with st.expander(f"{status_icon} **{fname}** [{rtype}] — {res.get('status')} ({res.get('valid_rows', 0)} valid readings)"):
                     _render_single_center_results(res, rtype, it["path"], it["is_temp"])
+            # Module-wise breakdown of batch ingested results
+            ingested_module_breakdown = {}
+            for it, res in batch_results:
+                mod = str(it.get("rtype", "")).upper()
+                item_stats = ingested_module_breakdown.setdefault(mod, {
+                    "Module": mod,
+                    "Files Processed": 0,
+                    "Parsed Rows": 0,
+                    "Valid Injected": 0,
+                    "Exceptions Excluded": 0,
+                })
+                item_stats["Files Processed"] += 1
+                item_stats["Parsed Rows"] += it["inspection"]["record_count"]
+                item_stats["Valid Injected"] += res.get("valid_rows", 0)
+                item_stats["Exceptions Excluded"] += res.get("exception_rows", 0)
+
+            st.divider()
+            st.subheader("📊 Ingestion Execution Results (Module-Wise)")
+            st.dataframe(pd.DataFrame(list(ingested_module_breakdown.values())), width="stretch", hide_index=True)
+
+            from core.supabase_manager import get_live_module_counts
+            live_counts = get_live_module_counts()
+            st.markdown("#### 🏛️ Live Supabase PostgreSQL Record Counts (Post-Ingestion)")
+            st.caption("Verified live record totals queried directly from Supabase PostgreSQL tables:")
+            post_c1, post_c2, post_c3, post_c4, post_c5 = st.columns(5)
+            p_cols = [post_c1, post_c2, post_c3, post_c4, post_c5]
+            for idx, (m_code, m_info) in enumerate(module_stats.items()):
+                live_cnt = live_counts.get(m_code, 0)
+                p_cols[idx].metric(
+                    label=f"{m_info['icon']} {m_code} in Supabase",
+                    value=f"{live_cnt:,} records",
+                    help=f"Direct live query on Supabase energy_readings.{m_code.lower()}",
+                )
 
 
 if __name__ == "__main__":

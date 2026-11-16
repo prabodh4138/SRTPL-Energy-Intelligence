@@ -51,6 +51,12 @@ htmlcov/
 *~
 .DS_Store
 
+# Local Databases (CRITICAL: Zero local database reliance; Supabase PostgreSQL is sole source of truth)
+*.db
+*.sqlite
+*.sqlite3
+active_app/data/*.db
+
 # Agent & Antigravity internal runtime
 .gemini/
 .agents/

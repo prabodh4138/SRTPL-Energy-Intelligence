@@ -17,8 +17,7 @@ from datetime import datetime
 from typing import Any, Dict, List
 import pandas as pd
 
-from core.supabase_manager import get_supabase_client
-from core.local_db import get_sqlite_connection, init_local_db
+from core.supabase_manager import get_supabase_client, get_asset_date_ranges
 
 
 def parse_date_str(d_str: Any) -> datetime | None:
@@ -75,18 +74,6 @@ def get_submodule_analytics(module_name: str, plaza_filter: str = "ALL") -> Dict
         except Exception:
             pass
 
-    if not kpi_records:
-        try:
-            init_local_db()
-            conn = get_sqlite_connection()
-            query = f"SELECT * FROM vw_{mod_lower}_reading_kpis"
-            df_kpi = pd.read_sql_query(query, conn)
-            conn.close()
-            if not df_kpi.empty:
-                kpi_records = df_kpi.to_dict(orient="records")
-        except Exception:
-            pass
-
     kpi_data = kpi_records[0] if kpi_records else {}
     
     # Check if this module has ANY reading records in database
@@ -109,22 +96,11 @@ def get_submodule_analytics(module_name: str, plaza_filter: str = "ALL") -> Dict
         except Exception:
             pass
 
-    if not latest_readings:
-        try:
-            conn = get_sqlite_connection()
-            q = f"SELECT * FROM vw_{mod_lower}_asset_latest_reading"
-            if plaza_filter != "ALL":
-                q += f" WHERE plaza_id = '{plaza_filter}'"
-            df_latest = pd.read_sql_query(q, conn)
-            conn.close()
-            if not df_latest.empty:
-                latest_readings = df_latest.to_dict(orient="records")
-        except Exception:
-            pass
-
-    # Format latest readings with clear "Data Not Found" status
+    # Format latest readings with clear "Data Not Found" status and Start/Last dates
     formatted_last_readings = []
+    date_ranges = get_asset_date_ranges()
     for r in latest_readings:
+        acode = r.get("asset_code")
         rdt = r.get("reading_datetime")
         status = "ACTIVE_MONITORED"
         if not rdt or str(rdt).lower() in ("none", "null", ""):
@@ -132,11 +108,19 @@ def get_submodule_analytics(module_name: str, plaza_filter: str = "ALL") -> Dict
         elif "2026-09-08" in str(rdt) or "2026-09-14" in str(rdt):
             status = "STALE_WARNING (>10D)"
 
+        asset_range = date_ranges.get(acode, {})
+        start_d = r.get("start_date") or asset_range.get("start_date") or (str(rdt)[:16] if rdt else "—")
+        last_d = r.get("last_date") or asset_range.get("last_date") or (str(rdt)[:16] if rdt else "—")
+        tot_r = r.get("total_readings") or asset_range.get("total_readings") or (1 if rdt else 0)
+
         formatted_last_readings.append({
             "plaza_id": r.get("plaza_id"),
-            "asset_code": r.get("asset_code"),
+            "asset_code": acode,
             "asset_name": r.get("asset_name"),
             "capacity": f"{r.get('capacity_kva')} kVA" if mod != "SOLAR" else "40.46 kWp",
+            "start_date": start_d,
+            "last_date": last_d,
+            "total_readings": tot_r,
             "reading_datetime": rdt if rdt else "Data Not Found",
             "cumulative_kwh": r.get("latest_cumulative_kwh"),
             "interval_kwh": r.get("latest_interval_kwh"),
@@ -178,23 +162,12 @@ def get_submodule_analytics(module_name: str, plaza_filter: str = "ALL") -> Dict
             except Exception:
                 pass
 
-    if not raw_readings:
-        try:
-            conn = get_sqlite_connection()
-            query = f"SELECT * FROM {table_name}"
-            df_raw = pd.read_sql_query(query, conn)
-            conn.close()
-            if not df_raw.empty:
-                raw_readings = df_raw.to_dict(orient="records")
-        except Exception:
-            pass
-
     # If raw_readings empty
     if not raw_readings:
         return {
             "module": mod,
-            "has_data": True,
-            "message": f"Summary view available, but detailed telemetry rows not found for {mod}.",
+            "has_data": total_logs > 0 or len(formatted_last_readings) > 0,
+            "message": f"Summary view available, but detailed telemetry rows not found for {mod} in Supabase." if total_logs > 0 else f"Data Not Found for Module {mod} in Supabase.",
             "total_logs": total_logs,
             "kpis": kpi_data,
             "last_readings": formatted_last_readings,

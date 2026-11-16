@@ -5,7 +5,7 @@ from typing import Any
 import pandas as pd
 from .models import EquipmentDashboardData
 from core.cloud_views_service import fetch_asset_latest_readings_from_sql_view
-from core.local_db import get_sqlite_connection
+from core.supabase_manager import get_supabase_client
 
 SUPPORTED = ["EB", "DG", "SOLAR", "TRANSFORMER", "UPS"]
 
@@ -127,28 +127,28 @@ class EquipmentDashboardService:
                 {"Parameter": "Battery Temperature", "Value": t_bat, "Unit": "°C", "Timestamp": ts},
             ]
 
-        # Fetch historical trend from database table
+        # Fetch historical trend directly from Supabase PostgreSQL
         trend_df = pd.DataFrame(columns=["Timestamp", "Parameter", "Value"])
         try:
-            conn = get_sqlite_connection()
-            query = f"""
-            SELECT reading_datetime, cumulative_kwh
-            FROM energy_readings_{stype}
-            WHERE asset_code = ? OR asset_id = ?
-            ORDER BY reading_datetime ASC
-            LIMIT 50
-            """
-            rows = pd.read_sql_query(query, conn, params=(asset_id, asset_id))
-            conn.close()
-            if not rows.empty and "cumulative_kwh" in rows.columns:
-                trend_records = []
-                for _, r in rows.iterrows():
-                    trend_records.append({
-                        "Timestamp": r["reading_datetime"],
-                        "Parameter": "Energy (kWh)",
-                        "Value": float(r["cumulative_kwh"] or 0.0),
-                    })
-                trend_df = pd.DataFrame(trend_records)
+            client = get_supabase_client()
+            if client:
+                res = (
+                    client.table(f"energy_readings_{stype}")
+                    .select("reading_datetime, cumulative_kwh")
+                    .eq("asset_code", asset_id)
+                    .order("reading_datetime", desc=False)
+                    .limit(50)
+                    .execute()
+                )
+                if res.data:
+                    trend_records = []
+                    for r in res.data:
+                        trend_records.append({
+                            "Timestamp": r.get("reading_datetime"),
+                            "Parameter": "Energy (kWh)",
+                            "Value": float(r.get("cumulative_kwh") or 0.0),
+                        })
+                    trend_df = pd.DataFrame(trend_records)
         except Exception:
             pass
 

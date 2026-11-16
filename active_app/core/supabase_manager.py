@@ -16,9 +16,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from dotenv import load_dotenv
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
+# Load .env from root directory if present
+load_dotenv(ROOT / ".env")
+load_dotenv()
 
 
 def get_network_info(port: int = 8501) -> dict[str, str]:
@@ -106,9 +110,9 @@ def test_database_connection() -> dict[str, Any]:
 
     if not url and not db_url:
         return {
-            "status": "LOCAL_OFFLINE",
+            "status": "NOT_CONFIGURED",
             "connected": False,
-            "message": "No Supabase credentials configured. Running in Local Offline Mode.",
+            "message": "Supabase credentials not configured. Please configure SUPABASE_URL and SUPABASE_KEY in .env or the Administration Center.",
             "url": None,
         }
 
@@ -404,12 +408,6 @@ def remove_all_database_data() -> dict[str, Any]:
         pass
 
     try:
-        from core.local_db import wipe_all_operational_data_sqlite
-        wipe_all_operational_data_sqlite()
-    except Exception:
-        pass
-
-    try:
         from backend.routers.juno import IMPORT_BATCHES
         IMPORT_BATCHES.clear()
     except Exception:
@@ -506,3 +504,89 @@ def get_database_status() -> dict[str, Any]:
         "network": net,
         "connection": conn,
     }
+
+
+def get_live_module_counts() -> dict[str, int]:
+    """
+    Directly queries Supabase PostgreSQL tables to get live post-ingestion record counts module-wise.
+    Zero intermediate database or local SQLite used.
+    """
+    client = get_supabase_client()
+    counts = {"EB": 0, "DG": 0, "SOLAR": 0, "TRANSFORMER": 0, "UPS": 0}
+    if not client:
+        return counts
+
+    module_table_map = {
+        "EB": ["energy_readings_eb", "reading_eb", "eb"],
+        "DG": ["energy_readings_dg", "reading_dg", "dg"],
+        "SOLAR": ["energy_readings_solar", "reading_solar", "solar"],
+        "TRANSFORMER": ["energy_readings_transformer", "reading_transformer", "transformer"],
+        "UPS": ["energy_readings_ups", "reading_ups", "ups"],
+    }
+
+    for mod, table_candidates in module_table_map.items():
+        found = False
+        for tbl in table_candidates:
+            try:
+                res = client.table(tbl).select("reading_id", count="exact").limit(1).execute()
+                if res.count is not None:
+                    counts[mod] = int(res.count)
+                    found = True
+                    break
+            except Exception:
+                pass
+        if not found:
+            # Try energy_readings schema directly
+            try:
+                sub_tbl = mod.lower()
+                res = client.schema("energy_readings").table(sub_tbl).select("reading_id", count="exact").limit(1).execute()
+                if res.count is not None:
+                    counts[mod] = int(res.count)
+            except Exception:
+                pass
+
+    return counts
+
+
+def get_asset_date_ranges() -> dict[str, dict[str, Any]]:
+    """
+    Directly queries Supabase SQL views or tables to get start_date and last_date per asset.
+    Returns: { asset_code: { 'start_date': str, 'last_date': str, 'total_readings': int } }
+    """
+    client = get_supabase_client()
+    ranges: dict[str, dict[str, Any]] = {}
+    if not client:
+        return ranges
+
+    try:
+        # 1. First attempt: Query vw_m7_asset_latest_reading or vw_all_assets_latest_reading
+        res = client.table("vw_m7_asset_latest_reading").select("asset_code,start_date,last_date,total_readings,reading_datetime").execute()
+        if res.data:
+            for r in res.data:
+                acode = r.get("asset_code")
+                if acode:
+                    ranges[acode] = {
+                        "start_date": r.get("start_date") or "—",
+                        "last_date": r.get("last_date") or r.get("reading_datetime") or "—",
+                        "total_readings": r.get("total_readings") or 0,
+                    }
+            return ranges
+    except Exception:
+        pass
+
+    try:
+        res = client.table("vw_all_assets_latest_reading").select("asset_code,start_date,last_date,total_readings,reading_datetime").execute()
+        if res.data:
+            for r in res.data:
+                acode = r.get("asset_code")
+                if acode:
+                    ranges[acode] = {
+                        "start_date": r.get("start_date") or "—",
+                        "last_date": r.get("last_date") or r.get("reading_datetime") or "—",
+                        "total_readings": r.get("total_readings") or 0,
+                    }
+    except Exception:
+        pass
+
+    return ranges
+

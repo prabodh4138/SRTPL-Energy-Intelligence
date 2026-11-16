@@ -258,6 +258,15 @@ WITH all_readings AS (
         u.output_voltage::numeric, u.battery_vdc::numeric, NULL::text,
         u.source_data_quality_status::text, u.created_by, u.created_on
     FROM public.vw_ups71_reading_detail AS u
+), stats AS (
+    SELECT
+        r.source_type,
+        r.asset_partition_key,
+        MIN(r.reading_datetime) AS start_date,
+        MAX(r.reading_datetime) AS last_date,
+        COUNT(r.reading_id)::bigint AS total_readings
+    FROM all_readings r
+    GROUP BY r.source_type, r.asset_partition_key
 ), ranked AS (
     SELECT
         r.*,
@@ -274,6 +283,9 @@ SELECT
     a.asset_name,
     a.plaza_id,
     a.capacity_kva,
+    s.start_date,
+    s.last_date,
+    COALESCE(s.total_readings, 0)::bigint AS total_readings,
     r.reading_id,
     r.reading_datetime,
     r.operational_date,
@@ -292,6 +304,9 @@ LEFT JOIN ranked AS r
     ON (r.asset_id = a.asset_id OR (r.asset_id IS NULL AND r.asset_code = a.asset_code))
    AND r.source_type = UPPER(a.source_type)
    AND r.latest_rank = 1
+LEFT JOIN stats AS s
+    ON (s.asset_partition_key = r.asset_partition_key OR s.asset_partition_key = COALESCE('ID:' || a.asset_id::text, 'CODE:' || a.asset_code))
+   AND s.source_type = UPPER(a.source_type)
 WHERE UPPER(a.source_type) IN ('DG', 'EB', 'SOLAR', 'TRANSFORMER', 'UPS');
 
 CREATE VIEW public.vw_m7_submodule_summary AS

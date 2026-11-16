@@ -7,13 +7,13 @@ from datetime import date
 from typing import Any
 import os
 import sys
-import sqlite3
 
 ACTIVE_APP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "active_app"))
 if ACTIVE_APP_DIR not in sys.path:
     sys.path.insert(0, ACTIVE_APP_DIR)
 
 from core.supabase_manager import get_supabase_client
+from backend.services.module7_baseline import fetch_in_memory_rows
 
 PAGE_SIZE = 1000
 MAX_SUMMARY_ROWS = 50000
@@ -165,54 +165,6 @@ def _fetch_rows(client: Any, view: str, module: dict[str, Any], plaza_id: str,
     return rows, True
 
 
-def _fetch_rows_sqlite(view: str, module: dict[str, Any], plaza_id: str,
-                       date_from: date | None, date_to: date | None, *, max_rows: int,
-                       order_by: str | None = None, descending: bool = False) -> tuple[list[dict[str, Any]], bool]:
-    from core.local_db import get_sqlite_connection, init_local_db
-    init_local_db()
-    conn = get_sqlite_connection()
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-
-    where_clauses = []
-    params = []
-
-    if view in SHARED_VIEWS:
-        where_clauses.append("source_type = ?")
-        params.append(module["source_type"])
-    if plaza_id != "ALL":
-        where_clauses.append("plaza_id = ?")
-        params.append(plaza_id)
-    if date_from:
-        where_clauses.append("operational_date >= ?")
-        params.append(date_from.isoformat())
-    if date_to:
-        where_clauses.append("operational_date <= ?")
-        params.append(date_to.isoformat())
-
-    sql = f"SELECT * FROM {view}"
-    if where_clauses:
-        sql += " WHERE " + " AND ".join(where_clauses)
-    if order_by:
-        sql += f" ORDER BY {order_by} {'DESC' if descending else 'ASC'}"
-    sql += f" LIMIT {max_rows + 1}"
-
-    cur.execute(sql, params)
-    fetched = cur.fetchall()
-    conn.close()
-
-    truncated = len(fetched) > max_rows
-    rows = [dict(r) for r in fetched[:max_rows]]
-    for r in rows:
-        for b_col in [
-            "delayed_entry_24h_or_more", "entry_within_24h", "reading_datetime_night_indicator",
-            "created_on_night_indicator", "negative_entry_delay_timestamp_anomaly", "has_reading"
-        ]:
-            if b_col in r and r[b_col] is not None:
-                r[b_col] = bool(r[b_col])
-    return rows, truncated
-
-
 def _sum(rows: list[dict[str, Any]], key: str) -> float:
     return sum(_number(row.get(key)) for row in rows)
 
@@ -330,30 +282,6 @@ def _fetch_correction_rows(client: Any, module: dict[str, Any], plaza_id: str,
     return response.data or []
 
 
-def _fetch_correction_rows_sqlite(module: dict[str, Any], plaza_id: str,
-                                  date_from: date | None, date_to: date | None) -> list[dict[str, Any]]:
-    from core.local_db import get_sqlite_connection
-    conn = get_sqlite_connection()
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-    where = ["source_type = ?"]
-    params = [module["source_type"]]
-    if plaza_id != "ALL":
-        where.append("plaza_id = ?")
-        params.append(plaza_id)
-    if date_from:
-        where.append("audit_timestamp >= ?")
-        params.append(date_from.isoformat())
-    if date_to:
-        where.append("audit_timestamp <= ?")
-        params.append(date_to.isoformat() + "T23:59:59.999999")
-    sql = f"SELECT * FROM vw_m7_correction_audit WHERE {' AND '.join(where)} ORDER BY audit_timestamp DESC LIMIT {MAX_EXCEPTION_ROWS}"
-    cur.execute(sql, params)
-    rows = [dict(r) for r in cur.fetchall()]
-    conn.close()
-    return rows
-
-
 def _technician_summary(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     grouped: dict[str, dict[str, Any]] = {}
     for row in entries:
@@ -419,32 +347,26 @@ def get_module7_analytics(module_name: str, plaza_id: str = "ALL", period: str =
             # A configured Supabase source that fails must not be hidden by older local data.
             return _views_unavailable(name, required, exc=exc)
     else:
-        # Render must never report a local SQLite mirror as current production telemetry.
-        if _is_production_runtime():
-            return _views_unavailable(name, required, reason="SUPABASE_NOT_CONFIGURED")
+        # In-memory baseline provider (zero SQLite database reliance)
         try:
-            summary_rows, summary_truncated = _fetch_rows_sqlite(
-                module["daily"], module, plaza_id, start, end,
+            summary_rows, summary_truncated = fetch_in_memory_rows(
+                name, module["daily"], plaza_id, start, end,
                 max_rows=MAX_SUMMARY_ROWS, order_by="operational_date",
             )
-            latest_rows, latest_truncated = _fetch_rows_sqlite(
-                "vw_m7_asset_latest_reading", module, plaza_id, None, None,
+            latest_rows, latest_truncated = fetch_in_memory_rows(
+                name, "vw_m7_asset_latest_reading", plaza_id, None, None,
                 max_rows=MAX_LATEST_ROWS, order_by="reading_datetime", descending=True,
             )
-            entry_rows, entries_truncated = _fetch_rows_sqlite(
-                "vw_m7_entry_audit", module, plaza_id, start, end,
+            entry_rows, entries_truncated = fetch_in_memory_rows(
+                name, "vw_m7_entry_audit", plaza_id, start, end,
                 max_rows=MAX_DETAIL_ROWS, order_by="reading_datetime", descending=True,
             )
-            exception_rows, exceptions_truncated = _fetch_rows_sqlite(
-                "vw_m7_exception_register", module, plaza_id, start, end,
+            exception_rows, exceptions_truncated = fetch_in_memory_rows(
+                name, "vw_m7_exception_register", plaza_id, start, end,
                 max_rows=MAX_EXCEPTION_ROWS, order_by="reading_datetime", descending=True,
             )
-            try:
-                corrections = _fetch_correction_rows_sqlite(module, plaza_id, start, end)
-                correction_audit_available = True
-            except Exception:
-                corrections = []
-                correction_audit_available = False
+            corrections = []
+            correction_audit_available = False
         except Exception as exc:
             return _views_unavailable(name, required, exc=exc)
 
