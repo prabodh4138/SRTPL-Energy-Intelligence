@@ -31,153 +31,153 @@ from core.supabase_manager import get_supabase_client
 _DEFAULT_ASSETS: List[Dict[str, Any]] = [
     # EB (3)
     {
-        "asset_id": "AST-EB-01",
+        "asset_id": "AST-EB-SR-E-EM-EB-000TP01",
         "asset_code": "SR-E-EM-EB-000TP01",
         "asset_name": "Main EB Incomer TP01",
         "plaza_id": "TP01",
         "source_type": "EB",
-        "capacity_kva": 100.0,
-        "capacity": 100.0,
+        "capacity_kva": 250.0,
+        "capacity": 250.0,
         "capacity_unit": "kVA",
         "capacity_kwp": None,
         "start_date": "2026-04-01 00:00:00",
-        "last_date": "2026-05-31 23:59:00",
+        "last_date": "2026-11-15 13:30:00",
         "total_readings": 176,
         "is_active": True,
         "created_at": "2026-04-01 00:00:00",
     },
     {
-        "asset_id": "AST-EB-02",
-        "asset_code": "SR-E-EM-EB-130-000",
+        "asset_id": "AST-EB-SR-E-EM-EB-000TP02",
+        "asset_code": "SR-E-EM-EB-000TP02",
         "asset_name": "Main EB Incomer TP02",
         "plaza_id": "TP02",
         "source_type": "EB",
-        "capacity_kva": 100.0,
-        "capacity": 100.0,
+        "capacity_kva": 250.0,
+        "capacity": 250.0,
         "capacity_unit": "kVA",
         "capacity_kwp": None,
         "start_date": "2026-05-01 08:00:00",
-        "last_date": "2026-08-03 08:00:00",
+        "last_date": "2026-11-15 13:30:00",
         "total_readings": 23,
         "is_active": True,
         "created_at": "2026-04-01 00:00:00",
     },
     {
-        "asset_id": "AST-EB-03",
-        "asset_code": "SRTPL_Test_JUNO_EB",
+        "asset_id": "AST-EB-SR-E-EM-EB-000TP03",
+        "asset_code": "SR-E-EM-EB-000TP03",
         "asset_name": "Main EB Incomer TP03",
         "plaza_id": "TP03",
         "source_type": "EB",
-        "capacity_kva": 100.0,
-        "capacity": 100.0,
+        "capacity_kva": 250.0,
+        "capacity": 250.0,
         "capacity_unit": "kVA",
         "capacity_kwp": None,
         "start_date": "2026-04-01 00:00:00",
-        "last_date": "2026-04-07 00:00:00",
+        "last_date": "2026-11-15 13:13:00",
         "total_readings": 7,
         "is_active": True,
         "created_at": "2026-04-01 00:00:00",
     },
     # DG (6)
     {
-        "asset_id": "AST-DG-01",
+        "asset_id": "AST-DG-SR-E-AP-DGX-000001",
         "asset_code": "SR-E-AP-DGX-000001",
         "asset_name": "Diesel Generator 1",
         "plaza_id": "TP01",
         "source_type": "DG",
-        "capacity_kva": 250.0,
-        "capacity": 250.0,
+        "capacity_kva": 100.0,
+        "capacity": 100.0,
         "capacity_unit": "kVA",
         "capacity_kwp": None,
-        "start_date": "2026-05-01 08:00:00",
-        "last_date": "2026-05-31 20:00:00",
-        "total_readings": 305,
+        "start_date": "2026-04-05 18:02:00",
+        "last_date": "2026-11-13 21:03:00",
+        "total_readings": 384,
         "is_active": True,
         "created_at": "2026-04-01 00:00:00",
     },
     {
-        "asset_id": "AST-DG-02",
+        "asset_id": "AST-DG-SR-E-AP-DGX-000002",
         "asset_code": "SR-E-AP-DGX-000002",
         "asset_name": "Diesel Generator 2",
         "plaza_id": "TP01",
         "source_type": "DG",
-        "capacity_kva": 250.0,
-        "capacity": 250.0,
+        "capacity_kva": 100.0,
+        "capacity": 100.0,
         "capacity_unit": "kVA",
         "capacity_kwp": None,
-        "start_date": "2026-05-01 08:00:00",
-        "last_date": "2026-08-31 20:00:00",
-        "total_readings": 394,
+        "start_date": "2026-04-02 11:15:00",
+        "last_date": "2026-11-05 15:44:00",
+        "total_readings": 460,
         "is_active": True,
         "created_at": "2026-04-01 00:00:00",
     },
     {
-        "asset_id": "AST-DG-03",
+        "asset_id": "AST-DG-SR-E-AP-DGX-000003",
         "asset_code": "SR-E-AP-DGX-000003",
         "asset_name": "Diesel Generator 3",
         "plaza_id": "TP02",
         "source_type": "DG",
-        "capacity_kva": 250.0,
-        "capacity": 250.0,
+        "capacity_kva": 125.0,
+        "capacity": 125.0,
         "capacity_unit": "kVA",
         "capacity_kwp": None,
-        "start_date": "2026-05-01 08:00:00",
-        "last_date": "2026-06-30 20:00:00",
+        "start_date": "2026-04-02 16:10:00",
+        "last_date": "2026-09-08 20:11:00",
         "total_readings": 178,
         "is_active": True,
         "created_at": "2026-04-01 00:00:00",
     },
     {
-        "asset_id": "AST-DG-04",
+        "asset_id": "AST-DG-SR-E-AP-DGX-000004",
         "asset_code": "SR-E-AP-DGX-000004",
         "asset_name": "Diesel Generator 4",
         "plaza_id": "TP02",
         "source_type": "DG",
-        "capacity_kva": 250.0,
-        "capacity": 250.0,
+        "capacity_kva": 125.0,
+        "capacity": 125.0,
         "capacity_unit": "kVA",
         "capacity_kwp": None,
-        "start_date": "2026-05-01 08:00:00",
-        "last_date": "2026-08-31 20:00:00",
-        "total_readings": 334,
+        "start_date": "2026-04-02 10:25:00",
+        "last_date": "2026-09-08 19:16:00",
+        "total_readings": 333,
         "is_active": True,
         "created_at": "2026-04-01 00:00:00",
     },
     {
-        "asset_id": "AST-DG-05",
+        "asset_id": "AST-DG-SR-E-AP-DGX-000005",
         "asset_code": "SR-E-AP-DGX-000005",
         "asset_name": "Diesel Generator 5",
         "plaza_id": "TP03",
         "source_type": "DG",
-        "capacity_kva": 250.0,
-        "capacity": 250.0,
+        "capacity_kva": 100.0,
+        "capacity": 100.0,
         "capacity_unit": "kVA",
         "capacity_kwp": None,
-        "start_date": "2026-05-01 08:00:00",
-        "last_date": "2026-08-31 20:00:00",
-        "total_readings": 353,
+        "start_date": "2026-04-04 07:05:00",
+        "last_date": "2026-09-23 18:55:00",
+        "total_readings": 351,
         "is_active": True,
         "created_at": "2026-04-01 00:00:00",
     },
     {
-        "asset_id": "AST-DG-06",
+        "asset_id": "AST-DG-SR-E-AP-DGX-000006",
         "asset_code": "SR-E-AP-DGX-000006",
         "asset_name": "Diesel Generator 6",
         "plaza_id": "TP03",
         "source_type": "DG",
-        "capacity_kva": 250.0,
-        "capacity": 250.0,
+        "capacity_kva": 100.0,
+        "capacity": 100.0,
         "capacity_unit": "kVA",
         "capacity_kwp": None,
-        "start_date": "2026-05-01 08:00:00",
-        "last_date": "2026-08-31 20:00:00",
-        "total_readings": 387,
+        "start_date": "2026-04-04 11:42:00",
+        "last_date": "2026-09-23 19:57:00",
+        "total_readings": 394,
         "is_active": True,
         "created_at": "2026-04-01 00:00:00",
     },
     # SOLAR (3) - Strictly 40.46 kWp each, total 121.38 kWp, unit "kWp"
     {
-        "asset_id": "AST-SOL-01",
+        "asset_id": "AST-SOL-SR-E-AP-SPX-000001",
         "asset_code": "SR-E-AP-SPX-000001",
         "asset_name": "Solar Plant 1",
         "plaza_id": "TP01",
@@ -187,13 +187,13 @@ _DEFAULT_ASSETS: List[Dict[str, Any]] = [
         "capacity_unit": "kWp",
         "capacity_kwp": 40.46,
         "start_date": "2026-04-01 18:00:00",
-        "last_date": "2026-05-31 18:00:00",
+        "last_date": "2026-11-14 00:30:00",
         "total_readings": 167,
         "is_active": True,
         "created_at": "2026-04-01 00:00:00",
     },
     {
-        "asset_id": "AST-SOL-02",
+        "asset_id": "AST-SOL-SR-E-AP-SPX-000002",
         "asset_code": "SR-E-AP-SPX-000002",
         "asset_name": "Solar Plant 2",
         "plaza_id": "TP02",
@@ -203,13 +203,13 @@ _DEFAULT_ASSETS: List[Dict[str, Any]] = [
         "capacity_unit": "kWp",
         "capacity_kwp": 40.46,
         "start_date": "2026-04-01 18:00:00",
-        "last_date": "2026-05-31 18:00:00",
+        "last_date": "2026-11-14 13:30:00",
         "total_readings": 177,
         "is_active": True,
         "created_at": "2026-04-01 00:00:00",
     },
     {
-        "asset_id": "AST-SOL-03",
+        "asset_id": "AST-SOL-SR-E-AP-SPX-000003",
         "asset_code": "SR-E-AP-SPX-000003",
         "asset_name": "Solar Plant 3",
         "plaza_id": "TP03",
@@ -219,57 +219,57 @@ _DEFAULT_ASSETS: List[Dict[str, Any]] = [
         "capacity_unit": "kWp",
         "capacity_kwp": 40.46,
         "start_date": "2026-04-01 18:00:00",
-        "last_date": "2026-05-31 18:51:00",
+        "last_date": "2026-11-15 23:05:00",
         "total_readings": 173,
         "is_active": True,
         "created_at": "2026-04-01 00:00:00",
     },
     # TRANSFORMER (3)
     {
-        "asset_id": "AST-TRF-01",
+        "asset_id": "AST-TRA-SR-E-HT-TFR-000001",
         "asset_code": "SR-E-HT-TFR-000001",
         "asset_name": "HT Substation Transformer 1",
-        "plaza_id": "TP03",
+        "plaza_id": "TP01",
         "source_type": "TRANSFORMER",
-        "capacity_kva": 315.0,
-        "capacity": 315.0,
+        "capacity_kva": 250.0,
+        "capacity": 250.0,
         "capacity_unit": "kVA",
         "capacity_kwp": None,
         "start_date": "2026-04-01 00:00:00",
-        "last_date": "2026-05-31 23:59:00",
+        "last_date": "2026-11-15 18:30:00",
         "total_readings": 350,
         "is_active": True,
         "created_at": "2026-04-01 00:00:00",
     },
     {
-        "asset_id": "AST-TRF-02",
+        "asset_id": "AST-TRA-SR-E-HT-TFR-000002",
         "asset_code": "SR-E-HT-TFR-000002",
         "asset_name": "HT Substation Transformer 2",
-        "plaza_id": "TP01",
+        "plaza_id": "TP02",
         "source_type": "TRANSFORMER",
-        "capacity_kva": 315.0,
-        "capacity": 315.0,
+        "capacity_kva": 250.0,
+        "capacity": 250.0,
         "capacity_unit": "kVA",
         "capacity_kwp": None,
         "start_date": "2026-04-01 01:01:00",
-        "last_date": "2026-05-31 23:00:00",
+        "last_date": "2026-10-25 20:30:00",
         "total_readings": 947,
         "is_active": True,
         "created_at": "2026-04-01 00:00:00",
     },
     {
-        "asset_id": "AST-TRF-03",
+        "asset_id": "AST-TRA-SR-E-HT-TFR-000003",
         "asset_code": "SR-E-HT-TFR-000003",
         "asset_name": "HT Substation Transformer 3",
-        "plaza_id": "TP02",
+        "plaza_id": "TP03",
         "source_type": "TRANSFORMER",
-        "capacity_kva": 315.0,
-        "capacity": 315.0,
+        "capacity_kva": 250.0,
+        "capacity": 250.0,
         "capacity_unit": "kVA",
         "capacity_kwp": None,
         "start_date": "2026-04-01 05:02:00",
-        "last_date": "2026-04-30 23:01:00",
-        "total_readings": 252,
+        "last_date": "2026-10-18 12:34:00",
+        "total_readings": 1025,
         "is_active": True,
         "created_at": "2026-04-01 00:00:00",
     },
@@ -480,6 +480,28 @@ CANONICAL_ASSETS_MAP: Dict[str, Dict[str, Any]] = {
 CANONICAL_ASSETS_MAP["SR-E-EM-EB-000TP02"] = dict(_DEFAULT_ASSETS[1])
 CANONICAL_ASSETS_MAP["SR-E-EM-EB-000TP03"] = dict(_DEFAULT_ASSETS[2])
 
+# Shorthand aliases mapping to canonical Supabase assets
+for _i in range(1, 7):
+    _dg_code = f"SR-E-AP-DGX-00000{_i}"
+    if _dg_code in CANONICAL_ASSETS_MAP:
+        CANONICAL_ASSETS_MAP[f"AST-DG-0{_i}"] = dict(CANONICAL_ASSETS_MAP[_dg_code])
+        CANONICAL_ASSETS_MAP[f"DG{_i}"] = dict(CANONICAL_ASSETS_MAP[_dg_code])
+        CANONICAL_ASSETS_MAP[f"DG-0{_i}"] = dict(CANONICAL_ASSETS_MAP[_dg_code])
+
+for _i in range(1, 4):
+    _eb_code = f"SR-E-EM-EB-000TP0{_i}"
+    if _eb_code in CANONICAL_ASSETS_MAP:
+        CANONICAL_ASSETS_MAP[f"AST-EB-0{_i}"] = dict(CANONICAL_ASSETS_MAP[_eb_code])
+        CANONICAL_ASSETS_MAP[f"EB{_i}"] = dict(CANONICAL_ASSETS_MAP[_eb_code])
+    _sol_code = f"SR-E-AP-SPX-00000{_i}"
+    if _sol_code in CANONICAL_ASSETS_MAP:
+        CANONICAL_ASSETS_MAP[f"AST-SOL-0{_i}"] = dict(CANONICAL_ASSETS_MAP[_sol_code])
+        CANONICAL_ASSETS_MAP[f"SOLAR{_i}"] = dict(CANONICAL_ASSETS_MAP[_sol_code])
+    _trf_code = f"SR-E-HT-TFR-00000{_i}"
+    if _trf_code in CANONICAL_ASSETS_MAP:
+        CANONICAL_ASSETS_MAP[f"AST-TRF-0{_i}"] = dict(CANONICAL_ASSETS_MAP[_trf_code])
+        CANONICAL_ASSETS_MAP[f"TRA{_i}"] = dict(CANONICAL_ASSETS_MAP[_trf_code])
+
 
 def resolve_canonical_asset(asset_code: str, report_type: str = "") -> Dict[str, Any]:
     """Resolves an asset code or generator number to canonical asset_id, plaza_id, and metadata."""
@@ -663,7 +685,7 @@ def _generate_baseline_exceptions() -> List[Dict[str, Any]]:
     # 1 Critical DG cumulative decrease
     exc_list.append({
         "exception_id": "EXC-DG-CRIT-01",
-        "asset_id": "AST-DG-01",
+        "asset_id": "AST-DG-SR-E-AP-DGX-000001",
         "asset_code": "SR-E-AP-DGX-000001",
         "created_by": "system",
         "created_on": now_iso,
@@ -696,10 +718,12 @@ def _generate_baseline_exceptions() -> List[Dict[str, Any]]:
         ("EXC-DG-WARN-16", "AST-DG-02", "SR-E-AP-DGX-000002", "VAL-DG-003", "2026-10-23 21:10:00", 0.0, "Unverified interval: Maintenance run interval marked for supervisor sign-off"),
     ]
     for eid, aid, acode, rcode, rdt, dval, msg in dg_warnings:
-        plz = "TP01" if "000001" in acode else "TP02"
+        canon = resolve_canonical_asset(acode)
+        canon_aid = canon.get("asset_id", aid)
+        plz = canon.get("plaza_id") or ("TP01" if "000001" in acode else "TP02")
         exc_list.append({
             "exception_id": eid,
-            "asset_id": aid,
+            "asset_id": canon_aid,
             "asset_code": acode,
             "created_by": "system",
             "created_on": now_iso,
@@ -727,15 +751,12 @@ def _generate_baseline_exceptions() -> List[Dict[str, Any]]:
         ("EXC-TRF-WARN-11", "AST-TRF-01", "SR-E-HT-TFR-000001", "VAL-XFR-001", "2026-10-21 09:40:00", -11.5, "Cumulative difference negative; excluded from clean averages per Transformer rule"),
     ]
     for eid, aid, acode, rcode, rdt, dval, msg in trf_warnings:
-        if "TFR-000002" in acode:
-            plz = "TP01"
-        elif "TFR-000003" in acode:
-            plz = "TP02"
-        else:
-            plz = "TP03"
+        canon = resolve_canonical_asset(acode)
+        canon_aid = canon.get("asset_id", aid)
+        plz = canon.get("plaza_id") or ("TP01" if "000002" in acode else ("TP02" if "000003" in acode else "TP03"))
         exc_list.append({
             "exception_id": eid,
-            "asset_id": aid,
+            "asset_id": canon_aid,
             "asset_code": acode,
             "created_by": "system",
             "created_on": now_iso,

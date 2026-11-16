@@ -21,12 +21,18 @@ def _get_secret(key: str, default: str = "") -> str:
 @dataclass(frozen=True)
 class Settings:
     app_name: str = os.getenv("APP_NAME", "SRTPL Power Consumption Analytics")
-    app_env: str = os.getenv("APP_ENV", "development")
-    supabase_url: str = _get_secret("SUPABASE_URL")
+    app_env: str = os.getenv("APP_ENV", "production")
     supabase_key: str = (
         _get_secret("SUPABASE_SERVICE_ROLE_KEY")
         or _get_secret("SUPABASE_KEY")
         or _get_secret("SUPABASE_ANON_KEY")
+    )
+    supabase_url: str = _get_secret("SUPABASE_URL") or (
+        "https://jorbbbimkjbpatgkayda.supabase.co" if (
+            _get_secret("SUPABASE_SERVICE_ROLE_KEY")
+            or _get_secret("SUPABASE_KEY")
+            or _get_secret("SUPABASE_ANON_KEY")
+        ) else ""
     )
 
 

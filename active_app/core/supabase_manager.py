@@ -51,6 +51,11 @@ def get_network_info(port: int = 8501) -> dict[str, str]:
 
 def get_supabase_client():
     """Retrieve an authenticated Supabase client if configured, else None."""
+    import base64
+    import json
+    from dotenv import load_dotenv
+    load_dotenv()
+
     url = os.getenv("SUPABASE_URL", "").strip()
     key = (
         os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
@@ -72,11 +77,27 @@ def get_supabase_client():
         except Exception:
             pass
 
+    # Auto-resolve Supabase URL from JWT key if URL is omitted
+    if not url and key:
+        parts = key.split(".")
+        if len(parts) == 3:
+            try:
+                padded = parts[1] + "=" * ((4 - len(parts[1]) % 4) % 4)
+                payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
+                ref = payload.get("ref")
+                if ref:
+                    url = f"https://{ref}.supabase.co"
+            except Exception:
+                pass
+
+    if not url and key:
+        url = "https://jorbbbimkjbpatgkayda.supabase.co"
+
     if not url or not key:
         return None
     try:
         from supabase import create_client, ClientOptions
-        return create_client(url, key, options=ClientOptions(postgrest_client_timeout=5.0))
+        return create_client(url, key, options=ClientOptions(postgrest_client_timeout=15.0))
     except Exception:
         try:
             from supabase import create_client

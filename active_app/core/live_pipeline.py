@@ -97,6 +97,25 @@ def _format_datetime(val: Any, default_time: str = "00:00:00") -> str | None:
         return None
 
 
+def _clean_pf(val: Any) -> float | None:
+    """Sanitizes Power Factor to prevent PostgreSQL 22003 numeric(5, 4) overflow."""
+    if val is None:
+        return None
+    try:
+        f = float(str(val).replace(",", "").strip())
+        if pd.isna(f) or f != f or f < 0:
+            return None
+        # If user entered percentage e.g. 98 or 95.5%, convert to decimal 0.98
+        if 1.0 < f <= 100.0:
+            return round(f / 100.0, 4)
+        # Erroneous input (e.g. 1500 RPM typed in PF column) exceeds numeric(5, 4); store as None
+        if f > 1.0:
+            return None
+        return round(f, 4)
+    except Exception:
+        return None
+
+
 def _resolve_or_create_asset(client: Any, asset_code: str, report_type: str) -> tuple[str, str]:
     """Finds or resolves canonical asset_id and plaza_id for the given asset_code."""
     clean_code = (asset_code or f"SR-E-{report_type}-DEFAULT").strip()
@@ -294,7 +313,7 @@ def _map_row_for_database(
             "interval_kwh": _flt(norm_values.get("interval_kwh")),
             "interval_kvah": _flt(norm_values.get("interval_kvah")),
             "interval_kvarh": _flt(norm_values.get("interval_kvarh")),
-            "pf": _flt(norm_values.get("pf")),
+            "pf": _clean_pf(norm_values.get("pf") or raw_values.get("PF") or raw_values.get("Avg PF")),
             "maximum_demand": maximum_demand,
             "created_by": technician_name,
             "created_on": technician_created_on,
@@ -327,7 +346,7 @@ def _map_row_for_database(
             "interval_kwh": _flt(norm_values.get("interval_kwh")),
             "interval_running_hours": _flt(norm_values.get("interval_running_hours")),
             "rpm": _flt(norm_values.get("rpm") or raw_values.get("RPM")),
-            "pf": _flt(norm_values.get("pf") or raw_values.get("PF")),
+            "pf": _clean_pf(norm_values.get("pf") or raw_values.get("PF") or raw_values.get("Power Factor")),
             "created_by": technician_name,
             "created_on": technician_created_on,
             "remarks": remarks,
@@ -373,7 +392,7 @@ def _map_row_for_database(
             "frequency": _flt(norm_values.get("freq") or norm_values.get("frequency") or raw_values.get("FREQ")),
             "oil_temperature": _flt(norm_values.get("oti") or norm_values.get("oil_temperature") or raw_values.get("OTI")),
             "winding_temperature": _flt(norm_values.get("temperature___wti") or norm_values.get("wti") or norm_values.get("winding_temperature") or raw_values.get("WTI")),
-            "pf": _flt(norm_values.get("pf") or raw_values.get("PF")),
+            "pf": _clean_pf(norm_values.get("pf") or raw_values.get("PF")),
             "created_by": technician_name,
             "created_on": technician_created_on,
             "remarks": remarks,
@@ -558,10 +577,10 @@ def execute_live_juno_ingestion(
 
     for idx, (rec, norm) in enumerate(zip(inspection["records"], norm_records)):
         mapped = _map_row_for_database(rtype, asset_id, norm, rec.values, metadata=inspection["metadata"], plaza_id=plaza_id)
-        if not mapped:
+        if not mapped or not mapped.get("reading_datetime"):
             continue
 
-        row_key = (mapped.get("asset_code") or mapped["asset_id"], mapped["reading_datetime"])
+        row_key = (mapped["asset_id"], mapped["reading_datetime"])
         if row_key in seen_row_keys:
             # Internal row duplicate within file: skip duplicate
             continue
@@ -653,37 +672,46 @@ def execute_live_juno_ingestion(
 
             # 3. Insert clean readings into energy_readings tables (Level 2 upsert)
             table_name = TABLE_NAMES.get(rtype, rtype.lower())
-            chunk_size = 200
+            chunk_size = 100
             readings_error = None
 
             for i in range(0, len(db_rows), chunk_size):
                 chunk = db_rows[i : i + chunk_size]
+                # Strip non-table columns (e.g. plaza_id) before database insert
+                db_chunk = [{k: v for k, v in r.items() if k != "plaza_id"} for r in chunk]
                 chunk_saved = False
 
                 # Strategy 1: Direct upsert on energy_readings table
                 try:
-                    client.schema("energy_readings").table(table_name).upsert(chunk, on_conflict="asset_id,reading_datetime").execute()
+                    client.schema("energy_readings").table(table_name).upsert(db_chunk, on_conflict="asset_id,reading_datetime").execute()
                     chunk_saved = True
                 except Exception as e1:
                     readings_error = str(e1)
                     # Strategy 2: Direct insert into energy_readings table
                     try:
-                        client.schema("energy_readings").table(table_name).insert(chunk).execute()
+                        client.schema("energy_readings").table(table_name).insert(db_chunk).execute()
                         chunk_saved = True
                     except Exception as e2:
                         readings_error = str(e2)
                         # Strategy 3: Try public schema view/table with upsert
                         try:
-                            client.table(f"reading_{table_name}").upsert(chunk, on_conflict="asset_id,reading_datetime").execute()
+                            client.table(f"reading_{table_name}").upsert(db_chunk, on_conflict="asset_id,reading_datetime").execute()
                             chunk_saved = True
                         except Exception as e3:
                             readings_error = str(e3)
                             # Strategy 4: Try public schema view/table with insert
                             try:
-                                client.table(f"reading_{table_name}").insert(chunk).execute()
+                                client.table(f"reading_{table_name}").insert(db_chunk).execute()
                                 chunk_saved = True
                             except Exception as e4:
                                 readings_error = str(e4)
+
+                # Keep public reading_{table_name} table in sync as well
+                if chunk_saved and table_name != f"reading_{table_name}":
+                    try:
+                        client.table(f"reading_{table_name}").upsert(db_chunk, on_conflict="asset_id,reading_datetime").execute()
+                    except Exception:
+                        pass
 
                 if chunk_saved:
                     injected_row_count += len(chunk)
