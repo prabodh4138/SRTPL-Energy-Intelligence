@@ -38,7 +38,13 @@ interface EnergyOverviewData {
       tp01: number;
       tp02: number;
       tp03: number;
+      tp01_raw_kvah?: number;
+      tp02_raw_kvah?: number;
+      tp03_raw_kvah?: number;
       total: number;
+      raw_interval_kvah?: number;
+      kwh_total?: number;
+      multiplying_factor?: number;
       schedule: string;
       rule: string;
     };
@@ -99,6 +105,8 @@ interface EnergyOverviewData {
   plaza_comparison: Array<{
     plaza_id: string;
     eb_kwh: number;
+    eb_kvah?: number;
+    eb_display?: string;
     dg_kwh: number | null;
     dg_display: string;
     solar_kwh: number;
@@ -132,7 +140,7 @@ export const EnergyOverviewView: React.FC<EnergyOverviewProps> = ({ onNavigateTo
   const [data, setData] = useState<EnergyOverviewData | null>(null);
   const [loading, setLoading] = useState(true);
   const [plazaFilter, setPlazaFilter] = useState('ALL');
-  const [periodFilter, setPeriodFilter] = useState('reviewed_baseline');
+  const [periodFilter, setPeriodFilter] = useState('operational_live');
 
   const fetchOverview = async () => {
     setLoading(true);
@@ -184,7 +192,9 @@ export const EnergyOverviewView: React.FC<EnergyOverviewProps> = ({ onNavigateTo
               <span>SRTPL ENERGY COMMAND CENTER</span>
             </h1>
             <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mt-0.5">
-              ENERGY OVERVIEW | DEMO DATA — illustrative only (Reviewed Baseline)
+              {periodFilter === 'operational_live'
+                ? 'ENERGY OVERVIEW | LIVE OPERATIONAL DATABASE (Cloud Supabase)'
+                : 'ENERGY OVERVIEW | DEMO DATA — illustrative only (Reviewed Baseline)'}
             </p>
           </div>
 
@@ -198,8 +208,12 @@ export const EnergyOverviewView: React.FC<EnergyOverviewProps> = ({ onNavigateTo
               <span>Sync</span>
             </button>
             <div className="text-right hidden sm:block">
-              <span className="text-[10px] text-slate-400 font-mono block">Baseline Window</span>
-              <span className="text-xs font-bold text-emerald-400 font-mono">1 Apr – 25 Oct 2026</span>
+              <span className="text-[10px] text-slate-400 font-mono block">
+                {periodFilter === 'operational_live' ? 'Telemetry Range' : 'Baseline Window'}
+              </span>
+              <span className="text-xs font-bold text-emerald-400 font-mono">
+                {kpis?.eb?.period || (periodFilter === 'operational_live' ? 'Live Database' : '1 Apr – 25 Oct 2026')}
+              </span>
             </div>
           </div>
         </div>
@@ -224,7 +238,7 @@ export const EnergyOverviewView: React.FC<EnergyOverviewProps> = ({ onNavigateTo
               ))}
             </div>
             <span className="text-[11px] text-slate-500 italic ml-1">
-              (Use TP01, TP02, TP03 only until plaza names are verified)
+              (Filter all KPIs and trends by corridor toll plaza)
             </span>
           </div>
 
@@ -235,8 +249,8 @@ export const EnergyOverviewView: React.FC<EnergyOverviewProps> = ({ onNavigateTo
               onChange={(e) => setPeriodFilter(e.target.value)}
               className="bg-slate-800 text-slate-200 border border-slate-700 rounded-xl px-3 py-1 outline-none text-xs font-medium cursor-pointer"
             >
-              <option value="reviewed_baseline">Reviewed Baseline (Apr - Oct 2026)</option>
-              <option value="operational_live">Live Operational Database</option>
+              <option value="operational_live">Live Operational Database (Dynamic Supabase)</option>
+              <option value="reviewed_baseline">Reviewed Baseline (Apr - Oct 2026 Reference)</option>
             </select>
           </div>
         </div>
@@ -248,7 +262,7 @@ export const EnergyOverviewView: React.FC<EnergyOverviewProps> = ({ onNavigateTo
         <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-sm hover:border-slate-700 transition">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
-              EB CONSUMPTION
+              {kpis?.eb?.label || 'EB CONSUMPTION (kVAh, MF: 200)'}
             </span>
             <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
               <Zap className="w-4 h-4" />
@@ -256,16 +270,20 @@ export const EnergyOverviewView: React.FC<EnergyOverviewProps> = ({ onNavigateTo
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className="text-3xl font-black text-slate-100 font-mono tracking-tight">
-              {kpis?.eb.value.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) || '2,672.4'}
+              {kpis?.eb?.value != null
+                ? kpis.eb.value.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+                : '0.0'}
             </span>
-            <span className="text-sm font-bold text-emerald-400 font-mono">kWh</span>
+            <span className="text-sm font-bold text-emerald-400 font-mono">
+              {kpis?.eb?.unit || 'kVAh'}
+            </span>
           </div>
           <div className="mt-2 text-[11px] text-slate-400 space-y-0.5">
             <div className="text-slate-300 font-mono text-[10px]">
-              TP01: 926.20 | TP02: 945.70 | TP03: 800.50
+              TP01: {kpis?.eb?.tp01 != null ? kpis.eb.tp01.toLocaleString() : '0.0'} | TP02: {kpis?.eb?.tp02 != null ? kpis.eb.tp02.toLocaleString() : '0.0'} | TP03: {kpis?.eb?.tp03 != null ? kpis.eb.tp03.toLocaleString() : '0.0'}
             </div>
             <div className="text-slate-500 text-[10px]">
-              08:00 meter schedule · First reading NULL
+              {kpis?.eb?.multiplying_factor ? `Multiplying Factor (MF) = ${kpis.eb.multiplying_factor} applied · Billing on kVAh` : '08:00 meter schedule · First reading NULL'}
             </div>
           </div>
         </div>
@@ -282,16 +300,18 @@ export const EnergyOverviewView: React.FC<EnergyOverviewProps> = ({ onNavigateTo
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className="text-3xl font-black text-slate-100 font-mono tracking-tight">
-              {kpis?.dg.value.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) || '11,590.6'}
+              {kpis?.dg?.value != null
+                ? kpis.dg.value.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+                : '0.0'}
             </span>
             <span className="text-xs font-semibold text-amber-400 font-mono">confirmed kWh</span>
           </div>
           <div className="mt-2 text-[11px] text-slate-400 space-y-0.5">
             <div className="text-amber-300/80 font-mono text-[10px]">
-              Unverified generation: 3.00 kWh (shown separately)
+              Validated Runtime: {kpis?.dg?.runtime_hours != null ? `${kpis.dg.runtime_hours} hrs` : '0.00 hrs'}
             </div>
             <div className="text-slate-500 text-[10px]">
-              Only TP01 reviewed · TP02/TP03 no readings
+              {periodFilter === 'operational_live' ? 'Live aggregated across TP01, TP02, TP03' : 'Only TP01 reviewed · TP02/TP03 no readings'}
             </div>
           </div>
         </div>
@@ -308,16 +328,16 @@ export const EnergyOverviewView: React.FC<EnergyOverviewProps> = ({ onNavigateTo
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className="text-3xl font-black text-slate-100 font-mono tracking-tight">
-              {kpis?.solar.value.toLocaleString('en-US') || '54,380'}
+              {kpis?.solar?.value != null ? kpis.solar.value.toLocaleString('en-US') : '0'}
             </span>
             <span className="text-xs font-semibold text-sky-400 font-mono">interval kWh</span>
           </div>
           <div className="mt-2 text-[11px] text-slate-400 space-y-0.5">
             <div className="text-sky-300/80 font-mono text-[10px]">
-              TP01 18,440 · TP02 17,921 · TP03 18,019
+              TP01 {kpis?.solar?.tp01 != null ? kpis.solar.tp01.toLocaleString() : 0} · TP02 {kpis?.solar?.tp02 != null ? kpis.solar.tp02.toLocaleString() : 0} · TP03 {kpis?.solar?.tp03 != null ? kpis.solar.tp03.toLocaleString() : 0}
             </div>
             <div className="text-slate-500 text-[10px]">
-              Month snapshot 27,502 kWh (never add to interval)
+              Capacity {kpis?.solar?.total_capacity_kwp || 121.38} kWp (3 plants × 40.46 kWp)
             </div>
           </div>
         </div>
@@ -334,12 +354,12 @@ export const EnergyOverviewView: React.FC<EnergyOverviewProps> = ({ onNavigateTo
           </div>
           <div className="mt-3 flex items-baseline gap-2">
             <span className="text-2xl font-black text-slate-300 tracking-tight">
-              {kpis?.energy_cost.display_value || 'Unavailable'}
+              {kpis?.energy_cost?.display_value || 'Unavailable'}
             </span>
           </div>
           <div className="mt-2 text-[11px] text-slate-400 space-y-0.5">
             <div className="text-amber-400 font-medium text-[10px]">
-              {kpis?.energy_cost.subtitle || 'tariff pending'}
+              {kpis?.energy_cost?.subtitle || 'tariff pending'}
             </div>
             <div className="text-slate-500 text-[10px]">
               Cost/saving only after tariff inputs verified
@@ -356,43 +376,53 @@ export const EnergyOverviewView: React.FC<EnergyOverviewProps> = ({ onNavigateTo
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-bold text-slate-200 tracking-wide uppercase">
-                  MONTHLY ENERGY TREND — SAMPLE
+                  {periodFilter === 'operational_live'
+                    ? 'MONTHLY ENERGY TREND (LIVE TELEMETRY)'
+                    : 'MONTHLY ENERGY TREND — SAMPLE'}
                 </h3>
                 <p className="text-[11px] text-slate-500 mt-0.5">
-                  Comparative trend across reviewed baseline months (Apr – Oct 2026)
+                  {periodFilter === 'operational_live'
+                    ? 'Aggregated monthly consumption across active corridor telemetry'
+                    : 'Comparative trend across reviewed baseline months (Apr – Oct 2026)'}
                 </p>
               </div>
               <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded bg-slate-800 text-slate-300">
-                kWh Intervals
+                kVAh (EB MF: 200) & kWh
               </span>
             </div>
 
             <div className="h-64 mt-4 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={trend} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                  <XAxis dataKey="month" stroke="#64748b" fontSize={11} tickLine={false} />
-                  <YAxis stroke="#64748b" fontSize={11} tickLine={false} />
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: '#0f172a',
-                      borderColor: '#334155',
-                      borderRadius: '12px',
-                      fontSize: '11px',
-                    }}
-                  />
-                  <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
-                  <Bar dataKey="solar" name="Solar (kWh)" fill="#0284c7" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="dg" name="DG (kWh)" fill="#f59e0b" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="eb" name="EB (kWh)" fill="#10b981" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              {trend.length === 0 ? (
+                <div className="h-full flex items-center justify-center text-slate-500 text-xs italic">
+                  No monthly telemetry records found in the database.
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={trend} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                    <XAxis dataKey="month" stroke="#64748b" fontSize={11} tickLine={false} />
+                    <YAxis stroke="#64748b" fontSize={11} tickLine={false} />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: '#0f172a',
+                        borderColor: '#334155',
+                        borderRadius: '12px',
+                        fontSize: '11px',
+                      }}
+                    />
+                    <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '10px' }} />
+                    <Bar dataKey="solar" name="Solar (kWh)" fill="#0284c7" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="dg" name="DG (kWh)" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="eb" name="EB (kVAh, MF: 200)" fill="#10b981" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
             </div>
           </div>
 
           <div className="mt-3 pt-3 border-t border-slate-800/80 text-[11px] text-slate-500 italic flex items-center justify-between">
-            <span>* Illustrative design sample — keep Solar daily intervals separate from snapshots.</span>
-            <span className="font-mono text-emerald-400">Total Solar: 54,380 kWh</span>
+            <span>* EB billing interval kVAh multiplied by 200 (MF: 200); Solar daily intervals kept separate from snapshot.</span>
+            <span className="font-mono text-emerald-400">Total Solar: {kpis?.solar?.value?.toLocaleString() || 0} kWh</span>
           </div>
         </div>
 
@@ -414,11 +444,13 @@ export const EnergyOverviewView: React.FC<EnergyOverviewProps> = ({ onNavigateTo
               <div className="flex items-center justify-between">
                 <div>
                   <span className="text-xs text-slate-400 font-medium block">DG running time</span>
-                  <span className="text-[10px] text-slate-500 font-mono">26,471 mins aggregated</span>
+                  <span className="text-[10px] text-slate-500 font-mono">
+                    {kpis?.dg?.runtime_minutes != null ? `${kpis.dg.runtime_minutes.toLocaleString()} mins` : 'Aggregated'}
+                  </span>
                 </div>
                 <div className="text-right">
                   <span className="text-base font-bold text-slate-100 font-mono">
-                    {snapshot?.dg_running_time || '441.18 h'}
+                    {snapshot?.dg_running_time || '0.00 h'}
                   </span>
                 </div>
               </div>
@@ -441,11 +473,11 @@ export const EnergyOverviewView: React.FC<EnergyOverviewProps> = ({ onNavigateTo
               <div className="flex items-center justify-between">
                 <div>
                   <span className="text-xs text-slate-400 font-medium block">Open exceptions</span>
-                  <span className="text-[10px] text-amber-500/80">1 critical DG · 27 warnings</span>
+                  <span className="text-[10px] text-amber-500/80">Exceptions register</span>
                 </div>
                 <div className="text-right">
                   <span className="text-base font-bold text-amber-400 font-mono">
-                    {snapshot?.open_exceptions_label || '28 (reviewed snapshot)'}
+                    {snapshot?.open_exceptions_label || '0 open'}
                   </span>
                 </div>
               </div>
@@ -486,7 +518,7 @@ export const EnergyOverviewView: React.FC<EnergyOverviewProps> = ({ onNavigateTo
                 onClick={() => onNavigateToModule('exceptions')}
                 className="w-full py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition flex items-center justify-center gap-1.5 border border-slate-700"
               >
-                <span>Inspect 28 Open Exceptions</span>
+                <span>Inspect Open Exceptions</span>
                 <ChevronRight className="w-3.5 h-3.5" />
               </button>
             )}
@@ -494,15 +526,15 @@ export const EnergyOverviewView: React.FC<EnergyOverviewProps> = ({ onNavigateTo
         </div>
       </div>
 
-      {/* 4. Plaza Performance Comparison (Rule: TP02/TP03 DG show "No DG readings available", not zero) */}
+      {/* 4. Plaza Performance Comparison & DG Availability Rule */}
       <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 shadow-sm">
         <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
           <div>
             <h3 className="text-sm font-bold text-slate-200 tracking-wide uppercase">
-              PLAZA PERFORMANCE COMPARISON & DG AVAILABILITY RULE
+              PLAZA PERFORMANCE COMPARISON & DG AVAILABILITY
             </h3>
             <p className="text-[11px] text-slate-500 mt-0.5">
-              Rule: Only TP01 has reviewed DG readings. TP02/TP03 must show "No DG readings available", not zero.
+              EB billed on kVAh (MF: 200). Plazas without DG logs show "No DG readings available", not zero.
             </p>
           </div>
           <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-emerald-400 font-bold">
@@ -534,9 +566,11 @@ export const EnergyOverviewView: React.FC<EnergyOverviewProps> = ({ onNavigateTo
               <div className="mt-3 space-y-2 text-xs">
                 {/* EB */}
                 <div className="flex items-center justify-between">
-                  <span className="text-slate-400">EB Consumption:</span>
+                  <span className="text-slate-400">EB Billed (kVAh):</span>
                   <span className="font-mono font-semibold text-slate-200">
-                    {p.eb_kwh.toFixed(2)} kWh
+                    {p.eb_kvah != null
+                      ? `${p.eb_kvah.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} kVAh`
+                      : `${p.eb_kwh.toFixed(1)} kWh`}
                   </span>
                 </div>
 
@@ -580,18 +614,19 @@ export const EnergyOverviewView: React.FC<EnergyOverviewProps> = ({ onNavigateTo
           <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800">
             <span className="text-emerald-400 font-bold block mb-1">⚡ EB Rules</span>
             <ul className="text-slate-400 space-y-1 text-[11px]">
-              <li>• 08:00 meter-reading schedule.</li>
-              <li>• First reading has NULL interval, not zero.</li>
-              <li>• Total: 2,672.40 kWh (1 Apr–25 Oct).</li>
+              <li>• Billing strictly on kVAh (not kWh).</li>
+              <li>• Multiplying Factor (MF) = 200 across all plazas.</li>
+              <li>• Billed Units = Interval kVAh × 200.</li>
+              <li>• 08:00 meter schedule · First reading NULL.</li>
             </ul>
           </div>
 
           <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800">
             <span className="text-amber-400 font-bold block mb-1">🔥 DG Rules</span>
             <ul className="text-slate-400 space-y-1 text-[11px]">
-              <li>• Only TP01 has reviewed DG readings.</li>
-              <li>• 11,590.6 kWh confirmed; 3.0 kWh unverified.</li>
-              <li>• 441.18 hrs (26,471 mins aggregate).</li>
+              <li>• Dynamic aggregation from live DG logs.</li>
+              <li>• Unpopulated plazas show 'No DG readings available'.</li>
+              <li>• Validated run minutes aggregated before hours conversion.</li>
             </ul>
           </div>
 

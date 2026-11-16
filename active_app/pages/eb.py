@@ -23,13 +23,14 @@ def render():
         "VAL-EB-002: Non-decreasing cumulative apparent energy (kVAh)",
         "VAL-EB-003: Power factor bounds validation (0.00 <= PF <= 1.00)",
         "VAL-EB-004: Non-decreasing cumulative reactive energy (kVARh)",
+        "VAL-EB-005: Commercial/Industrial billing basis is kVAh (not kWh) with meter Multiplying Factor (MF) = 200.",
         "Interval Preservation: Detailed daily consumption files are handled as interval data without artificial subtraction.",
     ]
     render_equipment_reading_view(
         asset_type="eb",
-        title="⚡ EB Grid Reading & Power Factor",
-        subtitle="Phase 5.4 • Electricity board billing meter, cumulative & interval daily logs, and power factor analysis.",
-        unit_label="kWh",
+        title="⚡ EB Grid Reading & Billing kVAh Analytics",
+        subtitle="Phase 5.4 • Electricity board billing meter on kVAh (MF: 200), cumulative & interval daily logs, and power factor analysis.",
+        unit_label="kVAh (MF: 200)",
         default_meter="SR-E-EM-EB-000TP01",
         sample_assets=sample_meters,
         rules=rules,

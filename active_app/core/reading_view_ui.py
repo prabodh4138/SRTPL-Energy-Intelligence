@@ -52,9 +52,12 @@ def _format_latest_assets_df(df: pd.DataFrame, atype: str) -> pd.DataFrame:
 
     if atype == "eb":
         rename_map.update({
+            "latest_billed_kvah": "Billed (kVAh, MF:200)",
+            "latest_interval_kvah": "Interval (kVAh)",
+            "latest_cumulative_kvah": "Last Apparent (kVAh)",
+            "latest_billed_cumulative_kvah": "Billed Cumulative (kVAh)",
             "latest_cumulative_kwh": "Last Active (kWh)",
             "latest_interval_kwh": "Interval (kWh)",
-            "latest_cumulative_kvah": "Last Apparent (kVAh)",
             "latest_pf": "Power Factor",
             "latest_maximum_demand": "Peak Demand (kVA)",
         })

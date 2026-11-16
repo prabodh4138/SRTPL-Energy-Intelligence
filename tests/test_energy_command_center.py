@@ -310,9 +310,63 @@ def test_module7_analytics_views_deployed_and_ready():
     assert "No readings found" in nodata_res["data"]["message"]
 
 
+def test_dynamic_operational_overview_and_eb_kvah_mf200():
+    """
+    Acceptance Criteria:
+    - Overview delivers live dynamic data from Supabase when period='operational_live'.
+    - EB billing calculation strictly uses kVAh with Multiplying Factor = 200.
+    - Honest metrics: zero data returns 0.0 and unavailable states without static mock fallback.
+    """
+    from unittest.mock import patch
+
+    # 1. Live operational query
+    data = get_energy_overview(plaza_id="ALL", period="operational_live")
+    assert data["status"] == "SUCCESS"
+    assert "LIVE OPERATIONAL DATABASE" in data["subtitle"]
+
+    eb = data["kpis"]["eb"]
+    assert eb["multiplying_factor"] == 200
+    assert "kVAh" in eb["unit"]
+    assert eb["value"] >= 0.0
+    assert eb["tp01"] >= 0.0
+    assert eb["tp02"] >= 0.0
+    assert eb["tp03"] >= 0.0
+
+    dg = data["kpis"]["dg"]
+    assert dg["value"] >= 0.0
+    assert dg["runtime_hours"] >= 0.0
+
+    solar = data["kpis"]["solar"]
+    assert solar["value"] >= 0.0
+
+    assert len(data["plaza_comparison"]) == 3
+    for p in data["plaza_comparison"]:
+        assert "eb_kvah" in p
+        assert "MF: 200" in p["eb_display"]
+
+    # 2. Honest Zero/Empty State (when database has no rows)
+    with patch("backend.routers.energy_command.get_supabase_client", return_value=None):
+        empty_data = get_energy_overview(plaza_id="ALL", period="operational_live")
+        assert empty_data["status"] == "SUCCESS"
+        assert empty_data["kpis"]["eb"]["value"] == 0.0
+        assert empty_data["kpis"]["eb"]["total"] == 0.0
+        assert empty_data["kpis"]["eb"]["period"] == "No readings recorded"
+        assert empty_data["kpis"]["dg"]["value"] == 0.0
+        assert empty_data["kpis"]["dg"]["confirmed_kwh"] == 0.0
+        assert empty_data["kpis"]["dg"]["runtime_hours"] == 0.0
+        assert empty_data["kpis"]["solar"]["value"] == 0.0
+        assert empty_data["operations_snapshot"]["dg_running_time"] == "0.00 h"
+        assert empty_data["monthly_trend"] == []
+        for p in empty_data["plaza_comparison"]:
+            assert p["dg_available"] is False
+            assert p["dg_display"] == "No DG readings available"
+
+
 if __name__ == "__main__":
     test_acceptance_checklist_energy_overview_separate_and_honest_metrics()
     print("PASS: test_acceptance_checklist_energy_overview_separate_and_honest_metrics")
+    test_dynamic_operational_overview_and_eb_kvah_mf200()
+    print("PASS: test_dynamic_operational_overview_and_eb_kvah_mf200")
     test_asset_master_solar_capacity_rule()
     print("PASS: test_asset_master_solar_capacity_rule")
     test_controlled_reading_correction_and_audit()

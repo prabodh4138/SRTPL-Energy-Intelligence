@@ -57,6 +57,8 @@ def fetch_module_kpis_from_sql_view(
         del_kwh = float(record.get("total_interval_kwh") or 0.0)
         tot_kvah = float(record.get("total_cumulative_kvah") or 0.0)
         del_kvah = float(record.get("total_interval_kvah") or 0.0)
+        billed_kvah = float(record.get("total_billed_kvah") or (del_kvah * 200.0))
+        billed_cum_kvah = float(record.get("total_billed_cumulative_kvah") or (tot_kvah * 200.0))
         avg_pf = float(record.get("avg_power_factor") or 0.98)
         act_meters = int(record.get("active_meters") or 0)
         tot_logs = int(record.get("total_reading_count") or 0)
@@ -68,14 +70,14 @@ def fetch_module_kpis_from_sql_view(
                 "sub": f"{tot_logs:,} total verified logs in SQL View",
             },
             {
-                "label": "Cumulative Active Energy",
-                "value": f"{tot_kwh:,.1f} kWh",
-                "sub": f"Interval Delta: +{del_kwh:,.1f} kWh",
+                "label": "Billed Apparent Energy (MF: 200)",
+                "value": f"{billed_kvah:,.1f} kVAh",
+                "sub": f"Raw Meter Advance: +{del_kvah:,.1f} kVAh × MF 200",
             },
             {
-                "label": "Apparent Energy",
-                "value": f"{tot_kvah:,.1f} kVAh",
-                "sub": f"Interval Delta: +{del_kvah:,.1f} kVAh",
+                "label": "Cumulative Billed kVAh",
+                "value": f"{billed_cum_kvah:,.1f} kVAh",
+                "sub": f"Cumulative Active: {tot_kwh:,.1f} kWh",
             },
             {
                 "label": "Average Power Factor",

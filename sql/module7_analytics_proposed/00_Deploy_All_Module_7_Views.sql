@@ -1,14 +1,15 @@
 -- ============================================================================
 -- SRTPL ENERGY COMMAND CENTER — MODULE 7 COMPLETE ANALYTICS VIEWS DEPLOYMENT
 -- Target: PostgreSQL / Supabase
+-- Updated with: Industrial EB Billing Basis on kVAh (not kWh) & Multiplying Factor (MF) = 200
 -- Execution Order:
 --   1. DG Submodule Views (including vw_dg71_daily_summary)
---   2. EB Submodule Views (including vw_eb71_daily_summary)
+--   2. EB Submodule Views (including vw_eb71_daily_summary with kVAh MF:200)
 --   3. Solar Submodule Views (including vw_sol71_daily_summary & asset latest)
 --   4. Transformer Submodule Views (including vw_trf71_daily_summary)
 --   5. UPS Submodule Views (including vw_ups71_daily_summary)
 --   6. Unified Module 7 Views (vw_m7_record_quality, vw_m7_entry_audit,
---      vw_m7_exception_register, vw_m7_asset_latest_reading, etc.)
+--      vw_m7_exception_register, vw_m7_asset_latest_reading with kVAh & MF:200)
 --   7. Optional Guarded Correction Audit View
 -- ============================================================================
 
@@ -808,6 +809,13 @@ interval_values AS (
 classified_readings AS (
     SELECT
         i.*,
+        200::numeric AS multiplying_factor,
+        (i.normalized_interval_kvah * 200)::numeric AS billed_interval_kvah,
+        (i.normalized_interval_kwh * 200)::numeric AS billed_interval_kwh,
+        (i.cumulative_kvah * 200)::numeric AS billed_cumulative_kvah,
+        (i.cumulative_kwh * 200)::numeric AS billed_cumulative_kwh,
+        (i.previous_cumulative_kvah * 200)::numeric AS billed_previous_cumulative_kvah,
+        (i.previous_cumulative_kwh * 200)::numeric AS billed_previous_cumulative_kwh,
         CASE
             WHEN i.source_quality_class <> 'VALID'
               OR i.cumulative_delta_kwh < 0
@@ -935,6 +943,11 @@ SELECT
     SUM(source_exception_records)::bigint AS source_exception_records,
     COUNT(*)::bigint - SUM(valid_records) - SUM(exception_records) AS reconciliation_difference,
     100.0 * SUM(exception_records) / NULLIF(COUNT(*), 0) AS exception_percentage,
+    200::numeric AS multiplying_factor,
+    COALESCE(SUM(normalized_interval_kvah * 200) FILTER (WHERE analytics_quality_class = 'VALID'), 0::numeric)
+        AS valid_billed_kvah,
+    COALESCE(SUM(normalized_interval_kwh * 200) FILTER (WHERE analytics_quality_class = 'VALID'), 0::numeric)
+        AS valid_billed_kwh,
     COALESCE(SUM(normalized_interval_kwh) FILTER (WHERE analytics_quality_class = 'VALID'), 0::numeric)
         AS valid_interval_kwh,
     COALESCE(SUM(normalized_interval_kvah) FILTER (WHERE analytics_quality_class = 'VALID'), 0::numeric)
@@ -996,6 +1009,9 @@ SELECT
     SUM(valid_records)::bigint AS valid_records,
     SUM(exception_records)::bigint AS exception_records,
     SUM(total_records - valid_records - exception_records)::bigint AS reconciliation_difference,
+    200::numeric AS multiplying_factor,
+    SUM(valid_billed_kvah) AS valid_billed_kvah,
+    SUM(valid_billed_kwh) AS valid_billed_kwh,
     SUM(valid_interval_kwh) AS valid_interval_kwh,
     SUM(valid_interval_kvah) AS valid_interval_kvah,
     SUM(valid_interval_kvarh) AS valid_interval_kvarh,
@@ -1031,6 +1047,9 @@ SELECT
     SUM(valid_records)::bigint AS valid_records,
     SUM(exception_records)::bigint AS exception_records,
     SUM(total_records - valid_records - exception_records)::bigint AS reconciliation_difference,
+    200::numeric AS multiplying_factor,
+    SUM(valid_billed_kvah) AS valid_billed_kvah,
+    SUM(valid_billed_kwh) AS valid_billed_kwh,
     SUM(valid_interval_kwh) AS valid_interval_kwh,
     SUM(valid_interval_kvah) AS valid_interval_kvah,
     SUM(valid_interval_kvarh) AS valid_interval_kvarh,
@@ -1065,6 +1084,9 @@ SELECT
     SUM(valid_records)::bigint AS valid_records,
     SUM(exception_records)::bigint AS exception_records,
     SUM(total_records - valid_records - exception_records)::bigint AS reconciliation_difference,
+    200::numeric AS multiplying_factor,
+    SUM(valid_billed_kvah) AS valid_billed_kvah,
+    SUM(valid_billed_kwh) AS valid_billed_kwh,
     SUM(valid_interval_kwh) AS valid_interval_kwh,
     SUM(valid_interval_kvah) AS valid_interval_kvah,
     SUM(valid_interval_kvarh) AS valid_interval_kvarh,
@@ -2842,6 +2864,9 @@ WITH all_readings AS (
         'DG'::text AS source_type, d.reading_id, d.asset_id, d.asset_code, d.asset_name, d.plaza_id,
         d.asset_partition_key, d.reading_datetime, d.operational_date,
         d.cumulative_kwh::numeric AS cumulative_kwh, d.source_interval_kwh::numeric AS interval_kwh,
+        NULL::numeric AS cumulative_kvah, NULL::numeric AS interval_kvah,
+        1::numeric AS multiplying_factor,
+        NULL::numeric AS billed_interval_kvah, (d.source_interval_kwh::numeric * 1)::numeric AS billed_interval_kwh,
         d.pf::numeric AS power_factor, NULL::numeric AS output_voltage, NULL::numeric AS battery_vdc,
         rt.cumulative_runtime_hh_mm::text AS cumulative_running_hours_hh_mm,
         d.source_data_quality_status::text AS source_data_quality_status, d.created_by, d.created_on
@@ -2851,28 +2876,46 @@ WITH all_readings AS (
     SELECT
         'EB', e.reading_id, e.asset_id, e.asset_code, e.asset_name, e.plaza_id,
         e.asset_partition_key, e.reading_datetime, e.operational_date,
-        e.cumulative_kwh::numeric, e.interval_kwh::numeric, e.pf::numeric,
+        e.cumulative_kwh::numeric, e.interval_kwh::numeric,
+        e.cumulative_kvah::numeric, e.interval_kvah::numeric,
+        200::numeric AS multiplying_factor,
+        (e.normalized_interval_kvah * 200)::numeric AS billed_interval_kvah,
+        (e.normalized_interval_kwh * 200)::numeric AS billed_interval_kwh,
+        e.pf::numeric,
         NULL::numeric, NULL::numeric, NULL::text, e.source_data_quality_status::text, e.created_by, e.created_on
     FROM public.vw_eb71_interval_detail AS e
     UNION ALL
     SELECT
         'SOLAR', s.reading_id, s.asset_id, s.asset_code, s.asset_name, s.plaza_id,
         s.asset_partition_key, s.reading_datetime, s.operational_date,
-        s.cumulative_kwh::numeric, s.interval_kwh::numeric, NULL::numeric,
+        s.cumulative_kwh::numeric, s.interval_kwh::numeric,
+        NULL::numeric, NULL::numeric,
+        1::numeric AS multiplying_factor,
+        NULL::numeric AS billed_interval_kvah, (s.interval_kwh::numeric * 1)::numeric AS billed_interval_kwh,
+        NULL::numeric,
         NULL::numeric, NULL::numeric, NULL::text, s.source_data_quality_status::text, s.created_by, s.created_on
     FROM public.vw_sol71_reading_detail AS s
     UNION ALL
     SELECT
         'TRANSFORMER', t.reading_id, t.asset_id, t.asset_code, t.asset_name, t.plaza_id,
         t.asset_partition_key, t.reading_datetime, t.operational_date,
-        t.cumulative_kwh_value::numeric, t.interval_kwh_value::numeric, t.pf::numeric,
+        t.cumulative_kwh_value::numeric, t.interval_kwh_value::numeric,
+        t.cumulative_kvah_value::numeric, t.interval_kvah_value::numeric,
+        1::numeric AS multiplying_factor,
+        (t.interval_kvah_value::numeric * 1)::numeric AS billed_interval_kvah,
+        (t.interval_kwh_value::numeric * 1)::numeric AS billed_interval_kwh,
+        t.pf::numeric,
         NULL::numeric, NULL::numeric, NULL::text, t.source_data_quality_status::text, t.created_by, t.created_on
     FROM public.vw_trf71_reading_detail AS t
     UNION ALL
     SELECT
         'UPS', u.reading_id, u.asset_id, u.asset_code, u.asset_name, u.plaza_id,
         u.asset_partition_key, u.reading_datetime, u.operational_date,
-        NULL::numeric, NULL::numeric, NULL::numeric,
+        NULL::numeric, NULL::numeric,
+        NULL::numeric, NULL::numeric,
+        1::numeric AS multiplying_factor,
+        NULL::numeric AS billed_interval_kvah, NULL::numeric AS billed_interval_kwh,
+        NULL::numeric,
         u.output_voltage::numeric, u.battery_vdc::numeric, NULL::text,
         u.source_data_quality_status::text, u.created_by, u.created_on
     FROM public.vw_ups71_reading_detail AS u
@@ -2909,6 +2952,11 @@ SELECT
     r.operational_date,
     r.cumulative_kwh AS latest_cumulative_kwh,
     r.interval_kwh AS latest_interval_kwh,
+    r.cumulative_kvah AS latest_cumulative_kvah,
+    r.interval_kvah AS latest_interval_kvah,
+    r.multiplying_factor,
+    r.billed_interval_kvah AS latest_billed_kvah,
+    r.billed_interval_kwh AS latest_billed_kwh,
     r.power_factor AS latest_power_factor,
     r.output_voltage AS latest_output_voltage,
     r.battery_vdc AS latest_battery_vdc,

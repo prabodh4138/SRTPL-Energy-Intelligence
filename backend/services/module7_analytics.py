@@ -42,9 +42,9 @@ MODULES: dict[str, dict[str, Any]] = {
     "EB": {
         "source_type": "EB",
         "daily": "vw_eb71_daily_summary",
-        "trend_field": "valid_interval_kwh",
-        "trend_label": "Valid interval energy (kWh)",
-        "sum_fields": ("valid_interval_kwh", "valid_interval_kvah", "valid_interval_kvarh"),
+        "trend_field": "valid_billed_kvah",
+        "trend_label": "Valid billed apparent energy (kVAh, MF=200)",
+        "sum_fields": ("valid_billed_kvah", "valid_billed_kwh", "valid_interval_kvah", "valid_interval_kwh", "valid_interval_kvarh"),
         "weighted_fields": {"average_pf": ("valid_pf_sum", "valid_pf_count")},
     },
     "SOLAR": {
@@ -166,6 +166,20 @@ def _fetch_rows(client: Any, view: str, module: dict[str, Any], plaza_id: str,
 
 
 def _sum(rows: list[dict[str, Any]], key: str) -> float:
+    if key == "valid_billed_kvah":
+        return sum(
+            _number(row.get("valid_billed_kvah"))
+            if row.get("valid_billed_kvah") is not None
+            else _number(row.get("valid_interval_kvah")) * 200.0
+            for row in rows
+        )
+    if key == "valid_billed_kwh":
+        return sum(
+            _number(row.get("valid_billed_kwh"))
+            if row.get("valid_billed_kwh") is not None
+            else _number(row.get("valid_interval_kwh")) * 200.0
+            for row in rows
+        )
     return sum(_number(row.get(key)) for row in rows)
 
 
@@ -247,6 +261,9 @@ def _build_summary(rows: list[dict[str, Any]], module: dict[str, Any]) -> dict[s
         metrics["kwh_to_kvah_ratio"] = _sum(rows, "valid_interval_kwh") / kvah if kvah else None
         demands = [_number(row["maximum_recorded_demand"]) for row in rows if row.get("maximum_recorded_demand") is not None]
         metrics["maximum_recorded_demand"] = max(demands) if demands else None
+        metrics["multiplying_factor"] = 200
+        metrics["valid_billed_kvah"] = _sum(rows, "valid_billed_kvah")
+        metrics["valid_billed_kwh"] = _sum(rows, "valid_billed_kwh")
     elif module["source_type"] == "UPS":
         metrics["observed_record_availability_pct"] = 100.0 * valid / total if total else None
 

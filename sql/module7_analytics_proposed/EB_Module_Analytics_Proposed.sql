@@ -90,6 +90,13 @@ interval_values AS (
 classified_readings AS (
     SELECT
         i.*,
+        200::numeric AS multiplying_factor,
+        (i.normalized_interval_kvah * 200)::numeric AS billed_interval_kvah,
+        (i.normalized_interval_kwh * 200)::numeric AS billed_interval_kwh,
+        (i.cumulative_kvah * 200)::numeric AS billed_cumulative_kvah,
+        (i.cumulative_kwh * 200)::numeric AS billed_cumulative_kwh,
+        (i.previous_cumulative_kvah * 200)::numeric AS billed_previous_cumulative_kvah,
+        (i.previous_cumulative_kwh * 200)::numeric AS billed_previous_cumulative_kwh,
         CASE
             WHEN i.source_quality_class <> 'VALID'
               OR i.cumulative_delta_kwh < 0
@@ -217,6 +224,11 @@ SELECT
     SUM(source_exception_records)::bigint AS source_exception_records,
     COUNT(*)::bigint - SUM(valid_records) - SUM(exception_records) AS reconciliation_difference,
     100.0 * SUM(exception_records) / NULLIF(COUNT(*), 0) AS exception_percentage,
+    200::numeric AS multiplying_factor,
+    COALESCE(SUM(normalized_interval_kvah * 200) FILTER (WHERE analytics_quality_class = 'VALID'), 0::numeric)
+        AS valid_billed_kvah,
+    COALESCE(SUM(normalized_interval_kwh * 200) FILTER (WHERE analytics_quality_class = 'VALID'), 0::numeric)
+        AS valid_billed_kwh,
     COALESCE(SUM(normalized_interval_kwh) FILTER (WHERE analytics_quality_class = 'VALID'), 0::numeric)
         AS valid_interval_kwh,
     COALESCE(SUM(normalized_interval_kvah) FILTER (WHERE analytics_quality_class = 'VALID'), 0::numeric)
@@ -278,6 +290,9 @@ SELECT
     SUM(valid_records)::bigint AS valid_records,
     SUM(exception_records)::bigint AS exception_records,
     SUM(total_records - valid_records - exception_records)::bigint AS reconciliation_difference,
+    200::numeric AS multiplying_factor,
+    SUM(valid_billed_kvah) AS valid_billed_kvah,
+    SUM(valid_billed_kwh) AS valid_billed_kwh,
     SUM(valid_interval_kwh) AS valid_interval_kwh,
     SUM(valid_interval_kvah) AS valid_interval_kvah,
     SUM(valid_interval_kvarh) AS valid_interval_kvarh,
@@ -313,6 +328,9 @@ SELECT
     SUM(valid_records)::bigint AS valid_records,
     SUM(exception_records)::bigint AS exception_records,
     SUM(total_records - valid_records - exception_records)::bigint AS reconciliation_difference,
+    200::numeric AS multiplying_factor,
+    SUM(valid_billed_kvah) AS valid_billed_kvah,
+    SUM(valid_billed_kwh) AS valid_billed_kwh,
     SUM(valid_interval_kwh) AS valid_interval_kwh,
     SUM(valid_interval_kvah) AS valid_interval_kvah,
     SUM(valid_interval_kvarh) AS valid_interval_kvarh,
@@ -347,6 +365,9 @@ SELECT
     SUM(valid_records)::bigint AS valid_records,
     SUM(exception_records)::bigint AS exception_records,
     SUM(total_records - valid_records - exception_records)::bigint AS reconciliation_difference,
+    200::numeric AS multiplying_factor,
+    SUM(valid_billed_kvah) AS valid_billed_kvah,
+    SUM(valid_billed_kwh) AS valid_billed_kwh,
     SUM(valid_interval_kwh) AS valid_interval_kwh,
     SUM(valid_interval_kvah) AS valid_interval_kvah,
     SUM(valid_interval_kvarh) AS valid_interval_kvarh,
