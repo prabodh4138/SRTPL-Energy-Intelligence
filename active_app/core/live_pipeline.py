@@ -97,11 +97,17 @@ def _format_datetime(val: Any, default_time: str = "00:00:00") -> str | None:
         return None
 
 
-def _resolve_or_create_asset(client: Any, asset_code: str, report_type: str) -> str:
-    """Finds asset_id for the given asset_code, or auto-creates it in energy_master.asset."""
+def _resolve_or_create_asset(client: Any, asset_code: str, report_type: str) -> tuple[str, str]:
+    """Finds or resolves canonical asset_id and plaza_id for the given asset_code."""
     clean_code = (asset_code or f"SR-E-{report_type}-DEFAULT").strip()
+
+    from backend.services.energy_command_store import resolve_canonical_asset
+    canonical = resolve_canonical_asset(clean_code, report_type)
+    canonical_id = canonical["asset_id"]
+    canonical_plaza = canonical["plaza_id"]
+
     if not client:
-        return clean_code
+        return canonical_id, canonical_plaza
 
     # 1. Search for existing asset by asset_code or asset_id in energy_master.asset
     for asset_tbl in [
@@ -111,13 +117,14 @@ def _resolve_or_create_asset(client: Any, asset_code: str, report_type: str) -> 
         try:
             res = (
                 asset_tbl()
-                .select("asset_id, asset_code")
-                .or_(f"asset_code.eq.{clean_code},asset_id.eq.{clean_code}")
+                .select("asset_id, asset_code, plaza_id")
+                .or_(f"asset_code.eq.{clean_code},asset_id.eq.{clean_code},asset_id.eq.{canonical_id}")
                 .limit(1)
                 .execute()
             )
             if res.data and len(res.data) > 0:
-                return res.data[0]["asset_id"]
+                found = res.data[0]
+                return found["asset_id"], found.get("plaza_id") or canonical_plaza
         except Exception:
             pass
 
@@ -137,15 +144,15 @@ def _resolve_or_create_asset(client: Any, asset_code: str, report_type: str) -> 
         except Exception:
             pass
 
-    # 3. Auto-register new asset
-    new_asset_id = f"AST-{report_type[:3]}-{clean_code.replace(' ', '_')[:24]}"
+    # 3. Auto-register new asset with correct plaza_id
     asset_payload = {
-        "asset_id": new_asset_id,
+        "asset_id": canonical_id,
         "asset_code": clean_code,
-        "asset_name": f"{report_type} Incomer ({clean_code})",
-        "plaza_id": "TP01",
+        "asset_name": canonical.get("asset_name") or f"{report_type} Incomer ({clean_code})",
+        "plaza_id": canonical_plaza,
         "source_type": report_type,
-        "capacity_kva": 500.0,
+        "capacity_kva": canonical.get("capacity") if report_type != "SOLAR" else None,
+        "capacity_kwp": canonical.get("capacity") if report_type == "SOLAR" else None,
         "is_active": True,
     }
     for asset_tbl in [
@@ -154,23 +161,11 @@ def _resolve_or_create_asset(client: Any, asset_code: str, report_type: str) -> 
     ]:
         try:
             asset_tbl().upsert(asset_payload, on_conflict="asset_id").execute()
-            return new_asset_id
+            return canonical_id, canonical_plaza
         except Exception:
             pass
 
-    # 4. Fallback: If creation failed, pick any existing asset for this source_type to avoid FK violation
-    for asset_tbl in [
-        lambda: client.schema("energy_master").table("asset"),
-        lambda: client.table("asset"),
-    ]:
-        try:
-            res = asset_tbl().select("asset_id").eq("source_type", report_type).limit(1).execute()
-            if res.data and len(res.data) > 0:
-                return res.data[0]["asset_id"]
-        except Exception:
-            pass
-
-    return new_asset_id
+    return canonical_id, canonical_plaza
 
 
 def _map_row_for_database(
@@ -179,6 +174,7 @@ def _map_row_for_database(
     norm_values: dict[str, Any],
     raw_values: dict[str, Any],
     metadata: Any = None,
+    plaza_id: str = "TP01",
 ) -> dict[str, Any] | None:
     dt = (
         _format_datetime(norm_values.get("reading_datetime"))
@@ -290,6 +286,7 @@ def _map_row_for_database(
         return {
             "asset_id": asset_id,
             "asset_code": asset_code,
+            "plaza_id": plaza_id,
             "reading_datetime": dt,
             "cumulative_kwh": _flt(norm_values.get("kwh") if norm_values.get("__source_mode") != "INTERVAL_CONSUMPTION" else None),
             "cumulative_kvah": _flt(norm_values.get("kvah") if norm_values.get("__source_mode") != "INTERVAL_CONSUMPTION" else None),
@@ -311,6 +308,7 @@ def _map_row_for_database(
         return {
             "asset_id": asset_id,
             "asset_code": asset_code,
+            "plaza_id": plaza_id,
             "reading_datetime": dt,
             "status": str(norm_values.get("status_on_off_run") or raw_values.get("STATUS ON/OFF/RUN") or norm_values.get("status") or "").strip() or None,
             "kva": _flt(norm_values.get("kva") or raw_values.get("KVA")),
@@ -340,6 +338,7 @@ def _map_row_for_database(
         return {
             "asset_id": asset_id,
             "asset_code": asset_code,
+            "plaza_id": plaza_id,
             "reading_datetime": dt,
             "cumulative_kwh": _flt(norm_values.get("unit_generated_in_kwh") or norm_values.get("kwh") or raw_values.get("Unit generated in kWh")),
             "interval_kwh": _flt(norm_values.get("interval_kwh")),
@@ -353,6 +352,7 @@ def _map_row_for_database(
         return {
             "asset_id": asset_id,
             "asset_code": asset_code,
+            "plaza_id": plaza_id,
             "reading_datetime": dt,
             "primary_v_ry": _flt(norm_values.get("primary_side___voltage___ry") or norm_values.get("primary_v_ry")),
             "primary_v_yb": _flt(norm_values.get("yb") or norm_values.get("primary_v_yb")),
@@ -384,6 +384,7 @@ def _map_row_for_database(
         return {
             "asset_id": asset_id,
             "asset_code": asset_code,
+            "plaza_id": plaza_id,
             "reading_datetime": dt,
             "input_voltage_r": _flt(norm_values.get("maininput___voltage___r") or norm_values.get("input_voltage_r")),
             "input_voltage_y": _flt(norm_values.get("y") or norm_values.get("input_voltage_y")),
@@ -415,6 +416,7 @@ def execute_live_juno_ingestion(
     expected_type: str | None = None,
     uploaded_by: str = "admin@srtpl.com",
     allow_reimport: bool = False,
+    original_filename: str | None = None,
 ) -> dict[str, Any]:
     """
     Complete end-to-end live ingestion pipeline:
@@ -422,12 +424,15 @@ def execute_live_juno_ingestion(
     2. Parses raw CSV and verifies structure.
     3. Runs NormalizationEngine to detect monotonicity breaks, PF bounds, and anomalies.
     4. Enforces Level 2 Deduplication on (asset_id, reading_datetime).
-    5. Injects clean records and logged exceptions directly into Supabase (if connected).
-    6. Calculates accurate Master KPIs from clean valid data.
+    5. Injects clean records and logged exceptions directly into Supabase (if connected) and in-memory runtime store.
+    6. Automatically updates asset master record counts and date ranges (start_date, last_date).
+    7. Calculates accurate Master KPIs from clean valid data.
     """
     path = Path(file_path)
     if not path.exists():
         raise FileNotFoundError(f"File not found: {file_path}")
+
+    display_name = str(original_filename).strip() if original_filename else path.name
 
     # Step 1: Calculate SHA-256
     file_hash = sha256_file(path)
@@ -472,36 +477,32 @@ def execute_live_juno_ingestion(
                         f"{db_match_info.get('created_at', 'earlier')} as '{db_match_info.get('original_filename')}'. "
                         "Duplicate file imports are strictly forbidden."
                     ),
-                    "filename": path.name,
+                    "filename": display_name,
+                    "original_filename": display_name,
                 }
         else:
-            # Offline / local mock mode duplicate check
+            # Offline / local mock mode duplicate check: only block if runtime readings actually exist
+            from backend.services.energy_command_store import get_runtime_readings
             if file_hash in _LOCAL_INGESTED_HASHES:
-                return {
-                    "status": "DUPLICATE_FILE",
-                    "success": False,
-                    "sha256": file_hash,
-                    "message": (
-                        f"⛔ DUPLICATE FILE REJECTED: This exact CSV file (SHA-256: {file_hash[:16]}...) "
-                        "has already been ingested in this local session. Duplicate file imports are strictly forbidden."
-                    ),
-                    "filename": path.name,
-                }
-            try:
-                import streamlit as st
-                if "imported_file_hashes" in st.session_state and file_hash in st.session_state["imported_file_hashes"]:
+                has_any_readings = False
+                for m in ["eb", "dg", "solar", "transformer", "ups"]:
+                    if len(get_runtime_readings(m)) > 0:
+                        has_any_readings = True
+                        break
+                if has_any_readings:
                     return {
                         "status": "DUPLICATE_FILE",
                         "success": False,
                         "sha256": file_hash,
                         "message": (
                             f"⛔ DUPLICATE FILE REJECTED: This exact CSV file (SHA-256: {file_hash[:16]}...) "
-                            "has already been ingested. Duplicate file imports are strictly forbidden."
+                            "has already been ingested in this local session. Duplicate file imports are strictly forbidden."
                         ),
-                        "filename": path.name,
+                        "filename": display_name,
+                        "original_filename": display_name,
                     }
-            except Exception:
-                pass
+                else:
+                    _LOCAL_INGESTED_HASHES.discard(file_hash)
 
     # Step 2: Parse and inspect
     service = ImportService()
@@ -514,12 +515,13 @@ def execute_live_juno_ingestion(
             "success": False,
             "sha256": file_hash,
             "message": f"CSV detected as '{rtype}', but '{expected_type}' was expected for this upload module.",
-            "filename": path.name,
+            "filename": display_name,
+            "original_filename": display_name,
         }
 
-    # Step 3: Resolve Asset ID
+    # Step 3: Resolve Asset ID & Plaza ID
     raw_asset_code = inspection["metadata"].asset_code or f"SR-E-{rtype}-DEFAULT"
-    asset_id = _resolve_or_create_asset(client, raw_asset_code, rtype)
+    asset_id, plaza_id = _resolve_or_create_asset(client, raw_asset_code, rtype)
 
     # Step 4: Run Normalization & Integrity Checks
     engine = NormalizationEngine()
@@ -555,7 +557,7 @@ def execute_live_juno_ingestion(
     db_exceptions = []
 
     for idx, (rec, norm) in enumerate(zip(inspection["records"], norm_records)):
-        mapped = _map_row_for_database(rtype, asset_id, norm, rec.values, metadata=inspection["metadata"])
+        mapped = _map_row_for_database(rtype, asset_id, norm, rec.values, metadata=inspection["metadata"], plaza_id=plaza_id)
         if not mapped:
             continue
 
@@ -620,7 +622,7 @@ def execute_live_juno_ingestion(
             import_file_record = {
                 "import_file_id": file_uuid,
                 "import_batch_id": batch_uuid,
-                "original_filename": path.name,
+                "original_filename": display_name,
                 "sha256_hash": file_hash,
                 "report_type": rtype,
                 "asset_code": raw_asset_code,
@@ -637,7 +639,7 @@ def execute_live_juno_ingestion(
                 except Exception:
                     # In case table schema differs (e.g. legacy columns)
                     min_record = {
-                        "original_filename": path.name,
+                        "original_filename": display_name,
                         "sha256_hash": file_hash,
                         "report_type": rtype,
                     }
@@ -724,7 +726,47 @@ def execute_live_juno_ingestion(
             cloud_injected = False
             cloud_error = str(exc)
 
-    # Step 7: Master KPI Calculation
+    # Step 7: Asset-Code-Wise Telemetry Breakdown & Master Store Synchronization
+    asset_breakdown: dict[str, dict[str, Any]] = {}
+    for row in db_rows:
+        ac = str(row.get("asset_code") or raw_asset_code).strip()
+        plz = str(row.get("plaza_id") or plaza_id).strip()
+        aid = str(row.get("asset_id") or asset_id).strip()
+        rdt = str(row.get("reading_datetime") or "").strip()
+        if ac not in asset_breakdown:
+            asset_breakdown[ac] = {
+                "asset_code": ac,
+                "asset_id": aid,
+                "plaza_id": plz,
+                "source_type": rtype,
+                "count": 0,
+                "start_date": rdt,
+                "last_date": rdt,
+            }
+        b_entry = asset_breakdown[ac]
+        b_entry["count"] += 1
+        if rdt and (not b_entry["start_date"] or rdt < b_entry["start_date"]):
+            b_entry["start_date"] = rdt
+        if rdt and (not b_entry["last_date"] or rdt > b_entry["last_date"]):
+            b_entry["last_date"] = rdt
+
+    # Always persist clean records to authoritative runtime store (zero SQLite reliance)
+    from backend.services.energy_command_store import (
+        store_runtime_readings,
+        update_asset_reading_telemetry,
+    )
+    store_runtime_readings(rtype, db_rows)
+
+    # Automatically update each asset's telemetry in _ENERGY_ASSETS_STORE & Supabase
+    for ac, b_info in asset_breakdown.items():
+        update_asset_reading_telemetry(
+            asset_code=ac,
+            record_count=b_info["count"],
+            min_date=b_info["start_date"],
+            max_date=b_info["last_date"],
+        )
+
+    # Step 8: Master KPI Calculation
     calc_func, calc_version = KPI_CALCULATORS[rtype]
     kpi_result = calc_func(norm_records, batch_id=f"LIVE-{file_hash[:8]}")
 
@@ -744,15 +786,18 @@ def execute_live_juno_ingestion(
         "cloud_error": cloud_error,
         "report_type": rtype,
         "calculation_version": calc_version,
-        "filename": path.name,
+        "filename": display_name,
+        "original_filename": display_name,
         "sha256": file_hash,
         "metadata": inspection["metadata"],
         "asset_id": asset_id,
         "asset_code": raw_asset_code,
+        "plaza_id": plaza_id,
         "total_records": len(inspection["records"]),
         "valid_rows": len(db_rows) - len(db_exceptions),
         "exception_rows": len(db_exceptions),
-        "injected_readings": injected_row_count,
+        "injected_readings": injected_row_count if cloud_injected else (len(db_rows) - len(db_exceptions)),
+        "asset_breakdown": asset_breakdown,
         "kpis": kpi_result.get("results", []),
         "exception_details": exception_details,
         "preview_df": pd.DataFrame(db_rows[:100]) if db_rows else pd.DataFrame(norm_records[:100]),
@@ -769,7 +814,7 @@ def execute_batch_live_juno_ingestion(
     Executes live ingestion across multiple JUNO CSV files.
     Processes each file sequentially through the deduplication, validation,
     Supabase injection, and Master KPI calculation pipelines.
-    Returns aggregate summary and individual file results.
+    Returns aggregate summary, asset-code-wise breakdown, and individual file results.
     """
     results = []
     total_injected = 0
@@ -778,6 +823,7 @@ def execute_batch_live_juno_ingestion(
     success_count = 0
     dup_count = 0
     fail_count = 0
+    aggregated_asset_breakdown: dict[str, dict[str, Any]] = {}
 
     for fp in file_paths:
         res = execute_live_juno_ingestion(
@@ -792,6 +838,16 @@ def execute_batch_live_juno_ingestion(
             total_injected += res.get("injected_readings", 0)
             total_exceptions += res.get("exception_rows", 0)
             total_records += res.get("total_records", 0)
+            for ac, b_info in res.get("asset_breakdown", {}).items():
+                if ac not in aggregated_asset_breakdown:
+                    aggregated_asset_breakdown[ac] = dict(b_info)
+                else:
+                    agg = aggregated_asset_breakdown[ac]
+                    agg["count"] += b_info["count"]
+                    if b_info.get("start_date") and (not agg.get("start_date") or b_info["start_date"] < agg["start_date"]):
+                        agg["start_date"] = b_info["start_date"]
+                    if b_info.get("last_date") and (not agg.get("last_date") or b_info["last_date"] > agg["last_date"]):
+                        agg["last_date"] = b_info["last_date"]
         elif res.get("status") == "DUPLICATE_FILE":
             dup_count += 1
         else:
@@ -808,6 +864,7 @@ def execute_batch_live_juno_ingestion(
         "total_records": total_records,
         "total_injected": total_injected,
         "total_exceptions": total_exceptions,
+        "asset_breakdown": aggregated_asset_breakdown,
         "file_results": results,
     }
 

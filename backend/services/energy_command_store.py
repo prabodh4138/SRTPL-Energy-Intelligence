@@ -13,7 +13,14 @@ import copy
 import datetime
 import hashlib
 import json
+import os
+from pathlib import Path
+import sys
 from typing import Any, Dict, List, Optional, Tuple
+
+APP_DIR = Path(__file__).resolve().parents[2] / "active_app"
+if str(APP_DIR) not in sys.path:
+    sys.path.insert(0, str(APP_DIR))
 
 from core.supabase_manager import get_supabase_client
 
@@ -462,6 +469,188 @@ _DEFAULT_ASSETS: List[Dict[str, Any]] = [
 ]
 
 _ENERGY_ASSETS_STORE: List[Dict[str, Any]] = copy.deepcopy(_DEFAULT_ASSETS)
+
+# -----------------------------------------------------------------------------
+# 1B. CANONICAL ASSET REGISTRY & RESOLVER
+# -----------------------------------------------------------------------------
+CANONICAL_ASSETS_MAP: Dict[str, Dict[str, Any]] = {
+    a["asset_code"]: a for a in _DEFAULT_ASSETS
+}
+# Common legacy or export aliases
+CANONICAL_ASSETS_MAP["SR-E-EM-EB-000TP02"] = dict(_DEFAULT_ASSETS[1])
+CANONICAL_ASSETS_MAP["SR-E-EM-EB-000TP03"] = dict(_DEFAULT_ASSETS[2])
+
+
+def resolve_canonical_asset(asset_code: str, report_type: str = "") -> Dict[str, Any]:
+    """Resolves an asset code or generator number to canonical asset_id, plaza_id, and metadata."""
+    code = (asset_code or "").strip()
+    if not code:
+        code = f"SR-E-{report_type or 'DEFAULT'}-01"
+
+    # 1. Exact match
+    if code in CANONICAL_ASSETS_MAP:
+        return dict(CANONICAL_ASSETS_MAP[code])
+
+    # 2. Case-insensitive match on asset_code or asset_id
+    code_upper = code.upper()
+    for acode, ainfo in CANONICAL_ASSETS_MAP.items():
+        if acode.upper() == code_upper or ainfo.get("asset_id", "").upper() == code_upper:
+            return dict(ainfo)
+
+    for ainfo in _DEFAULT_ASSETS:
+        if ainfo["asset_id"].upper() == code_upper:
+            return dict(ainfo)
+
+    # 3. DG generator pattern recognition
+    rtype = (report_type or "").upper()
+    if "DG" in rtype or "DG" in code_upper:
+        if any(tok in code_upper for tok in ["000001", "DG1", "DG-1", "3596"]):
+            return dict(CANONICAL_ASSETS_MAP["SR-E-AP-DGX-000001"])
+        if any(tok in code_upper for tok in ["000002", "DG2", "DG-2", "688"]):
+            return dict(CANONICAL_ASSETS_MAP["SR-E-AP-DGX-000002"])
+        if any(tok in code_upper for tok in ["000003", "DG3", "DG-3", "4498"]):
+            return dict(CANONICAL_ASSETS_MAP["SR-E-AP-DGX-000003"])
+        if any(tok in code_upper for tok in ["000004", "DG4", "DG-4", "443"]):
+            return dict(CANONICAL_ASSETS_MAP["SR-E-AP-DGX-000004"])
+        if any(tok in code_upper for tok in ["000005", "DG5", "DG-5", "9833"]):
+            return dict(CANONICAL_ASSETS_MAP["SR-E-AP-DGX-000005"])
+        if any(tok in code_upper for tok in ["000006", "DG6", "DG-6", "1242"]):
+            return dict(CANONICAL_ASSETS_MAP["SR-E-AP-DGX-000006"])
+
+    # 4. Solar pattern recognition
+    if "SOLAR" in rtype or "SPX" in code_upper:
+        if any(tok in code_upper for tok in ["000001", "SP1", "SP-1", "TP01", "TP1"]):
+            return dict(CANONICAL_ASSETS_MAP["SR-E-AP-SPX-000001"])
+        if any(tok in code_upper for tok in ["000002", "SP2", "SP-2", "TP02", "TP2"]):
+            return dict(CANONICAL_ASSETS_MAP["SR-E-AP-SPX-000002"])
+        if any(tok in code_upper for tok in ["000003", "SP3", "SP-3", "TP03", "TP3"]):
+            return dict(CANONICAL_ASSETS_MAP["SR-E-AP-SPX-000003"])
+
+    # 5. Transformer pattern recognition
+    if "TRANSFORMER" in rtype or "TFR" in code_upper:
+        if any(tok in code_upper for tok in ["000001", "TFR1", "TFR-1", "TP03", "TP3"]):
+            return dict(CANONICAL_ASSETS_MAP["SR-E-HT-TFR-000001"])
+        if any(tok in code_upper for tok in ["000002", "TFR2", "TFR-2", "TP01", "TP1"]):
+            return dict(CANONICAL_ASSETS_MAP["SR-E-HT-TFR-000002"])
+        if any(tok in code_upper for tok in ["000003", "TFR3", "TFR-3", "TP02", "TP2"]):
+            return dict(CANONICAL_ASSETS_MAP["SR-E-HT-TFR-000003"])
+
+    # 6. Plaza resolution fallback
+    plaza = "TP01"
+    if any(p in code_upper for p in ["TP02", "TP-02", "TP2", "KUTRA"]):
+        plaza = "TP02"
+    elif any(p in code_upper for p in ["TP03", "TP-03", "TP3", "GARPOSH"]):
+        plaza = "TP03"
+
+    clean_rtype = rtype or "EB"
+    new_id = f"AST-{clean_rtype[:3]}-{code.replace(' ', '_')[:20]}"
+    return {
+        "asset_id": new_id,
+        "asset_code": code,
+        "asset_name": f"{clean_rtype} ({code})",
+        "plaza_id": plaza,
+        "source_type": clean_rtype,
+        "capacity": 40.46 if clean_rtype == "SOLAR" else 250.0,
+        "capacity_unit": "kWp" if clean_rtype == "SOLAR" else "kVA",
+    }
+
+
+# -----------------------------------------------------------------------------
+# 1C. RUNTIME READINGS STORE (ZERO-SQLITE PERSISTENCE FOR OFFLINE & FALLBACK)
+# -----------------------------------------------------------------------------
+_RUNTIME_READINGS: Dict[str, List[Dict[str, Any]]] = {
+    "eb": [],
+    "dg": [],
+    "solar": [],
+    "transformer": [],
+    "ups": [],
+}
+
+
+def store_runtime_readings(source_type: str, readings: List[Dict[str, Any]]) -> int:
+    """Upserts readings into in-memory runtime store on (asset_id/asset_code, reading_datetime)."""
+    stype = source_type.lower().strip()
+    if stype not in _RUNTIME_READINGS:
+        _RUNTIME_READINGS[stype] = []
+
+    existing = _RUNTIME_READINGS[stype]
+    seen_map: Dict[Tuple[str, str], int] = {}
+    for idx, r in enumerate(existing):
+        key = (
+            str(r.get("asset_code") or r.get("asset_id") or "").strip(),
+            str(r.get("reading_datetime") or "").strip()[:19],
+        )
+        seen_map[key] = idx
+
+    added_count = 0
+    for r in readings:
+        key = (
+            str(r.get("asset_code") or r.get("asset_id") or "").strip(),
+            str(r.get("reading_datetime") or "").strip()[:19],
+        )
+        if key in seen_map:
+            existing[seen_map[key]] = r
+        else:
+            seen_map[key] = len(existing)
+            existing.append(r)
+            added_count += 1
+
+    return added_count
+
+
+def get_runtime_readings(source_type: str) -> List[Dict[str, Any]]:
+    """Returns all runtime readings stored in memory for the given module."""
+    return list(_RUNTIME_READINGS.get(source_type.lower().strip(), []))
+
+
+def clear_runtime_readings(source_type: Optional[str] = None) -> None:
+    """Clears runtime readings for a specific source type or all types."""
+    global _RUNTIME_READINGS
+    if source_type:
+        stype = source_type.lower().strip()
+        if stype in _RUNTIME_READINGS:
+            _RUNTIME_READINGS[stype].clear()
+    else:
+        for k in _RUNTIME_READINGS:
+            _RUNTIME_READINGS[k].clear()
+
+
+def update_asset_reading_telemetry(
+    asset_code: str,
+    record_count: int,
+    min_date: Optional[str] = None,
+    max_date: Optional[str] = None,
+) -> None:
+    """Updates total_readings, start_date, and last_date for an asset in _ENERGY_ASSETS_STORE and Supabase."""
+    code = (asset_code or "").strip()
+    for a in _ENERGY_ASSETS_STORE:
+        if (
+            a["asset_code"].upper() == code.upper()
+            or a["asset_id"].upper() == code.upper()
+            or (code in a["asset_code"])
+        ):
+            current_total = int(a.get("total_readings") or 0)
+            a["total_readings"] = max(current_total, current_total + record_count)
+            if min_date:
+                cur_start = a.get("start_date")
+                if not cur_start or str(min_date) < str(cur_start):
+                    a["start_date"] = str(min_date)
+            if max_date:
+                cur_last = a.get("last_date")
+                if not cur_last or str(max_date) > str(cur_last):
+                    a["last_date"] = str(max_date)
+
+            client = get_supabase_client()
+            if client:
+                try:
+                    client.table("energy_master_asset").update({
+                        "total_readings": a["total_readings"],
+                        "start_date": a["start_date"],
+                        "last_date": a["last_date"],
+                    }).eq("asset_id", a["asset_id"]).execute()
+                except Exception:
+                    pass
+            break
 
 
 # -----------------------------------------------------------------------------

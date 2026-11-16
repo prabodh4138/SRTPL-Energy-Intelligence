@@ -320,6 +320,8 @@ export const AssetMasterView: React.FC = () => {
                   <th className="py-3 px-4">Plaza</th>
                   <th className="py-3 px-4">Equipment Type</th>
                   <th className="py-3 px-4 text-right">Capacity</th>
+                  <th className="py-3 px-4 text-right">Total Readings</th>
+                  <th className="py-3 px-4 text-center">Date Range (Start → Last)</th>
                   <th className="py-3 px-4 text-center">Status</th>
                   <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
@@ -327,6 +329,13 @@ export const AssetMasterView: React.FC = () => {
               <tbody className="divide-y divide-slate-800/80">
                 {filteredAssets.map((a) => {
                   const isSolar = a.source_type === 'SOLAR';
+                  const dateRangeStr =
+                    a.start_date && a.last_date
+                      ? `${String(a.start_date).substring(0, 10)} → ${String(a.last_date).substring(0, 10)}`
+                      : a.start_date
+                      ? `${String(a.start_date).substring(0, 10)} → Ongoing`
+                      : '—';
+
                   return (
                     <tr key={a.asset_id} className="hover:bg-slate-800/40 transition">
                       <td className="py-3 px-4 font-mono font-medium text-slate-400">{a.asset_id}</td>
@@ -348,6 +357,12 @@ export const AssetMasterView: React.FC = () => {
                         ) : (
                           <span className="text-slate-300">{a.capacity} {a.capacity_unit}</span>
                         )}
+                      </td>
+                      <td className="py-3 px-4 text-right font-mono font-bold text-slate-100">
+                        {a.total_readings ? `${Number(a.total_readings).toLocaleString()} rows` : '0 rows'}
+                      </td>
+                      <td className="py-3 px-4 text-center font-mono text-[11px] text-slate-400">
+                        {dateRangeStr}
                       </td>
                       <td className="py-3 px-4 text-center">
                         <span

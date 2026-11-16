@@ -78,6 +78,23 @@ def _render_single_center_results(res: dict, rtype: str, temp_path: Path | None 
     m3.metric("Valid Readings Injected", f"{res['valid_rows']:,}")
     m4.metric("Exceptions Excluded", f"{res['exception_rows']:,}")
 
+    # Asset telemetry breakdown
+    if res.get("asset_breakdown"):
+        st.markdown("##### 🏷️ Asset Code Telemetry Breakdown")
+        breakdown_rows = []
+        for ac, info in res["asset_breakdown"].items():
+            breakdown_rows.append({
+                "Asset Code": ac,
+                "Asset ID": info.get("asset_id", "—"),
+                "Toll Plaza": info.get("plaza_id", "—"),
+                "Module": info.get("source_type", rtype),
+                "Readings Injected": f"{info.get('count', 0):,}",
+                "Start Date": info.get("start_date", "—"),
+                "Last Date": info.get("last_date", "—"),
+                "Status": "INGESTED ✓",
+            })
+        st.dataframe(pd.DataFrame(breakdown_rows), width="stretch", hide_index=True)
+
     st.subheader(f"{rtype} Master KPI Results")
     kpis = res.get("kpis", [])
     if kpis:
@@ -270,6 +287,27 @@ def render():
             delta=f"{m_info['files']} file(s)",
         )
 
+    # Asset Code-Wise Pre-Ingestion Data Breakdown
+    from backend.services.energy_command_store import resolve_canonical_asset
+    asset_pre_stats = []
+    for item in inspected_files:
+        acode = item["inspection"]["metadata"].asset_code or "—"
+        rtype = item.get("rtype", "EB")
+        resolved = resolve_canonical_asset(acode, rtype)
+        asset_pre_stats.append({
+            "Asset Code": resolved["asset_code"],
+            "Plaza": resolved["plaza_id"],
+            "Equipment": resolved["source_type"],
+            "Asset Name": resolved["asset_name"],
+            "File Name": item["name"],
+            "Queued Telemetry Rows": f"{item['inspection']['record_count']:,}",
+            "Status": "READY ✓",
+        })
+
+    st.markdown("#### 🏷️ Queued Data Breakdown (Asset Code-Wise)")
+    st.caption("Pre-ingestion telemetry record count and plaza assignment per individual asset code:")
+    st.dataframe(pd.DataFrame(asset_pre_stats), width="stretch", hide_index=True)
+
     reimport_override = st.checkbox(
         "Force re-import / overwrite if previously ingested",
         value=False,
@@ -298,6 +336,7 @@ def render():
                     expected_type=rtype,
                     uploaded_by=st.session_state.get("user", "admin@srtpl.com"),
                     allow_reimport=reimport_override,
+                    original_filename=it["name"],
                 )
             _render_single_center_results(res, rtype, it["path"], it["is_temp"])
             from core.supabase_manager import get_live_module_counts
@@ -326,6 +365,7 @@ def render():
                         expected_type=it["rtype"],
                         uploaded_by=st.session_state.get("user", "admin@srtpl.com"),
                         allow_reimport=reimport_override,
+                        original_filename=it["name"],
                     )
                     batch_results.append((it, res))
                     if res.get("status") == "SUCCESS":
@@ -347,6 +387,25 @@ def render():
 
             if dup_count > 0:
                 st.warning(f"⚠️ {dup_count} file(s) were skipped because they were already imported. Enable 'Force re-import' to overwrite them.")
+
+            # Asset Code-wise breakdown of batch ingested results
+            ingested_asset_rows = []
+            for it, res in batch_results:
+                if res.get("asset_breakdown"):
+                    for ac, b_info in res["asset_breakdown"].items():
+                        ingested_asset_rows.append({
+                            "Asset Code": ac,
+                            "Plaza": b_info.get("plaza_id", "—"),
+                            "Equipment": b_info.get("source_type", it.get("rtype")),
+                            "Injected Readings": f"{b_info.get('count', 0):,}",
+                            "Start Date": b_info.get("start_date", "—"),
+                            "Last Date": b_info.get("last_date", "—"),
+                            "Status": "PERSISTED ✓",
+                        })
+            if ingested_asset_rows:
+                st.subheader("🏷️ Asset Code-Wise Ingestion Telemetry Summary (Post-Insertion)")
+                st.caption("Automatic telemetry registration across asset master:")
+                st.dataframe(pd.DataFrame(ingested_asset_rows), width="stretch", hide_index=True)
 
             st.subheader("📑 Individual File Results & KPIs")
             for it, res in batch_results:

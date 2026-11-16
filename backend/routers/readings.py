@@ -83,14 +83,13 @@ EQUIPMENT_CONFIG = {
     },
 }
 
-# Runtime session records store
-_RUNTIME_READINGS: dict[str, list[dict[str, Any]]] = {
-    "eb": [],
-    "dg": [],
-    "solar": [],
-    "transformer": [],
-    "ups": [],
-}
+# Shared Authoritative In-Memory Runtime Store (Zero-SQLite)
+from backend.services.energy_command_store import (
+    _RUNTIME_READINGS,
+    get_runtime_readings,
+    store_runtime_readings,
+    clear_runtime_readings,
+)
 
 
 def _flt(val: Any, default: float = 0.0) -> float:

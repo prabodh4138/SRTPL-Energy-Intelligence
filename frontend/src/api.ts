@@ -95,13 +95,14 @@ export const api = {
   uploadJunoFile: (
     file: File,
     equipment: string = 'AUTO',
-    onProgress?: (percent: number, loaded: number, total: number) => void
+    onProgress?: (percent: number, loaded: number, total: number) => void,
+    allowReimport: boolean = false
   ): Promise<any> => {
     return new Promise((resolve, reject) => {
       const formData = new FormData();
       formData.append('file', file);
       const xhr = new XMLHttpRequest();
-      xhr.open('POST', `${getApiBase()}/juno/upload?equipment=${encodeURIComponent(equipment)}`);
+      xhr.open('POST', `${getApiBase()}/juno/upload?equipment=${encodeURIComponent(equipment)}&allow_reimport=${allowReimport}`);
 
       if (onProgress) {
         xhr.upload.onprogress = (event) => {
@@ -136,7 +137,8 @@ export const api = {
   uploadJunoFilesMulti: (
     files: File[],
     equipment: string = 'AUTO',
-    onProgress?: (percent: number, loaded: number, total: number) => void
+    onProgress?: (percent: number, loaded: number, total: number) => void,
+    allowReimport: boolean = false
   ): Promise<{
     status: 'SUCCESS' | 'PARTIAL' | 'DUPLICATES_ONLY' | 'ERROR';
     total_files: number;
@@ -145,18 +147,22 @@ export const api = {
     failed: number;
     total_valid_rows: number;
     message: string;
+    asset_breakdown?: Record<string, any>;
     file_results: Array<{
       filename: string;
+      original_filename?: string;
       status: 'SUCCESS' | 'DUPLICATE_REJECTED' | 'ERROR';
       equipment?: string;
       equipment_label?: string;
       asset_code?: string;
+      plaza_id?: string;
       records_count?: number;
       valid_count?: number;
       exception_count?: number;
       cloud_injected?: boolean;
       sha256?: string;
       batch_id?: string;
+      asset_breakdown?: Record<string, any>;
       message?: string;
     }>;
   }> => {
@@ -166,7 +172,7 @@ export const api = {
         formData.append('files', f);
       }
       const xhr = new XMLHttpRequest();
-      xhr.open('POST', `${getApiBase()}/juno/upload-multi?equipment=${encodeURIComponent(equipment)}`);
+      xhr.open('POST', `${getApiBase()}/juno/upload-multi?equipment=${encodeURIComponent(equipment)}&allow_reimport=${allowReimport}`);
 
       if (onProgress) {
         xhr.upload.onprogress = (event) => {

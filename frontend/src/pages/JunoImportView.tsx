@@ -22,16 +22,19 @@ import {
 
 interface FileResultItem {
   filename: string;
+  original_filename?: string;
   status: 'SUCCESS' | 'DUPLICATE_REJECTED' | 'ERROR';
   equipment?: string;
   equipment_label?: string;
   asset_code?: string;
+  plaza_id?: string;
   records_count?: number;
   valid_count?: number;
   exception_count?: number;
   cloud_injected?: boolean;
   sha256?: string;
   batch_id?: string;
+  asset_breakdown?: Record<string, any>;
   message?: string;
 }
 
@@ -43,12 +46,14 @@ interface BatchSummary {
   failed: number;
   total_valid_rows: number;
   message: string;
+  asset_breakdown?: Record<string, any>;
   file_results: FileResultItem[];
 }
 
 export const JunoImportView: React.FC = () => {
   const [batches, setBatches] = useState<any[]>([]);
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
+  const [allowReimport, setAllowReimport] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -147,7 +152,8 @@ export const JunoImportView: React.FC = () => {
           if (percent >= 100) {
             setUploadPhase('processing');
           }
-        }
+        },
+        allowReimport
       );
 
       setUploadPhase('done');
@@ -178,25 +184,116 @@ export const JunoImportView: React.FC = () => {
     }
   };
 
-  // Heuristic indicator for staged file
+  // Heuristic indicator for staged file with asset code resolution
   const guessEquipmentPreview = (filename: string) => {
     const fn = filename.toLowerCase();
+    let assetCode = '—';
+    let plaza = 'TP01';
+
     if (fn.includes('dg') || fn.includes('generator')) {
-      return { label: 'DG Backup Generator', color: 'bg-amber-500/10 text-amber-400 border-amber-500/20', icon: Zap };
+      if (fn.includes('3596') || fn.includes('dg1') || fn.includes('000001')) {
+        assetCode = 'SR-E-AP-DGX-000001';
+        plaza = 'TP01';
+      } else if (fn.includes('688') || fn.includes('dg2') || fn.includes('000002')) {
+        assetCode = 'SR-E-AP-DGX-000002';
+        plaza = 'TP01';
+      } else if (fn.includes('4498') || fn.includes('dg3') || fn.includes('000003')) {
+        assetCode = 'SR-E-AP-DGX-000003';
+        plaza = 'TP02';
+      } else if (fn.includes('443') || fn.includes('dg4') || fn.includes('000004')) {
+        assetCode = 'SR-E-AP-DGX-000004';
+        plaza = 'TP02';
+      } else if (fn.includes('9833') || fn.includes('dg5') || fn.includes('000005')) {
+        assetCode = 'SR-E-AP-DGX-000005';
+        plaza = 'TP03';
+      } else if (fn.includes('1242') || fn.includes('dg6') || fn.includes('000006')) {
+        assetCode = 'SR-E-AP-DGX-000006';
+        plaza = 'TP03';
+      } else {
+        assetCode = 'SR-E-AP-DGX-AUTO';
+        plaza = 'TP01';
+      }
+      return {
+        label: 'DG Generator',
+        color: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+        icon: Zap,
+        assetCode,
+        plaza,
+      };
     }
     if (fn.includes('solar')) {
-      return { label: 'Solar Array', color: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20', icon: Sun };
+      if (fn.includes('tp02') || fn.includes('sp2') || fn.includes('000002')) {
+        assetCode = 'SR-E-AP-SPX-000002';
+        plaza = 'TP02';
+      } else if (fn.includes('tp03') || fn.includes('sp3') || fn.includes('000003')) {
+        assetCode = 'SR-E-AP-SPX-000003';
+        plaza = 'TP03';
+      } else {
+        assetCode = 'SR-E-AP-SPX-000001';
+        plaza = 'TP01';
+      }
+      return {
+        label: 'Solar Array',
+        color: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
+        icon: Sun,
+        assetCode,
+        plaza,
+      };
     }
     if (fn.includes('transformer') || fn.includes('tfr')) {
-      return { label: 'Transformer', color: 'bg-violet-500/10 text-violet-400 border-violet-500/20', icon: Cpu };
+      if (fn.includes('tp02') || fn.includes('tfr3') || fn.includes('000003')) {
+        assetCode = 'SR-E-HT-TFR-000003';
+        plaza = 'TP02';
+      } else if (fn.includes('tp03') || fn.includes('tfr1') || fn.includes('000001')) {
+        assetCode = 'SR-E-HT-TFR-000001';
+        plaza = 'TP03';
+      } else {
+        assetCode = 'SR-E-HT-TFR-000002';
+        plaza = 'TP01';
+      }
+      return {
+        label: 'Transformer',
+        color: 'bg-violet-500/10 text-violet-400 border-violet-500/20',
+        icon: Cpu,
+        assetCode,
+        plaza,
+      };
     }
     if (fn.includes('ups')) {
-      return { label: 'UPS System', color: 'bg-teal-500/10 text-teal-400 border-teal-500/20', icon: BatteryCharging };
+      return {
+        label: 'UPS System',
+        color: 'bg-teal-500/10 text-teal-400 border-teal-500/20',
+        icon: BatteryCharging,
+        assetCode: 'SR-E-AP-UPS-AUTO',
+        plaza: 'TP01',
+      };
     }
     if (fn.includes('eb') || fn.includes('grid')) {
-      return { label: 'EB Grid Supply', color: 'bg-sky-500/10 text-sky-400 border-sky-500/20', icon: Zap };
+      if (fn.includes('130') || fn.includes('tp02')) {
+        assetCode = 'SR-E-EM-EB-130-000';
+        plaza = 'TP02';
+      } else if (fn.includes('test') || fn.includes('tp03')) {
+        assetCode = 'SRTPL_Test_JUNO_EB';
+        plaza = 'TP03';
+      } else {
+        assetCode = 'SR-E-EM-EB-000TP01';
+        plaza = 'TP01';
+      }
+      return {
+        label: 'EB Grid Supply',
+        color: 'bg-sky-500/10 text-sky-400 border-sky-500/20',
+        icon: Zap,
+        assetCode,
+        plaza,
+      };
     }
-    return { label: 'Auto-Detect', color: 'bg-slate-700/40 text-slate-300 border-slate-600', icon: Layers };
+    return {
+      label: 'Auto-Detect',
+      color: 'bg-slate-700/40 text-slate-300 border-slate-600',
+      icon: Layers,
+      assetCode: 'AUTO',
+      plaza: 'TP01',
+    };
   };
 
   // Equipment badge renderer
@@ -394,7 +491,7 @@ export const JunoImportView: React.FC = () => {
                         <p className="text-xs font-medium text-slate-200 truncate" title={file.name}>
                           {file.name}
                         </p>
-                        <div className="flex items-center gap-2 mt-0.5">
+                        <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
                           <span className="text-[10px] text-slate-500 font-mono">
                             {(file.size / 1024).toFixed(1)} KB
                           </span>
@@ -402,6 +499,11 @@ export const JunoImportView: React.FC = () => {
                             <PreviewIcon className="w-2.5 h-2.5" />
                             {preview.label}
                           </span>
+                          {preview.assetCode !== '—' && (
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-slate-800 text-emerald-400 border border-slate-700">
+                              {preview.assetCode} ({preview.plaza})
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -420,18 +522,25 @@ export const JunoImportView: React.FC = () => {
               })}
             </div>
 
-            {/* Primary Action Button */}
-            <div className="flex items-center justify-between pt-2 border-t border-slate-800">
-              <div className="flex items-center gap-2 text-xs text-slate-400">
-                <Hash className="w-4 h-4 text-emerald-400" />
-                <span>SHA-256 fingerprint deduplication will reject previously ingested files automatically.</span>
-              </div>
+            {/* Options Bar & Action Button */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-slate-800">
+              <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300 hover:text-white select-none">
+                <input
+                  type="checkbox"
+                  checked={allowReimport}
+                  onChange={(e) => setAllowReimport(e.target.checked)}
+                  className="rounded border-slate-700 bg-slate-800 text-emerald-500 focus:ring-0 cursor-pointer"
+                />
+                <span className="font-semibold text-slate-300">
+                  ⚡ Force Re-import / Overwrite duplicates (e.g. for TP02 / TP03 DG files)
+                </span>
+              </label>
 
               <button
                 type="button"
                 onClick={handleSimultaneousUpload}
                 disabled={uploading || stagedFiles.length === 0}
-                className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-sky-600 hover:from-emerald-500 hover:to-sky-500 text-white font-bold text-xs shadow-lg shadow-emerald-950/50 disabled:opacity-50 transition flex items-center gap-2"
+                className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-sky-600 hover:from-emerald-500 hover:to-sky-500 text-white font-bold text-xs shadow-lg shadow-emerald-950/50 disabled:opacity-50 transition flex items-center gap-2 shrink-0"
               >
                 {uploading ? (
                   <>
@@ -581,9 +690,36 @@ export const JunoImportView: React.FC = () => {
                       )}
 
                       {res.status === 'DUPLICATE_REJECTED' && (
-                        <span className="px-2 py-0.5 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20 font-bold text-[10px]">
-                          DUPLICATE ⛔
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="px-2 py-0.5 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20 font-bold text-[10px]">
+                            DUPLICATE ⛔
+                          </span>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const f = stagedFiles.find((sf) => sf.name === res.filename) || stagedFiles[0];
+                              if (f) {
+                                setUploading(true);
+                                try {
+                                  await api.uploadJunoFile(f, 'AUTO', undefined, true);
+                                  fetchBatches();
+                                  alert(`Successfully force-reimported ${f.name}!`);
+                                } catch (e: any) {
+                                  alert(`Re-import failed: ${e.message}`);
+                                } finally {
+                                  setUploading(false);
+                                }
+                              } else {
+                                setAllowReimport(true);
+                                alert("Re-import mode enabled. Please select the file again and click 'Ingest'.");
+                              }
+                            }}
+                            className="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-sans text-[10px] font-bold shadow transition"
+                            title="Force Ingest & Overwrite"
+                          >
+                            ⚡ Force Ingest
+                          </button>
+                        </div>
                       )}
 
                       {res.status === 'ERROR' && (
@@ -596,6 +732,80 @@ export const JunoImportView: React.FC = () => {
                 ))}
               </div>
             </div>
+
+            {/* Asset Code Breakdown Table */}
+            {(() => {
+              const breakdownMap: Record<string, any> = {};
+              if (batchResult.asset_breakdown) {
+                Object.assign(breakdownMap, batchResult.asset_breakdown);
+              }
+              batchResult.file_results?.forEach((fr) => {
+                if (fr.asset_breakdown) {
+                  Object.assign(breakdownMap, fr.asset_breakdown);
+                } else if (fr.asset_code && fr.asset_code !== '—') {
+                  if (!breakdownMap[fr.asset_code]) {
+                    breakdownMap[fr.asset_code] = {
+                      asset_code: fr.asset_code,
+                      plaza_id: fr.plaza_id || 'TP01',
+                      count: fr.valid_count ?? fr.records_count ?? 0,
+                      source_type: fr.equipment || 'EB',
+                    };
+                  }
+                }
+              });
+
+              const assetRows = Object.values(breakdownMap);
+              if (assetRows.length === 0) return null;
+
+              return (
+                <div className="space-y-2 pt-3 border-t border-slate-800">
+                  <div className="flex items-center justify-between">
+                    <h5 className="text-[11px] font-semibold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+                      <span>🏷️ Asset Code Telemetry Breakdown</span>
+                      <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-mono text-[10px] font-bold">
+                        {assetRows.length} assets registered
+                      </span>
+                    </h5>
+                    <span className="text-[10px] text-emerald-400 font-mono flex items-center gap-1">
+                      <Check className="w-3 h-3" /> Updated Automatically
+                    </span>
+                  </div>
+
+                  <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-900/40">
+                    <table className="w-full text-left text-xs font-mono">
+                      <thead className="bg-slate-900 text-[10px] uppercase text-slate-400 border-b border-slate-800">
+                        <tr>
+                          <th className="px-3 py-2">Asset Code</th>
+                          <th className="px-3 py-2">Plaza</th>
+                          <th className="px-3 py-2">Equipment</th>
+                          <th className="px-3 py-2 text-right">Injected Readings</th>
+                          <th className="px-3 py-2">Telemetry Date Range</th>
+                          <th className="px-3 py-2 text-center">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/60">
+                        {assetRows.map((ar: any, idx: number) => (
+                          <tr key={idx} className="hover:bg-slate-800/40">
+                            <td className="px-3 py-2 font-bold text-emerald-400">{ar.asset_code}</td>
+                            <td className="px-3 py-2 text-slate-300">{ar.plaza_id}</td>
+                            <td className="px-3 py-2 text-slate-400 font-sans">{ar.source_type}</td>
+                            <td className="px-3 py-2 text-right font-bold text-slate-200">{ar.count} rows</td>
+                            <td className="px-3 py-2 text-[10px] text-slate-400">
+                              {ar.start_date && ar.last_date ? `${String(ar.start_date).substring(0, 10)} → ${String(ar.last_date).substring(0, 10)}` : '—'}
+                            </td>
+                            <td className="px-3 py-2 text-center">
+                              <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[9px] font-bold">
+                                PERSISTED ✓
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
       </div>
@@ -672,22 +882,37 @@ export const JunoImportView: React.FC = () => {
                   </td>
                 </tr>
               ) : (
-                filteredBatches.map((b) => (
-                  <tr key={b.batch_id} className="hover:bg-slate-800/40 transition">
-                    <td className="px-6 py-3 font-semibold text-emerald-400">{b.batch_id}</td>
-                    <td className="px-6 py-3 text-slate-200 font-sans">{b.file_name}</td>
-                    <td className="px-6 py-3 text-slate-300 font-sans">{renderEquipmentBadge(b.equipment)}</td>
-                    <td className="px-6 py-3 text-slate-100 font-bold">{b.records_count}</td>
-                    <td className="px-6 py-3 text-slate-500 text-[10px] truncate max-w-xs font-mono">{b.sha256}</td>
-                    <td className="px-6 py-3 text-slate-400 font-sans text-[11px]">{b.imported_at}</td>
-                    <td className="px-6 py-3">
-                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-sans font-bold inline-flex items-center gap-1">
-                        <Check className="w-3 h-3" />
-                        {b.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))
+                filteredBatches.map((b) => {
+                  const cleanName = b.original_filename || (
+                    b.file_name?.startsWith('juno_upload_') || b.file_name?.startsWith('srtpl_')
+                      ? `${b.equipment?.replace(/[^a-zA-Z]/g, '') || 'Juno'}_Log_${(b.sha256 || '').substring(0, 8)}.csv`
+                      : b.file_name
+                  );
+                  return (
+                    <tr key={b.batch_id} className="hover:bg-slate-800/40 transition">
+                      <td className="px-6 py-3 font-semibold text-emerald-400">{b.batch_id}</td>
+                      <td className="px-6 py-3 text-slate-200 font-sans">
+                        <div className="font-medium text-slate-200">{cleanName}</div>
+                        {b.asset_code && b.asset_code !== '—' && (
+                          <div className="text-[10px] text-slate-500 font-mono flex items-center gap-1.5 mt-0.5">
+                            <span className="text-emerald-400 font-bold">{b.asset_code}</span>
+                            {b.plaza_id && <span className="text-slate-400">({b.plaza_id})</span>}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-6 py-3 text-slate-300 font-sans">{renderEquipmentBadge(b.equipment)}</td>
+                      <td className="px-6 py-3 text-slate-100 font-bold">{b.records_count}</td>
+                      <td className="px-6 py-3 text-slate-500 text-[10px] truncate max-w-xs font-mono">{b.sha256}</td>
+                      <td className="px-6 py-3 text-slate-400 font-sans text-[11px]">{b.imported_at}</td>
+                      <td className="px-6 py-3">
+                        <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-sans font-bold inline-flex items-center gap-1">
+                          <Check className="w-3 h-3" />
+                          {b.status}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
