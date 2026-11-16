@@ -568,7 +568,10 @@ def execute_live_juno_ingestion(
                     "expected_value": str(issue.expected_value) if issue.expected_value is not None else "—",
                     "raw_values": cur,
                 })
-        prev = cur
+        # Advance prev pointer only if current row has no fatal ERROR, preventing corrupted rows from poisoning subsequent deltas
+        has_error = any(getattr(i, "severity", "ERROR") == "ERROR" for i in issues)
+        if not has_error:
+            prev = cur
 
     # Step 5: Format for Database & Enforce Level 2 Row-Level Deduplication
     seen_row_keys = set()

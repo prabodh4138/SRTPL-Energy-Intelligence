@@ -1,5 +1,6 @@
 from .common import check_non_decreasing
 from .cumulative import cumulative_delta
+from .models import ValidationIssue
 
 def validate_solar(current, previous=None):
     issues = []
@@ -19,5 +20,18 @@ def validate_solar(current, previous=None):
         curr_kwh,
         prev_kwh
     )
+
+    # Physical generation sanity check: 40.46 kWp plant cannot generate > 400 kWh in a single 24h interval
+    if delta is not None and delta > 400.0:
+        issues.append(
+            ValidationIssue(
+                rule_code="VAL-SOL-002",
+                severity="ERROR",
+                message=f"Solar daily generation of {delta:.1f} kWh exceeds physical plant capacity ceiling (max 400.0 kWh/day for 40.46 kWp plant).",
+                source_value=str(delta),
+                expected_value="0 <= generation <= 400.0"
+            )
+        )
+        state = "EXCEEDS_CAPACITY"
 
     return issues, delta, state

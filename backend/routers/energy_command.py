@@ -166,6 +166,7 @@ def get_energy_overview(
         # ----------------------------------------------------------------------
         # DYNAMIC OPERATIONAL DATABASE (LIVE CLOUD SUPABASE POSTGRESQL)
         # ----------------------------------------------------------------------
+        eff_plaza = (plaza_id or "ALL").upper()
         client = get_supabase_client()
         eb_rows = []
         dg_rows = []
@@ -239,14 +240,14 @@ def get_energy_overview(
         else:
             eb_period_str = "No readings recorded"
 
-        selected_eb_val = total_billed_kvah if plaza_id == "ALL" else eb_billed_by_p.get(plaza_id, 0.0)
+        selected_eb_val = total_billed_kvah if eff_plaza == "ALL" else eb_billed_by_p.get(eff_plaza, 0.0)
 
         eb_kpi = {
             "label": "EB CONSUMPTION (kVAh, MF: 200)",
             "value": selected_eb_val,
             "unit": "kVAh (MF: 200)",
             "multiplying_factor": 200,
-            "raw_interval_kvah": total_raw_kvah if plaza_id == "ALL" else round(eb_kvah_by_p.get(plaza_id, 0.0), 1),
+            "raw_interval_kvah": total_raw_kvah if eff_plaza == "ALL" else round(eb_kvah_by_p.get(eff_plaza, 0.0), 1),
             "period": eb_period_str,
             "tp01": eb_billed_by_p["TP01"],
             "tp02": eb_billed_by_p["TP02"],
@@ -303,8 +304,8 @@ def get_energy_overview(
         dg_tot_mins = int(sum(dg_mins_by_p.values()))
         dg_tot_hrs = round(dg_tot_mins / 60.0, 2)
 
-        sel_dg_kwh = dg_tot_kwh if plaza_id == "ALL" else round(dg_kwh_by_p.get(plaza_id, 0.0), 1)
-        sel_dg_mins = dg_tot_mins if plaza_id == "ALL" else int(dg_mins_by_p.get(plaza_id, 0.0))
+        sel_dg_kwh = dg_tot_kwh if eff_plaza == "ALL" else round(dg_kwh_by_p.get(eff_plaza, 0.0), 1)
+        sel_dg_mins = dg_tot_mins if eff_plaza == "ALL" else int(dg_mins_by_p.get(eff_plaza, 0.0))
         sel_dg_hrs = round(sel_dg_mins / 60.0, 2)
 
         dg_kpi = {
@@ -338,7 +339,7 @@ def get_energy_overview(
                 sol_kwh_by_p[p] += float(r.get("valid_generation_kwh") or r.get("interval_kwh") or 0.0)
 
         sol_tot_kwh = round(sum(sol_kwh_by_p.values()), 1)
-        sel_sol_kwh = sol_tot_kwh if plaza_id == "ALL" else round(sol_kwh_by_p.get(plaza_id, 0.0), 1)
+        sel_sol_kwh = sol_tot_kwh if eff_plaza == "ALL" else round(sol_kwh_by_p.get(eff_plaza, 0.0), 1)
 
         _, total_solar_kwp = get_stored_assets(source_type="SOLAR")
 

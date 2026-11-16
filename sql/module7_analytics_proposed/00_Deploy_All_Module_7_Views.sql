@@ -1251,40 +1251,45 @@ SELECT
         AS source_exception_records,
     CASE
         WHEN i.source_quality_class = 'VALID'
-         AND (i.cumulative_delta_kwh IS NULL OR i.cumulative_delta_kwh >= 0)
-         AND (i.interval_kwh IS NULL OR i.interval_kwh >= 0)
+         AND (i.cumulative_delta_kwh IS NULL OR (i.cumulative_delta_kwh >= 0 AND i.cumulative_delta_kwh <= 400.0))
+         AND (i.interval_kwh IS NULL OR (i.interval_kwh >= 0 AND i.interval_kwh <= 400.0))
             THEN 1::bigint ELSE 0::bigint
     END AS valid_records,
     CASE
         WHEN i.source_quality_class <> 'VALID'
           OR i.cumulative_delta_kwh < 0
+          OR i.cumulative_delta_kwh > 400.0
           OR i.interval_kwh < 0
+          OR i.interval_kwh > 400.0
             THEN 1::bigint ELSE 0::bigint
     END AS exception_records,
     CASE
         WHEN i.source_quality_class = 'VALID'
-         AND (i.cumulative_delta_kwh IS NULL OR i.cumulative_delta_kwh >= 0)
-         AND (i.interval_kwh IS NULL OR i.interval_kwh >= 0)
+         AND (i.cumulative_delta_kwh IS NULL OR (i.cumulative_delta_kwh >= 0 AND i.cumulative_delta_kwh <= 400.0))
+         AND (i.interval_kwh IS NULL OR (i.interval_kwh >= 0 AND i.interval_kwh <= 400.0))
             THEN 'VALID' ELSE 'EXCEPTION'
     END AS analytics_quality_class,
     1::bigint
       - CASE
             WHEN i.source_quality_class = 'VALID'
-             AND (i.cumulative_delta_kwh IS NULL OR i.cumulative_delta_kwh >= 0)
-             AND (i.interval_kwh IS NULL OR i.interval_kwh >= 0)
+             AND (i.cumulative_delta_kwh IS NULL OR (i.cumulative_delta_kwh >= 0 AND i.cumulative_delta_kwh <= 400.0))
+             AND (i.interval_kwh IS NULL OR (i.interval_kwh >= 0 AND i.interval_kwh <= 400.0))
                 THEN 1::bigint ELSE 0::bigint
         END
       - CASE
             WHEN i.source_quality_class <> 'VALID'
               OR i.cumulative_delta_kwh < 0
+              OR i.cumulative_delta_kwh > 400.0
               OR i.interval_kwh < 0
+              OR i.interval_kwh > 400.0
                 THEN 1::bigint ELSE 0::bigint
         END AS reconciliation_difference,
     i.source_data_quality_status,
     NULLIF(CONCAT_WS(', ',
         CASE WHEN i.source_quality_class <> 'VALID' THEN 'SOURCE_STATUS_EXCEPTION' END,
         CASE WHEN i.cumulative_delta_kwh < 0 THEN 'NEGATIVE_CUMULATIVE_DELTA' END,
-        CASE WHEN i.interval_kwh < 0 THEN 'NEGATIVE_INTERVAL_KWH' END
+        CASE WHEN i.interval_kwh < 0 THEN 'NEGATIVE_INTERVAL_KWH' END,
+        CASE WHEN i.cumulative_delta_kwh > 400.0 OR i.interval_kwh > 400.0 THEN 'EXCEEDS_CAPACITY_CEILING' END
     ), '') AS analytics_exception_reasons
 FROM public.vw_sol71_interval_reading AS i;
 

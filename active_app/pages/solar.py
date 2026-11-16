@@ -12,9 +12,9 @@ from core.reading_view_ui import render_equipment_reading_view
 
 def render():
     sample_plants = [
-        {"Plant Code": "SR-E-AP-SPX-000001", "Plaza": "TP01", "Capacity": "100 kWp", "Records": "4,168 logs", "Status": "ONLINE"},
-        {"Plant Code": "SR-E-AP-SPX-000002", "Plaza": "TP02", "Capacity": "100 kWp", "Records": "2,719 logs", "Status": "ONLINE"},
-        {"Plant Code": "SR-E-AP-SPX-000003", "Plaza": "TP03", "Capacity": "100 kWp", "Records": "2,764 logs", "Status": "ONLINE"},
+        {"Plant Code": "SR-E-AP-SPX-000001", "Plaza": "TP01", "Capacity": "40.46 kWp", "Records": "217 logs", "Status": "ONLINE"},
+        {"Plant Code": "SR-E-AP-SPX-000002", "Plaza": "TP02", "Capacity": "40.46 kWp", "Records": "228 logs", "Status": "ONLINE"},
+        {"Plant Code": "SR-E-AP-SPX-000003", "Plaza": "TP03", "Capacity": "40.46 kWp", "Records": "229 logs", "Status": "ONLINE"},
     ]
     rules = [
         "VAL-SOL-001: Non-decreasing cumulative generation rule (cumulative kWh decrease triggers exception)",

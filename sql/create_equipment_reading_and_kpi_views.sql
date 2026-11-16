@@ -207,12 +207,12 @@ CREATE OR REPLACE VIEW public.vw_solar_reading_kpis AS
 SELECT
     'SOLAR' AS source_type,
     COUNT(DISTINCT r.asset_code) AS active_plants,
-    COALESCE(SUM(r.cumulative_kwh), 0.0) AS total_cumulative_kwh,
-    COALESCE(SUM(r.interval_kwh), 0.0) AS total_interval_kwh,
-    COALESCE(SUM(r.interval_kwh) * 0.82, 0.0) AS co2_avoided_kg,
+    COALESCE(SUM(CASE WHEN r.data_quality_status = 'VALID' AND r.interval_kwh >= 0 AND r.interval_kwh <= 400.0 THEN r.interval_kwh ELSE 0 END), 0.0) AS total_generation_kwh,
+    COALESCE(SUM(CASE WHEN r.data_quality_status = 'VALID' AND r.interval_kwh >= 0 AND r.interval_kwh <= 400.0 THEN r.interval_kwh ELSE 0 END), 0.0) AS total_interval_kwh,
+    COALESCE(SUM(CASE WHEN r.data_quality_status = 'VALID' AND r.interval_kwh >= 0 AND r.interval_kwh <= 400.0 THEN r.interval_kwh ELSE 0 END) * 0.82, 0.0) AS co2_avoided_kg,
     COUNT(r.reading_id) AS total_log_count,
-    COALESCE(SUM(CASE WHEN r.data_quality_status = 'VALID' THEN 1 ELSE 0 END), 0) AS valid_count,
-    COALESCE(SUM(CASE WHEN r.data_quality_status != 'VALID' THEN 1 ELSE 0 END), 0) AS exception_count
+    COALESCE(SUM(CASE WHEN r.data_quality_status = 'VALID' AND (r.interval_kwh IS NULL OR r.interval_kwh <= 400.0) THEN 1 ELSE 0 END), 0) AS valid_count,
+    COALESCE(SUM(CASE WHEN r.data_quality_status != 'VALID' OR r.interval_kwh > 400.0 THEN 1 ELSE 0 END), 0) AS exception_count
 FROM energy_readings.solar r;
 
 -- ============================================================================
